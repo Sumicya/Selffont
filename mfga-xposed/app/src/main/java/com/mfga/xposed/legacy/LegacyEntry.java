@@ -18,7 +18,7 @@ public class LegacyEntry implements IXposedHookLoadPackage {
 
     private static final String TAG = "MFGA";
     private static final java.util.Set<String> TARGET_PACKAGES = new java.util.HashSet<>(
-            java.util.Arrays.asList("com.github.android", "com.twitter.android, org.telegram.messenger, xyz.nextalone.nagram"));
+            java.util.Arrays.asList("com.github.android", "com.twitter.android", "org.telegram.messenger", "xyz.nextalone.nagram"));
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
