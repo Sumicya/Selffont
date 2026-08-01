@@ -42,6 +42,8 @@ https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansSoraSomp
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansSymbols2/unhinted/otf/NotoSansSymbols2-Regular.otf
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansSymbols/unhinted/otf/NotoSansSymbols-Regular.otf
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansSyriac/unhinted/otf/NotoSansSyriac-Regular.otf
+https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansSinhala/hinted/ttf/NotoSansSinhala-Regular.ttf
+https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSerifTangut/unhinted/otf/NotoSerifTangut-Regular.otf
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansTaiLe/unhinted/otf/NotoSansTaiLe-Regular.otf
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansTamil/unhinted/otf/NotoSansTamil-Regular.otf
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansThaana/unhinted/otf/NotoSansThaana-Regular.otf
@@ -66,8 +68,6 @@ https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansGurmukhi
 # https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansLinearB/hinted/ttf/NotoSansLinearB-Regular.ttf
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansMalayalam/hinted/ttf/NotoSansMalayalam-Regular.ttf
 # https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansRunic/hinted/ttf/NotoSansRunic-Regular.ttf
-https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansSinhala/hinted/ttf/NotoSansSinhala-Regular.ttf
 https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoSansTelugu/hinted/ttf/NotoSansTelugu-Regular.ttf
-
 https://cdn.jsdelivr.net/gh/Mercury13/unicodia/Fonts/NotoSansMath-Regular.ttf
 https://cdn.jsdelivr.net/gh/Mercury13/unicodia/Fonts/UnicodiaFunky.ttf
