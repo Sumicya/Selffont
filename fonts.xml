@@ -205,6 +205,18 @@
     <alias name="mipro-bold" to="sans-serif" weight="800" />
     <alias name="mipro-heavy" to="sans-serif" weight="900" />
 
+    <family lang="zh,zh-Hans,zh-Hant">
+        <font weight="100" style="normal">200.ttf</font>
+        <font weight="200" style="normal">200.ttf</font>
+        <font weight="300" style="normal">300.ttf</font>
+        <font weight="400" style="normal">400.ttf</font>
+        <font weight="500" style="normal">400.ttf</font>
+        <font weight="600" style="normal">700.ttf</font>
+        <font weight="700" style="normal">700.ttf</font>
+        <font weight="800" style="normal">700.ttf</font>
+        <font weight="900" style="normal">700.ttf</font>
+    </family>
+    <!-- MiSans 作为回退 -->
     <family lang="zh">
         <font weight="400" style="normal" postScriptName="MiSans-L3">
             MiSansL3.otf
@@ -1788,6 +1800,9 @@
     </family>
     <family>
         <font weight="400" style="normal">Unicode16-new.ttf</font>
+    </family>
+    <family>
+        <font weight="400" style="normal">TempSeal.ttf</font>
     </family>
     <family>
         <font weight="400" style="normal">Unknown-symbol-supplementRegular.ttf</font>
