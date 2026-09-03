@@ -15,7 +15,6 @@
 - [MapleMono](https://github.com/subframe7536/maple-font)
 - [Plangothic](https://github.com/Fitzgerald-Porthmouth-Koenigsegg/Plangothic)
 - [Unicodia* & NewGardiner](https://github.com/Mercury13/unicodia/tree/main/Fonts) (作者声明/﻿JSesh Fonts Licenses/OFL)
-- [](https://github.com/Mercury13/unicodia/tree/main/Fonts) (作者声明/﻿JSesh Fonts Licenses/OFL)
  
 无特殊说明则默认其为 OFL-1.1 许可
  
@@ -36,7 +35,6 @@ The fonts included in this module and their licenses are as follows:
 - [MapleMono](https://github.com/subframe7536/maple-font)
 - [Plangothic](https://github.com/Fitzgerald-Porthmouth-Koenigsegg/Plangothic)
 - [Unicodia* & NewGardiner](https://github.com/Mercury13/unicodia/tree/main/Fonts) (Author's statement/﻿JSesh Fonts Licenses/OFL)
-- [](https://github.com/Mercury13/unicodia/tree/main/Fonts) (Author's statement/﻿JSesh Fonts Licenses/OFL)
  
 Unless otherwise specified, all fonts are licensed under OFL-1.1 by default.
  
