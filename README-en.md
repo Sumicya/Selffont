@@ -21,7 +21,7 @@ python3 -m venv .venv
 .venv/bin/python tools/build_module.py --base build/base/MFGA-base.zip
 ```
 
-A complete MFGA base ZIP is an explicit supplemental-font input, pinned by size and SHA-256 in `config/base-source.json` when using `prepare_base.py`. A separate font-module workflow prepares resources; it does not rebuild the APK. The assembler does **not** inherit its scripts, native tools, Zygisk, updater or numeric primary fonts. Do not install a ZIP of this checkout. Module ID remains `MFGA` to avoid competing mounts. Large inputs and outputs stay out of Git.
+A complete MFGA base ZIP is an explicit supplemental-font input, pinned by size and SHA-256 in `config/base-source.json` when using `prepare_base.py`. The separate font-module build passed for commit `10f9eef`; it does not rebuild the APK. Device installation and rendering are still unverified. The CI artifact contains the installable `Selffont-phase1.zip`, its checksum, and its build report. The assembler does **not** inherit its scripts, native tools, Zygisk, updater or numeric primary fonts. Do not install a ZIP of this checkout. Module ID remains `MFGA` to avoid competing mounts. Large inputs and outputs stay out of Git.
 
 For an installable development APK, use JDK 17, Gradle 8.11.1 and Android SDK 36:
 

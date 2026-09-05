@@ -33,7 +33,9 @@ python3 -m venv .venv
 # 如已有基础包，也可用 prepare_base.py --base /path/to/MFGA-SELFUSE.zip 校验。
 ```
 
-产物：`build/Selffont-phase1.zip`。**Build Selffont font module** 工作流负责资源下载、验证和打包，与 APK 工作流分开；尚未跑通之前不把它列为可安装发行包。KSU 模块 ID 保持 `MFGA`，避免与现有 MFGA 同时挂载冲突。不要把本仓库直接压缩成 ZIP 安装。
+**[下载本次字体模块构建产物](https://github.com/Sumicya/Selffont/actions/runs/33975295832/artifacts/9972129539)**：解开 CI 外层压缩包，实际安装文件为 `Selffont-phase1.zip`，同目录有校验文件与构建报告。
+
+产物：`build/Selffont-phase1.zip`。**Build Selffont font module** 工作流负责资源下载、验证和打包，与 APK 工作流分开；提交 `10f9eef` 的完整构建已通过，真机安装与网页绘制仍待验收。KSU 模块 ID 保持 `MFGA`，避免与现有 MFGA 同时挂载冲突。不要把本仓库直接压缩成 ZIP 安装。
 
 基础包**只提供字体资源和归属说明**，不会继承它的安装脚本、开机脚本、原生工具、Zygisk 或更新地址。数字主字体 `100.ttf`～`900.ttf` 不继承。补充字体遵守各自许可证；文渊原版文件不改字形、cmap 或内部名称，附带其 OFL。固定基础包的大小、SHA-256、release 与 asset ID 见 `config/base-source.json`；其校验与打包器输出 CRC／主字体哈希校验都通过后才发布构建产物。自选其他基础包的来源及许可仍须确认。
 
