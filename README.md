@@ -4,7 +4,7 @@
 
 **目标是统一字体家族，不是删除排版语义。** 粗体、斜体、小型大写、语言与原始 Unicode 字符应保留。系统 UI 与 Firefox 网页是两条不同的字体加载路径。
 
-> 状态：主机侧回归、Java 策略测试和诊断 APK 构建已通过 CI（提交 `16457fb`）；字体原版资源已校验。Android 安装、Xposed 注入和 Firefox 实际绘制仍需真机验证。源码存在某个 Hook 入口、日志显示成功，不等于网页已使用目标字体。
+> 状态：主机侧回归、Java 策略测试和诊断 APK 构建已通过 CI（提交 `16457fb`）；字体原版资源已校验。新 APK 的现代入口与 Firefox 的 Gecko 启动入口已有真机命中证据；当前因目标字体不可读而跳过首选项改写，网页绘制仍待验证。源码存在某个 Hook 入口、日志显示成功，不等于网页已使用目标字体。
 
 ## 当前范围
 
@@ -27,13 +27,15 @@ python3 -m venv .venv
 # 下载受限时使用官方 v1.010 原版文件；同样严格校验哈希、家族名和轴。
 .venv/bin/python tools/prepare_font.py --font /path/to/WenYuanRoundedSCVF.ttf
 
-# 当前仓库未包含完整的 MFGA 补充字体资源，因此必须显式提供一个完整基础包。
-.venv/bin/python tools/build_module.py --base /path/to/MFGA-SELFUSE.zip
+# 固定来源的完整基础包只供应补充字体（不继承代码）。
+.venv/bin/python tools/prepare_base.py
+.venv/bin/python tools/build_module.py --base build/base/MFGA-base.zip
+# 如已有基础包，也可用 prepare_base.py --base /path/to/MFGA-SELFUSE.zip 校验。
 ```
 
-产物：`build/Selffont-phase1.zip`。KSU 模块 ID 保持 `MFGA`，避免与现有 MFGA 同时挂载冲突。不要把本仓库直接压缩成 ZIP 安装。
+产物：`build/Selffont-phase1.zip`。**Build Selffont font module** 工作流负责资源下载、验证和打包，与 APK 工作流分开；尚未跑通之前不把它列为可安装发行包。KSU 模块 ID 保持 `MFGA`，避免与现有 MFGA 同时挂载冲突。不要把本仓库直接压缩成 ZIP 安装。
 
-基础包**只提供字体资源和归属说明**，不会继承它的安装脚本、开机脚本、原生工具、Zygisk 或更新地址。数字主字体 `100.ttf`～`900.ttf` 不继承。补充字体遵守各自许可证；文渊原版文件不改字形、cmap 或内部名称，附带其 OFL。基础包来源及许可仍须确认。
+基础包**只提供字体资源和归属说明**，不会继承它的安装脚本、开机脚本、原生工具、Zygisk 或更新地址。数字主字体 `100.ttf`～`900.ttf` 不继承。补充字体遵守各自许可证；文渊原版文件不改字形、cmap 或内部名称，附带其 OFL。固定基础包的大小、SHA-256、release 与 asset ID 见 `config/base-source.json`；其校验与打包器输出 CRC／主字体哈希校验都通过后才发布构建产物。自选其他基础包的来源及许可仍须确认。
 
 字体固定版本、SHA-256、内部家族名见 [`config/font-source.json`](config/font-source.json)。字体、基础包、APK、构建 ZIP 均不入 Git。构建器不访问设备，不下载或执行基础包中的代码。
 
@@ -77,6 +79,7 @@ Gecko 有自己的字体选择路径；Java `Typeface` Hook 不是通用网页�
 ```sh
 # 以下在手机 root shell 内运行；通常使用 WebUI 的确认按钮即可。
 sh /data/adb/modules/MFGA/action.sh diagnose
+sh /data/adb/modules/MFGA/action.sh logs
 sh /data/adb/modules/MFGA/action.sh gms --confirm
 sh /data/adb/modules/MFGA/action.sh app-fonts block --confirm
 sh /data/adb/modules/MFGA/action.sh app-fonts restore --confirm

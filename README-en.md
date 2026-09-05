@@ -5,7 +5,7 @@ A personal font-family replacement setup targeting **Android 16 / Oplus / Kernel
 The primary candidate is the unmodified **WenYuan Rounded SC VF v1.010**, pinned by SHA-256 in `config/font-source.json`. Preserve weight, italic, small caps and Unicode text. Whole-font/range blocking and recoloring have been removed, including their tools and workflows.
 
 - Modern Xposed API 102 only. LSPosed owns scope; there is no internal package allowlist.
-- A Gecko startup-preference adapter targets Firefox 155.0.1. Its source seam has been inspected, but rendering and device compatibility are **not yet verified**.
+- A Gecko startup-preference adapter targets Firefox 155.0.1. The adapter and a Java font factory have now been hit on the target device. Gecko preferences were deliberately left unchanged because the target font was unreadable; **webpage rendering is not yet verified**.
 - No browser extensions, profile edits or native-address hooks. If the target font is not visible in Firefox's process, no Gecko preferences are injected.
 - GMS and reader-app permission interventions require explicit manual confirmation. No boot-time application-data changes.
 
@@ -17,10 +17,11 @@ python3 -m venv .venv
 .venv/bin/python tools/prepare_font.py
 # Or verify an existing original release file:
 .venv/bin/python tools/prepare_font.py --font /path/to/WenYuanRoundedSCVF.ttf
-.venv/bin/python tools/build_module.py --base /path/to/MFGA-SELFUSE.zip
+.venv/bin/python tools/prepare_base.py
+.venv/bin/python tools/build_module.py --base build/base/MFGA-base.zip
 ```
 
-A complete MFGA base ZIP is an explicit supplemental-font input. The assembler does **not** inherit its scripts, native tools, Zygisk, updater or numeric primary fonts. Do not install a ZIP of this checkout. Module ID remains `MFGA` to avoid competing mounts. Large inputs and outputs stay out of Git.
+A complete MFGA base ZIP is an explicit supplemental-font input, pinned by size and SHA-256 in `config/base-source.json` when using `prepare_base.py`. A separate font-module workflow prepares resources; it does not rebuild the APK. The assembler does **not** inherit its scripts, native tools, Zygisk, updater or numeric primary fonts. Do not install a ZIP of this checkout. Module ID remains `MFGA` to avoid competing mounts. Large inputs and outputs stay out of Git.
 
 For an installable development APK, use JDK 17, Gradle 8.11.1 and Android SDK 36:
 

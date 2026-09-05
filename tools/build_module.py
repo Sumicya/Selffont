@@ -5,18 +5,20 @@ Only font resources are read from the base. Its scripts, binaries, zygisk, updat
 font edits and boot hooks are never inherited. No system/device writes occur here.
 """
 import argparse
+import hashlib
 import json
 import re
 import stat
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
+import xml.etree.ElementTree as ET
 
 from font_config import configure_fonts
 from prepare_font import MANIFEST, ROOT, verify_font
 
-RUNTIME_SCRIPTS = ("customize.sh", "action.sh", "service.sh", "uninstall.sh", "search_dirs.sh",
-                   "diagnose.sh", "gms_fallback.sh", "app_fonts.sh")
+RUNTIME_FILES = ("customize.sh", "action.sh", "service.sh", "uninstall.sh", "search_dirs.sh",
+                   "diagnose.sh", "gms_fallback.sh", "app_fonts.sh", "collect_logs.sh", "filter_logs.awk")
 MAX_FONT_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 
@@ -45,7 +47,7 @@ def font_members(archive):
         yield entry
 
 
-def build(base, font, output):
+def build(base, font, output, revision=None):
     report = verify_font(font)
     output = Path(output)
     if output.resolve() in (Path(base).resolve(), Path(font).resolve()):
@@ -56,8 +58,21 @@ def build(base, font, output):
         staged = Path(tmp) / "module.zip"
         with zipfile.ZipFile(base) as source, zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as dest:
             entries = list(font_members(source))
-            if not entries:
-                raise ValueError("No supplemental fonts found in the base ZIP")
+            names = {PurePosixPath(entry.filename).name for entry in entries}
+            if "NotoSansPro.otf" not in names:
+                raise ValueError("Missing NotoSansPro.otf supplemental font")
+            with Path(base).open("rb") as stream:
+                base_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
+            module_report = {
+                "sourceRevision": revision or "UNSPECIFIED",
+                "primaryFont": report,
+                "baseArchiveSha256": base_digest,
+                "supplementalFontCount": len(entries),
+                "unbundledFontReferences": sorted(referenced - names - {MANIFEST["installedFile"]}),
+                "deviceInstallation": "NOT_TESTED",
+                "webpageRendering": "NOT_TESTED",
+            }
             for entry in entries:
                 if PurePosixPath(entry.filename).name != MANIFEST["installedFile"]:
                     dest.writestr(entry.filename, source.read(entry))
@@ -66,7 +81,7 @@ def build(base, font, output):
             dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=1.4-phase1\n"
                           "versionCode=1717180004\nauthor=Selffont contributors\n"
                           "description=Android 16 / Oplus / KSU. Gecko adapter requires device validation.\n")
-            for name in RUNTIME_SCRIPTS:
+            for name in RUNTIME_FILES:
                 dest.write(ROOT / "script" / name, name)
             for directory in ("lang", "webroot", "licenses"):
                 for path in sorted((ROOT / directory).rglob("*")):
@@ -83,12 +98,20 @@ def build(base, font, output):
                     raise ValueError("Unexpected base attribution size")
                 dest.writestr("licenses/MFGA-base-LICENSES.md", source.read(info))
             dest.writestr("font-report.json", json.dumps(report, indent=2) + "\n")
+            dest.writestr("module-report.json", json.dumps(module_report, indent=2) + "\n")
             # Do not inherit a private download umask (0600) for system font files.
             # Central-directory attributes are authoritative for Unix ZIP extraction.
             for info in dest.infolist():
                 info.create_system = 3
                 mode = 0o755 if info.filename.endswith(".sh") else 0o644
                 info.external_attr = (stat.S_IFREG | mode) << 16
+        with zipfile.ZipFile(staged) as final:
+            corrupt = final.testzip()
+            if corrupt:
+                raise ValueError(f"Corrupt output archive member: {corrupt}")
+            with final.open("system/fonts/" + MANIFEST["installedFile"]) as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != report["sha256"]:
+                    raise ValueError("Packaged primary font SHA-256 differs from verified input")
         staged.replace(output)
     print(f"Built {output}; device installation/rendering NOT TESTED")
 
@@ -98,8 +121,9 @@ def main():
     parser.add_argument("--base", required=True, type=Path, help="Complete MFGA ZIP (supplemental font source)")
     parser.add_argument("--font", type=Path, default=ROOT / "build/font" / MANIFEST["file"])
     parser.add_argument("--output", type=Path, default=ROOT / "build/Selffont-phase1.zip")
+    parser.add_argument("--revision", help="Source commit recorded in the artifact report")
     args = parser.parse_args()
-    build(args.base, args.font, args.output)
+    build(args.base, args.font, args.output, args.revision)
 
 
 if __name__ == "__main__":

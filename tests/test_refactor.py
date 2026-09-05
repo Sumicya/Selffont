@@ -1,4 +1,5 @@
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -76,7 +77,7 @@ class PackagingTests(unittest.TestCase):
                 z.writestr('bin/old_tool', 'old tool')
                 z.writestr('module.prop', 'updateJson=https://upstream.example/update')
                 z.writestr('LICENSES.md', 'base attribution')
-            with patch('build_module.verify_font', return_value={'deviceRendering': 'NOT_TESTED'}) as verify:
+            with patch('build_module.verify_font', return_value={'sha256': hashlib.sha256(font.read_bytes()).hexdigest(), 'deviceRendering': 'NOT_TESTED'}) as verify:
                 build(base, font, output)
                 verify.assert_called_once_with(font)
             with zipfile.ZipFile(output) as z:
@@ -87,8 +88,24 @@ class PackagingTests(unittest.TestCase):
                 self.assertEqual(z.read('service.sh'), (ROOT/'script/service.sh').read_bytes())
                 self.assertIn('licenses/MFGA-base-LICENSES.md', z.namelist())
                 self.assertIn('licenses/WenYuan-OFL.txt', z.namelist())
+                self.assertIn('collect_logs.sh', z.namelist())
+                self.assertIn('filter_logs.awk', z.namelist())
+                self.assertIn('module-report.json', z.namelist())
                 self.assertEqual(stat.S_IMODE(z.getinfo('system/fonts/' + MANIFEST['installedFile']).external_attr >> 16), 0o644)
                 self.assertEqual(stat.S_IMODE(z.getinfo('action.sh').external_attr >> 16), 0o755)
+
+    def test_changed_primary_does_not_publish_an_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            base, font, output = temp/'base.zip', temp/'font.ttf', temp/'module.zip'
+            font.write_bytes(b'changed after verification')
+            output.write_bytes(b'previous output')
+            with zipfile.ZipFile(base, 'w') as archive:
+                archive.writestr('system/fonts/NotoSansPro.otf', b'fixture')
+            with patch('build_module.verify_font', return_value={'sha256': '0' * 64}):
+                with self.assertRaisesRegex(ValueError, 'Packaged primary font SHA-256'):
+                    build(base, font, output)
+            self.assertEqual(output.read_bytes(), b'previous output')
 
     def test_malformed_archive_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -32,41 +32,19 @@
 
 只需要提供这些标签附近的信息；无需完整浏览记录、网页内容或用户 profile。
 
-## 2.1 一次性导出日志，不逐条复制
+## 2.1 日志导出：按来源字段筛选并去重
 
-安装使用 APK 下载链接和系统安装器；Termux 用于必要的诊断收集，而不是代替常规安装操作。
+首次导出使用全文关键词匹配，会混入旧版 MFGA 记录、其他模块正文中的网址／Intent，以及模块日志与详细日志的重复行。已经改为按实测的 `LSPosedLogDaemon` 结构字段匹配：来源必须是 `[com.mfga.xposed,Selffont,...]`，不能仅在消息正文中提到这个名称。去重只去除完全相同的记录，不合并不同进程的相同事件，最多输出最后 300 条唯一记录。
 
-在完成一次 Firefox 冷启动后，在 Termux 执行下方整段。它只读取日志并在 `Download` 创建一个带时间戳的 TXT 文件，不清空日志、不停止应用、不改字体或应用权限。上传该文件即可，不需要从 LSPosed 界面逐条长按复制，也不需要安装 Termux:API。
+`script/filter_logs.awk` 与 `script/collect_logs.sh` 已加入模块打包。它们只读当前 `/data/adb/lspd/log/modules*.log` 和 `verbose*.log`，不读取配置数据库、props 或完整系统缓冲区；没有匹配会明确报告，不能据此判定未注入。
 
-优先读取 `/data/adb/lspd/log/modules*.log` 与 `verbose*.log` 中匹配 `Selffont` 或 `com.mfga.xposed` 的行，最多保留 300 行；没有匹配时才尝试 logcat，同样只导出匹配行。仍为空会生成明确的无匹配报告，不能据此直接判定未注入。不会导出完整系统日志、配置数据库、props 或其他模块的全部日志。
+**本轮已有日志足以验证入口，不需要重新采集。** 后续安装包含这两个文件的新字体模块后，若需要一次性导出：
 
 ```sh
-su -c '
-umask 022
-mkdir -p /sdcard/Download || exit 1
-out="/sdcard/Download/selffont-log-$(date +%Y%m%d-%H%M%S)-$$.txt"
-{
-  for f in /data/adb/lspd/log/modules*.log /data/adb/lspd/log/verbose*.log; do
-    [ -f "$f" ] || continue
-    grep -hE "Selffont|com[.]mfga[.]xposed" "$f"
-  done
-} 2>/dev/null | tail -n 300 > "$out" || exit 1
-if [ ! -s "$out" ]; then
-  logcat -d -b all -v threadtime 2>/dev/null |
-    grep -E "Selffont|com[.]mfga[.]xposed" |
-    tail -n 300 > "$out" || exit 1
-fi
-if [ ! -s "$out" ]; then
-  {
-    echo "No matching Selffont log lines. This alone does not prove injection failed."
-    ls -ld /data/adb/lspd/log 2>&1
-  } > "$out"
-fi
-printf "Exported: %s\n" "$out"
-'
+su -c 'sh /data/adb/modules/MFGA/action.sh logs > /sdcard/Download/selffont-log.txt'
 ```
 
-日志目录和文件前缀已核对 LSPosed v1.9.2 的 `ConfigFileManager.java` 及 Vector v2.2 的 `FileSystem.kt`；两者都使用该路径。这只用于建立兼容的读取路径，不把 Vector v2.2-3080 等同于用户报告的 LSPosed 2.2.0-7854。用户框架的具体分支仍需以实际采集结果为准。
+上传 TXT 附件即可，不需要长按逐条复制；安装 APK 则使用正常下载链接和系统安装器，不需要 Termux 安装流程。日志目录已核对 LSPosed v1.9.2 和 Vector v2.2 的源码，以及本轮实际采集结果；不把不同项目的版本号等同起来。
 
 ## 3. 网页对照
 
@@ -122,7 +100,7 @@ sh tests/run_java.sh
 - 产物 `selffont-phase1-debug-apk`，artifact ID `9971236132`，ZIP 大小 25,312 字节。GitHub 记录的 **ZIP** SHA-256 为 `21651edea1f77f56afc081cbe7f0047f0a45b2fb99b40d7d37a4e1f7d067ae9b`；这不是解压后的 APK 哈希。
 - 本工作环境不能连接产物存储的下载地址，因此上述远端状态和元数据已核对，但尚未在这里检查 APK 二进制或签名。手机可以用 `gh run download` 直接获取产物。
 - 用户的只读设备检查确认 `/system/bin/stat`、`realpath`、`flock` 存在；现有 MFGA 为 `17.0.1.08-31-alpha2` / `1717180003`。工具存在不等于所有 Shell 行为已真机测试。
-- 真机 APK 安装、Xposed 实际入口命中、完整字体模块打包／安装和 Firefox 绘制仍待验证。
+- 新 APK 的现代入口与 Gecko 启动入口已由下方设备日志验证；完整字体模块打包／安装、首选项实际改写与 Firefox 绘制仍待验证。
 
 ### 先做 APK 入口验证，不把旧字体模块当作新模块
 
@@ -136,3 +114,20 @@ sh tests/run_java.sh
 gh run download 33972078207 -R Sumicya/Selffont \
   -n selffont-phase1-debug-apk -D "$HOME/selffont-apk-16457fb"
 ```
+
+## 首次设备入口验证（用户提供的 2026-09-05 日志）
+
+只记录必要结论和本模块的诊断标签，不保存其他模块的 Intent、网址或完整原始日志。
+
+| 时间 | 本模块证据 | 结论 |
+|---|---|---|
+| 22:51:24.429 | `[attach] phase1 modern-api102 package=org.mozilla.firefox` | 新 APK 已进入 Firefox 主进程 |
+| 22:51:24.430–.434 | 5 个 Typeface 工厂及 `RuntimeSettings.getPrefsMap()` 的 `[hook-installed]` | 对应入口安装完成 |
+| 22:51:24.543 | `[gecko-skip] target font not visible in this process; prefs unchanged` | Gecko 根运行时入口实际命中；字体不可读，首选项未改写 |
+| 22:51:25.167 | `[typeface-hit] ...CustomFallbackBuilder.build()` | 至少这个 Java 工厂实际执行了替换路径，不能外推所有工厂或网页 |
+
+Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进程初始化，不单独视为 Hook 循环或崩溃。更早的 `MFGA v1.5` 日志不作为本轮新实现的证据，也不能仅凭历史记录推断新旧模块仍在同时运行。
+
+当前明确阻断点是目标文件在 Firefox 中不可读。此日志本身不能区分未安装字体、挂载命名空间差异和读取权限问题；由于此前尚未交付新字体模块，下一步先完成文渊资源包，再验证可见性。不继续增加 Hook，也不把 `getPrefsMap()` 命中当作网页字体替换成功。
+
+后续资源构建与日志过滤回归：32 项 Python 测试、3 项 Node 测试通过；包括来源字段过滤、旧版本／其他模块正文引用排除、重复记录去重、固定基础包身份，以及打包后主字体哈希复核。真实基础包下载与完整模块构建仍待独立 CI 执行。
