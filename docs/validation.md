@@ -32,6 +32,42 @@
 
 只需要提供这些标签附近的信息；无需完整浏览记录、网页内容或用户 profile。
 
+## 2.1 一次性导出日志，不逐条复制
+
+安装使用 APK 下载链接和系统安装器；Termux 用于必要的诊断收集，而不是代替常规安装操作。
+
+在完成一次 Firefox 冷启动后，在 Termux 执行下方整段。它只读取日志并在 `Download` 创建一个带时间戳的 TXT 文件，不清空日志、不停止应用、不改字体或应用权限。上传该文件即可，不需要从 LSPosed 界面逐条长按复制，也不需要安装 Termux:API。
+
+优先读取 `/data/adb/lspd/log/modules*.log` 与 `verbose*.log` 中匹配 `Selffont` 或 `com.mfga.xposed` 的行，最多保留 300 行；没有匹配时才尝试 logcat，同样只导出匹配行。仍为空会生成明确的无匹配报告，不能据此直接判定未注入。不会导出完整系统日志、配置数据库、props 或其他模块的全部日志。
+
+```sh
+su -c '
+umask 022
+mkdir -p /sdcard/Download || exit 1
+out="/sdcard/Download/selffont-log-$(date +%Y%m%d-%H%M%S)-$$.txt"
+{
+  for f in /data/adb/lspd/log/modules*.log /data/adb/lspd/log/verbose*.log; do
+    [ -f "$f" ] || continue
+    grep -hE "Selffont|com[.]mfga[.]xposed" "$f"
+  done
+} 2>/dev/null | tail -n 300 > "$out" || exit 1
+if [ ! -s "$out" ]; then
+  logcat -d -b all -v threadtime 2>/dev/null |
+    grep -E "Selffont|com[.]mfga[.]xposed" |
+    tail -n 300 > "$out" || exit 1
+fi
+if [ ! -s "$out" ]; then
+  {
+    echo "No matching Selffont log lines. This alone does not prove injection failed."
+    ls -ld /data/adb/lspd/log 2>&1
+  } > "$out"
+fi
+printf "Exported: %s\n" "$out"
+'
+```
+
+日志目录和文件前缀已核对 LSPosed v1.9.2 的 `ConfigFileManager.java` 及 Vector v2.2 的 `FileSystem.kt`；两者都使用该路径。这只用于建立兼容的读取路径，不把 Vector v2.2-3080 等同于用户报告的 LSPosed 2.2.0-7854。用户框架的具体分支仍需以实际采集结果为准。
+
 ## 3. 网页对照
 
 使用项目的 `webroot/diagnostics.html`，同时提供 `styles.css`、`probe.ttf`。可以在电脑上临时启动静态服务器并从同一网络的手机访问：
