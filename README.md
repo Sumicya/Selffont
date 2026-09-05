@@ -33,7 +33,7 @@ python3 -m venv .venv
 # 如已有基础包，也可用 prepare_base.py --base /path/to/MFGA-SELFUSE.zip 校验。
 ```
 
-**[初版历史字体模块产物（已报告数字基线问题）](https://github.com/Sumicya/Selffont/actions/runs/33975295832/artifacts/9972129539)**：解开 CI 外层压缩包，实际安装文件为 `Selffont-phase1.zip`，同目录有校验文件与构建报告。
+**[下载基线兼容修订 1.4-phase1.1](https://github.com/Sumicya/Selffont/actions/runs/33980570752/artifacts/9973622240)**：解开 CI 外层压缩包，实际安装文件为 `Selffont-phase1.zip`，同目录有校验文件与构建报告。已恢复原 Android 度量载体；角标对齐效果仍需真机确认。APK 无需更新。
 
 产物：`build/Selffont-phase1.zip`。**Build Selffont font module** 工作流负责资源下载、验证和打包，与 APK 工作流分开；提交 `10f9eef` 的完整构建已通过，真机安装与网页绘制仍待验收。KSU 模块 ID 保持 `MFGA`，避免与现有 MFGA 同时挂载冲突。不要把本仓库直接压缩成 ZIP 安装。
 

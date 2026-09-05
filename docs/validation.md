@@ -155,3 +155,12 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 - 恢复原配置的无可见字符 Roboto 度量载体，文渊作为首个字形回退；只调整 XML 的职责与顺序，不改文渊数据，不按机型硬编码像素上移。新增 carrier 覆盖检查阻止普通 Roboto 抢占可见字形。
 - 日志解析改为与显示前缀无关的来源字段解析。空结果同时输出 `parsed_origins`、`own_module`、`other_tags`：可区分输入未解析出来源、未见本模块，以及仅见本模块其他 tag，仍不直接判定注入失败。
 - 本次主机回归 36 项 Python、3 项 Node 通过；新增前缀／空白、空壳字体／可见字符拒绝测试。数字在具体控件中的最终对齐与这次空日志的实际原因，仍需设备反馈确认。
+
+### 基线兼容修订 CI 结果
+
+- 提交 `53c1a504df3edaabd151fab28430474ee2811a31` 的 [模块构建 #33980570752](https://github.com/Sumicya/Selffont/actions/runs/33980570752) 和 [契约检查 #33980570744](https://github.com/Sumicya/Selffont/actions/runs/33980570744) 均成功。
+- 本次真实模块构建的检查注释确认：继承的 Roboto 无可见字符覆盖；UPM 2048；hhea 1900/-500/0；SHA-256 为 `a081911121b8fd39e90be6bac1c1150183f8cc8bc80e9cdd1710a06875b50caa`。这些是实际基础包的值，不是测试夹具的 UPM 1000 / hhea 930/-250。
+- [产物 #9973622240](https://github.com/Sumicya/Selffont/actions/runs/33980570752/artifacts/9973622240)，107,898,660 字节；外层产物 ZIP SHA-256：`2e5e2473c3b35e0138aaf1c63b70717670978d0bc0bb9d075daed86705741786`。
+- 内层模块版本 `1.4-phase1.1`，versionCode `1717180005`；原版文渊的固定 SHA-256 不变，APK 不变。
+- 若日志仍无匹配，`parsed_origins=0` 表示这批输入没有解析出来源（可能为空或格式不同）；`parsed_origins>0, own_module=0` 表示识别了来源但未见本模块；`other_tags>0` 表示存在本模块的其他 tag。都不能单独用来判定当前注入状态。
+- 此次仍未在用户设备上确认角标的具体绘制结果。若问题持续，需要偏低数字的裁剪图和所属界面，以区分默认字体度量、具体控件固定基线与其他字体家族。
