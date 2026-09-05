@@ -1,0 +1,11 @@
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+/build/
+/dist/
+/artifacts/
+/downloads/
+**/.gradle/
+**/build/
+mfga-xposed/local.properties

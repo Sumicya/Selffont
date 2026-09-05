@@ -17,6 +17,7 @@ export function exec(command, options = {}) {
             if (typeof ksu !== 'undefined') {
                 ksu.exec(command, JSON.stringify(options), callbackFuncName);
             } else {
+                cleanup(callbackFuncName);
                 resolve({ errno: 1, stdout: "", stderr: "ksu is not defined" });
             }
         } catch (error) {
