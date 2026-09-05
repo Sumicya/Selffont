@@ -14,6 +14,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'tools'))
 from prepare_base import verify_base, prepare
+from prepare_font import verify_metric_carrier
+from font_fixtures import metrics_carrier
 
 
 class BaseSourceTests(unittest.TestCase):
@@ -64,6 +66,18 @@ class BaseSourceTests(unittest.TestCase):
         self.assertEqual(len(data['sha256']), 64)
 
 
+class MetricCarrierTests(unittest.TestCase):
+    def test_empty_metrics_font_preserves_layout_without_visible_glyphs(self):
+        result = verify_metric_carrier(metrics_carrier())
+        self.assertEqual(result['visibleCodepoints'], 0)
+        self.assertEqual(result['nonInkCodepoints'], [32])
+        self.assertEqual(result['layoutMetrics']['hhea'], [930, -250, 0])
+
+    def test_visible_coverage_is_rejected_even_with_blank_outlines(self):
+        with self.assertRaisesRegex(ValueError, 'visible character coverage'):
+            verify_metric_carrier(metrics_carrier(visible=True))
+
+
 @unittest.skipUnless(shutil.which('busybox'), 'requires the target BusyBox shell model')
 class LogFilterTests(unittest.TestCase):
     def line(self, origin='com.mfga.xposed,Selffont', message='[attach] phase1', process='org.mozilla.firefox'):
@@ -83,6 +97,24 @@ class LogFilterTests(unittest.TestCase):
             self.line('com.example.observer,Other', 'quoted record: ' + current),
         ]
         self.assertEqual(self.filter('\n'.join(inputs)+'\n'), current+'\n')
+
+    def test_timestamp_prefix_and_spacing_are_not_part_of_origin_identity(self):
+        original = self.line()
+        payload = original.split('] ', 1)[1]
+        lines = [
+            payload,
+            '01-01 00:00:00 123 456 I LSPosedLogDaemon: ' + payload,
+            '\x1b[32m' + original,
+            original.replace(')[', ') [').replace(',Selffont,', ', Selffont ,'),
+        ]
+        self.assertEqual(self.filter('\n'.join(lines)).splitlines(), lines)
+
+    def test_no_match_explains_whether_module_records_were_seen(self):
+        old = self.line('com.mfga.xposed,MFGA', 'old private message')
+        other = self.line('com.example.other,Other', 'unrelated private message')
+        result = self.filter(old+'\n'+other)
+        self.assertIn('parsed_origins=2 own_module=1 other_tags=1', result)
+        self.assertNotIn('private message', result)
 
     def test_duplicates_removed_but_distinct_processes_retained(self):
         main = self.line()

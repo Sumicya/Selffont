@@ -7,6 +7,7 @@ font edits and boot hooks are never inherited. No system/device writes occur her
 import argparse
 import hashlib
 import json
+import os
 import re
 import stat
 import tempfile
@@ -14,8 +15,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 import xml.etree.ElementTree as ET
 
-from font_config import configure_fonts
-from prepare_font import MANIFEST, ROOT, verify_font
+from font_config import configure_fonts, METRIC_CARRIER
+from prepare_font import MANIFEST, ROOT, verify_font, verify_metric_carrier
 
 RUNTIME_FILES = ("customize.sh", "action.sh", "service.sh", "uninstall.sh", "search_dirs.sh",
                    "diagnose.sh", "gms_fallback.sh", "app_fonts.sh", "collect_logs.sh", "filter_logs.awk")
@@ -61,12 +62,16 @@ def build(base, font, output, revision=None):
             names = {PurePosixPath(entry.filename).name for entry in entries}
             if "NotoSansPro.otf" not in names:
                 raise ValueError("Missing NotoSansPro.otf supplemental font")
+            if METRIC_CARRIER not in names:
+                raise ValueError("Missing inherited Roboto metrics carrier")
+            carrier = verify_metric_carrier(source.read("system/fonts/" + METRIC_CARRIER))
             with Path(base).open("rb") as stream:
                 base_digest = hashlib.file_digest(stream, "sha256").hexdigest()
             referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
             module_report = {
                 "sourceRevision": revision or "UNSPECIFIED",
                 "primaryFont": report,
+                "androidMetricsCarrier": carrier,
                 "baseArchiveSha256": base_digest,
                 "supplementalFontCount": len(entries),
                 "unbundledFontReferences": sorted(referenced - names - {MANIFEST["installedFile"]}),
@@ -78,8 +83,8 @@ def build(base, font, output, revision=None):
                     dest.writestr(entry.filename, source.read(entry))
             dest.write(font, "system/fonts/" + MANIFEST["installedFile"])
             dest.writestr("fonts.xml", xml)
-            dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=1.4-phase1\n"
-                          "versionCode=1717180004\nauthor=Selffont contributors\n"
+            dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=1.4-phase1.1\n"
+                          "versionCode=1717180005\nauthor=Selffont contributors\n"
                           "description=Android 16 / Oplus / KSU. Gecko adapter requires device validation.\n")
             for name in RUNTIME_FILES:
                 dest.write(ROOT / "script" / name, name)
@@ -99,6 +104,12 @@ def build(base, font, output, revision=None):
                 dest.writestr("licenses/MFGA-base-LICENSES.md", source.read(info))
             dest.writestr("font-report.json", json.dumps(report, indent=2) + "\n")
             dest.writestr("module-report.json", json.dumps(module_report, indent=2) + "\n")
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                metrics = carrier["layoutMetrics"]
+                # Public resource diagnostics, readable through the checks API too.
+                print("::notice title=Android font metrics::Verified no-visible-glyph carrier; "
+                      f"UPM={metrics['unitsPerEm']}; hhea={metrics['hhea']}; "
+                      f"SHA256={carrier['sha256']}")
             # Do not inherit a private download umask (0600) for system font files.
             # Central-directory attributes are authoritative for Unix ZIP extraction.
             for info in dest.infolist():

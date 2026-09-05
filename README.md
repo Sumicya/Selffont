@@ -13,7 +13,7 @@
 - 删除整字体屏蔽、Unicode 区间屏蔽、上色及其 C 工具、脚本、WebUI 和 CI。
 - 仅现代 Xposed API **102**；无内部应用白名单，LSPosed 勾选是唯一作用域来源。
 - GMS 与阅读应用字体权限处理仅为**手动兜底**。安装、开机、打开 WebUI 不执行它们。
-- 原来的 `fonts.xml` 保留为补充字体配置输入；打包器生成实际安装配置，将默认、衬线、等宽、花体等主要家族指向文渊，移除空壳 Roboto → 数字主字体的回退绕路。
+- 原来的 `fonts.xml` 保留为补充字体配置输入；打包器生成实际安装配置，将可见字形指向文渊。Android 默认与 condensed 家族保留原来的空壳 Roboto 度量载体，首个字形回退改为文渊；不再继承旧数字主字体文件。
 - 未适配其他 Android/ROM/root 管理器；不能将这个个人方案的测试结果外推为通用兼容承诺。
 
 ## 构建字体模块
@@ -33,7 +33,7 @@ python3 -m venv .venv
 # 如已有基础包，也可用 prepare_base.py --base /path/to/MFGA-SELFUSE.zip 校验。
 ```
 
-**[下载本次字体模块构建产物](https://github.com/Sumicya/Selffont/actions/runs/33975295832/artifacts/9972129539)**：解开 CI 外层压缩包，实际安装文件为 `Selffont-phase1.zip`，同目录有校验文件与构建报告。
+**[初版历史字体模块产物（已报告数字基线问题）](https://github.com/Sumicya/Selffont/actions/runs/33975295832/artifacts/9972129539)**：解开 CI 外层压缩包，实际安装文件为 `Selffont-phase1.zip`，同目录有校验文件与构建报告。
 
 产物：`build/Selffont-phase1.zip`。**Build Selffont font module** 工作流负责资源下载、验证和打包，与 APK 工作流分开；提交 `10f9eef` 的完整构建已通过，真机安装与网页绘制仍待验收。KSU 模块 ID 保持 `MFGA`，避免与现有 MFGA 同时挂载冲突。不要把本仓库直接压缩成 ZIP 安装。
 

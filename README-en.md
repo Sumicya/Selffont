@@ -39,3 +39,5 @@ Open `webroot/diagnostics.html` with `probe.ttf` beside it in the target Firefox
 Reader-app permissions are journaled before modification and restored by identity and recorded mode, not guessed as 600. Uninstall attempts that restoration. Old unrecorded changes cannot be reconstructed. GMS cache deletion is irreversible and disabled GMS components remain disabled after uninstall.
 
 Full scope, evidence, limitations and device test procedure: [Chinese README](README.md), [architecture](docs/architecture.md), [validation](docs/validation.md).
+
+The baseline compatibility revision retains the inherited no-visible-glyph Roboto metrics carrier for Android native default/condensed families, with WenYuan as the first glyph fallback. It does not edit WenYuan outlines, character mappings or names. The initial direct-primary configuration is no longer the recommended layout policy; badge alignment still needs device confirmation.

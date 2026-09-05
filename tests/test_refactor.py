@@ -15,15 +15,16 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from font_config import configure_fonts, PRIMARY_NAMES
+from font_config import configure_fonts, PRIMARY_NAMES, METRIC_FAMILIES, METRIC_CARRIER
 from prepare_font import MANIFEST, verify_font
 from build_module import build, font_members
+from font_fixtures import metrics_carrier
 
 
 class FontConfigurationTests(unittest.TestCase):
     def test_primary_families_and_axes(self):
         root = ET.fromstring(configure_fonts((ROOT / 'fonts.xml').read_bytes(), MANIFEST['installedFile']))
-        for name in PRIMARY_NAMES:
+        for name in PRIMARY_NAMES - METRIC_FAMILIES:
             family = root.find(f"family[@name='{name}']")
             self.assertIsNotNone(family, name)
             fonts = family.findall('font')
@@ -34,7 +35,21 @@ class FontConfigurationTests(unittest.TestCase):
                 self.assertEqual(axes['wght'], font.get('weight'))
                 self.assertEqual(axes['ital'], '1' if font.get('style') == 'italic' else '0')
                 self.assertEqual(set(axes), {'wght', 'ital'})
-        # Preserve fallback coverage and alias semantics, not the empty-Roboto workaround.
+        # Preserve Android layout metrics separately from the glyph source.
+        source = ET.fromstring((ROOT / 'fonts.xml').read_bytes())
+        for name in METRIC_FAMILIES:
+            before = source.find(f"family[@name='{name}']")
+            after = root.find(f"family[@name='{name}']")
+            describe = lambda family: [(f.attrib, (f.text or '').strip(), [a.attrib for a in f])
+                                       for f in family.findall('font')]
+            self.assertEqual(describe(before), describe(after))
+        families = root.findall('family')
+        self.assertEqual(families[0].get('name'), 'sans-serif')
+        self.assertIsNone(families[1].get('name'))
+        self.assertEqual(len(families[1].findall('font')), 18)
+        self.assertEqual({f.text.strip() for f in families[1]}, {MANIFEST['installedFile']})
+        self.assertEqual({f.text.strip() for f in families[0]}, {METRIC_CARRIER})
+        # Supplemental coverage and style aliases still remain.
         self.assertTrue(any((f.text or '').strip() == 'NotoSansPro.otf' for f in root.iter('font')))
         self.assertIsNotNone(root.find("alias[@name='sans-serif-semibold']"))
         self.assertFalse(any((f.text or '').strip() == '400.ttf' for f in root.iter('font')))
@@ -72,6 +87,7 @@ class PackagingTests(unittest.TestCase):
             font.write_bytes(b'fixture font')
             with zipfile.ZipFile(base, 'w') as z:
                 z.writestr('system/fonts/NotoSansPro.otf', b'fallback fixture')
+                z.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
                 z.writestr('system/fonts/400.ttf', b'old primary')
                 z.writestr('service.sh', 'dangerous old boot hook')
                 z.writestr('bin/old_tool', 'old tool')
@@ -91,6 +107,9 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn('collect_logs.sh', z.namelist())
                 self.assertIn('filter_logs.awk', z.namelist())
                 self.assertIn('module-report.json', z.namelist())
+                report = json.loads(z.read('module-report.json'))
+                self.assertEqual(report['androidMetricsCarrier']['visibleCodepoints'], 0)
+                self.assertIn('versionCode=1717180005', z.read('module.prop').decode())
                 self.assertEqual(stat.S_IMODE(z.getinfo('system/fonts/' + MANIFEST['installedFile']).external_attr >> 16), 0o644)
                 self.assertEqual(stat.S_IMODE(z.getinfo('action.sh').external_attr >> 16), 0o755)
 
@@ -102,6 +121,7 @@ class PackagingTests(unittest.TestCase):
             output.write_bytes(b'previous output')
             with zipfile.ZipFile(base, 'w') as archive:
                 archive.writestr('system/fonts/NotoSansPro.otf', b'fixture')
+                archive.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
             with patch('build_module.verify_font', return_value={'sha256': '0' * 64}):
                 with self.assertRaisesRegex(ValueError, 'Packaged primary font SHA-256'):
                     build(base, font, output)
