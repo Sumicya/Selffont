@@ -29,7 +29,7 @@ cd mfga-xposed
 gradle --no-daemon assembleDebug
 ```
 
-The CI workflow builds a diagnostic APK, not a stable production-signed release. A signature change requires uninstalling the previous APK and selecting scope again. No APK build or device success should be inferred from host-side tests.
+The host-contract checks (including Java policies) and diagnostic APK build passed CI for commit `16457fb`. See `docs/validation.md` for the run links and remaining device checks. The CI workflow builds a diagnostic APK, not a stable production-signed release. A signature change requires uninstalling the previous APK and selecting scope again. No APK build or device success should be inferred from host-side tests.
 
 ## Validation and recovery
 

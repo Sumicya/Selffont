@@ -73,7 +73,7 @@ sh tests/run_java.sh
 .venv/bin/python tools/prepare_font.py --font /path/to/original/WenYuanRoundedSCVF.ttf
 ```
 
-完整 APK 构建另需 JDK 17、Gradle 8.11.1、SDK 36；CI 配置存在不表示 CI 已运行。测试基础 ZIP 是合成输入，不是现有完整 MFGA 的装机证据。
+完整 APK 构建另需 JDK 17、Gradle 8.11.1、SDK 36；本次 CI 运行结果记录如下。测试基础 ZIP 是合成输入，不是现有完整 MFGA 的装机证据。
 
 ## 本轮主机验证记录（2026-09-05）
 
@@ -81,5 +81,22 @@ sh tests/run_java.sh
 - 3 项 Node 测试通过（KernelSU 返回契约、固定命令与确认、语言回退）。
 - Shell / JavaScript 语法检查、`git diff --check` 通过；WebUI、对照页和字体探针的 HTTP 请求均返回 200。
 - 文渊原版实物已核对固定 SHA-256、family、变体轴与基础字符；大资源未加入 Git。
-- Java 策略测试已加入仓库与 CI，但此环境没有 JDK 编译器；本轮未运行该组测试。
-- 此环境也没有 Android SDK，因此 APK 构建、CI 构建结果、真实基础包完整装机与 Firefox 绘制均未验证。没有生成或宣称可用的安装 APK／完整模块发行包。
+- 提交 `16457fb7ce18f15a7e82c64007d9dda4153dab15` 的 [主机契约 CI](https://github.com/Sumicya/Selffont/actions/runs/33972078226) 成功，包含 Python、Node 和 Java 策略测试。
+- 同一提交的 [诊断 APK CI](https://github.com/Sumicya/Selffont/actions/runs/33972078207) 成功，已确认 SDK 安装、Java 策略测试、`assembleDebug`、产物上传步骤均成功。
+- 产物 `selffont-phase1-debug-apk`，artifact ID `9971236132`，ZIP 大小 25,312 字节。GitHub 记录的 **ZIP** SHA-256 为 `21651edea1f77f56afc081cbe7f0047f0a45b2fb99b40d7d37a4e1f7d067ae9b`；这不是解压后的 APK 哈希。
+- 本工作环境不能连接产物存储的下载地址，因此上述远端状态和元数据已核对，但尚未在这里检查 APK 二进制或签名。手机可以用 `gh run download` 直接获取产物。
+- 用户的只读设备检查确认 `/system/bin/stat`、`realpath`、`flock` 存在；现有 MFGA 为 `17.0.1.08-31-alpha2` / `1717180003`。工具存在不等于所有 Shell 行为已真机测试。
+- 真机 APK 安装、Xposed 实际入口命中、完整字体模块打包／安装和 Firefox 绘制仍待验证。
+
+### 先做 APK 入口验证，不把旧字体模块当作新模块
+
+当前现有 MFGA 与新文渊模块是不同资源状态。只安装诊断 APK 时，先检查 LSPosed 是否识别现代入口，以及 Firefox 冷启动后的 `[attach]`、`[hook-installed]`、`[gecko-skip]` / `[gecko-prefs]` 日志。
+
+如果进程中还没有 `/system/fonts/Selffont-WenYuanRoundedSCVF.ttf`，`[gecko-skip]` 是缺少资源时的预期保护行为；不能用这时网页没有变化来判定偏好适配无效，也不能把入口命中算作网页字体替换成功。完整网页对照应在准备、安装并确认新字体资源可见之后进行。
+
+下载本次 APK（普通 Termux，无需 root）：
+
+```sh
+gh run download 33972078207 -R Sumicya/Selffont \
+  -n selffont-phase1-debug-apk -D "$HOME/selffont-apk-16457fb"
+```
