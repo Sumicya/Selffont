@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from font_config import configure_fonts, PRIMARY_NAMES, METRIC_FAMILIES, METRIC_CARRIER
 from prepare_font import MANIFEST, verify_font
 from build_module import build, font_members
-from font_fixtures import metrics_carrier
+from font_fixtures import metrics_carrier, primary_font
 
 
 class FontConfigurationTests(unittest.TestCase):
@@ -84,7 +84,7 @@ class PackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
             base, font, output = temp/'base.zip', temp/'font.ttf', temp/'module.zip'
-            font.write_bytes(b'fixture font')
+            font.write_bytes(primary_font())
             with zipfile.ZipFile(base, 'w') as z:
                 z.writestr('system/fonts/NotoSansPro.otf', b'fallback fixture')
                 z.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
@@ -109,7 +109,18 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn('module-report.json', z.namelist())
                 report = json.loads(z.read('module-report.json'))
                 self.assertEqual(report['androidMetricsCarrier']['visibleCodepoints'], 0)
-                self.assertIn('versionCode=1717180005', z.read('module.prop').decode())
+                # Line metrics were normalised to the carrier; outlines were not.
+                metric = report['metricNormalization']
+                self.assertEqual(metric['normalized']['hhea'], metric['normalized']['typo'])
+                self.assertNotEqual(metric['original']['hhea'], metric['normalized']['hhea'])
+                # The packaged font differs from the untouched original (metrics only)...
+                self.assertNotEqual(metric['originalSha256'], metric['normalizedSha256'])
+                packaged = z.read('system/fonts/' + MANIFEST['installedFile'])
+                self.assertEqual(hashlib.sha256(packaged).hexdigest(), metric['normalizedSha256'])
+                # ...but its glyph outlines, cmap and axes are byte-identical.
+                from metric_normalize import assert_glyphs_preserved
+                assert_glyphs_preserved(font.read_bytes(), packaged)
+                self.assertIn('versionCode=', z.read('module.prop').decode())
                 self.assertEqual(stat.S_IMODE(z.getinfo('system/fonts/' + MANIFEST['installedFile']).external_attr >> 16), 0o644)
                 self.assertEqual(stat.S_IMODE(z.getinfo('action.sh').external_attr >> 16), 0o755)
 
@@ -123,7 +134,7 @@ class PackagingTests(unittest.TestCase):
                 archive.writestr('system/fonts/NotoSansPro.otf', b'fixture')
                 archive.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
             with patch('build_module.verify_font', return_value={'sha256': '0' * 64}):
-                with self.assertRaisesRegex(ValueError, 'Packaged primary font SHA-256'):
+                with self.assertRaisesRegex(ValueError, 'changed after verification'):
                     build(base, font, output)
             self.assertEqual(output.read_bytes(), b'previous output')
 

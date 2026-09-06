@@ -14,6 +14,7 @@
 - 仅现代 Xposed API **102**；无内部应用白名单，LSPosed 勾选是唯一作用域来源。
 - GMS 与阅读应用字体权限处理仅为**手动兜底**。安装、开机、打开 WebUI 不执行它们。
 - 原来的 `fonts.xml` 保留为补充字体配置输入；打包器生成实际安装配置，将可见字形指向文渊。Android 默认与 condensed 家族保留原来的空壳 Roboto 度量载体，首个字形回退改为文渊；不再继承旧数字主字体文件。
+- 打包阶段将**安装副本**文渊的竖直行度量（`hhea`/`OS/2` typo，随载体设 `USE_TYPO_METRICS`）归一到 Roboto 载体名义度量，修正紧凑定高槽（通知计数、红点角标、时钟等）中数字偏低/切下沿。**只改行度量**：字形、cmap、family、`wght/ital` 轴逐字节保留；上游原版文件与其固定 SHA-256 不变；带构建期防切保护。见 `tools/metric_normalize.py`。
 - 未适配其他 Android/ROM/root 管理器；不能将这个个人方案的测试结果外推为通用兼容承诺。
 
 ## 构建字体模块
@@ -102,6 +103,8 @@ sh tests/run_java.sh   # JDK 17+
 
 Shell 行为测试使用 BusyBox ash 和临时目录，不碰真实 `/data`。打包测试使用合成基础 ZIP，不代替真实完整基础包测试。原有 `tools/GPOS`、字体合并及 Emoji 工具不在这轮重构范围内。
 
-### 当前角标诊断边界
+### 角标修复：度量归一（1.4-phase2-metrics）
 
-原版字体继续保持不变。已测得 carrier 能校正名义 Paint 度量，但不改变文渊 glyph run 的行度量；用户选择继续定位具体 SystemUI 控件。新版诊断 APK 对用户手动勾选的 SystemUI 只做限量、只读的 `7` / `10` 绘制观察，不替换其 Typeface，不自动添加作用域；Firefox 行为不变。参见 `docs/validation.md`。
+只读观察已把偏低的 `7`/`10` 定位到分组通知折叠计数（`NotificationChildrenContainer` 内的 `TextView`/`StaticLayout`）。根因是**测量用载体名义度量、绘制用文渊回退更大的真实度量**，baseline 被顶低约 7px、墨迹超框时切下沿；红点角标、时钟等紧凑定高槽同理。
+
+激进根治：打包阶段把安装副本文渊的竖直行度量归一到载体名义度量，两条路径一致后 baseline 归位。主机复算 baseline 抬升 6.96px@30px，与实测约 7px 吻合，数字墨迹仍在行盒内。字形/cmap/family/轴不变，原版文件与固定 SHA-256 不变，带构建期防切保护。装机后需回看各紧凑槽居中且不切底，并确认正文、粗斜体、小型大写、CJK 回退无回归。诊断 APK 仍为只读，不逐控件 Hook。参见 `docs/validation.md`。

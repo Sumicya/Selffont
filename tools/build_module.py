@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 
 from font_config import configure_fonts, METRIC_CARRIER
 from prepare_font import MANIFEST, ROOT, verify_font, verify_metric_carrier
+from metric_normalize import normalize_metrics, assert_glyphs_preserved
 
 RUNTIME_FILES = ("customize.sh", "action.sh", "service.sh", "uninstall.sh", "search_dirs.sh",
                    "diagnose.sh", "gms_fallback.sh", "app_fonts.sh", "collect_logs.sh", "filter_logs.awk")
@@ -65,12 +66,26 @@ def build(base, font, output, revision=None):
             if METRIC_CARRIER not in names:
                 raise ValueError("Missing inherited Roboto metrics carrier")
             carrier = verify_metric_carrier(source.read("system/fonts/" + METRIC_CARRIER))
+            # Normalise WenYuan's own line metrics to the carrier's nominal metrics so
+            # measure-with-nominal / draw-with-fallback slots (notification counts,
+            # red-dot badges, clock, chips) stop pushing the baseline down and clipping
+            # ink. Outlines, cmap, family and axes are untouched; a build-time guard
+            # refuses to ship a font whose new line box would clip the digit ink.
+            original_font = Path(font).read_bytes()
+            if hashlib.sha256(original_font).hexdigest() != report["sha256"]:
+                raise ValueError("Primary font changed after verification")
+            normalized_font, metric_report = normalize_metrics(
+                original_font, carrier["layoutMetrics"])
+            normalized_sha = hashlib.sha256(normalized_font).hexdigest()
+            metric_report["originalSha256"] = report["sha256"]
+            metric_report["normalizedSha256"] = normalized_sha
             with Path(base).open("rb") as stream:
                 base_digest = hashlib.file_digest(stream, "sha256").hexdigest()
             referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
             module_report = {
                 "sourceRevision": revision or "UNSPECIFIED",
                 "primaryFont": report,
+                "metricNormalization": metric_report,
                 "androidMetricsCarrier": carrier,
                 "baseArchiveSha256": base_digest,
                 "supplementalFontCount": len(entries),
@@ -81,11 +96,11 @@ def build(base, font, output, revision=None):
             for entry in entries:
                 if PurePosixPath(entry.filename).name != MANIFEST["installedFile"]:
                     dest.writestr(entry.filename, source.read(entry))
-            dest.write(font, "system/fonts/" + MANIFEST["installedFile"])
+            dest.writestr("system/fonts/" + MANIFEST["installedFile"], normalized_font)
             dest.writestr("fonts.xml", xml)
-            dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=1.4-phase1.1\n"
-                          "versionCode=1717180005\nauthor=Selffont contributors\n"
-                          "description=Android 16 / Oplus / KSU. Gecko adapter requires device validation.\n")
+            dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=1.4-phase2-metrics\n"
+                          "versionCode=1717180006\nauthor=Selffont contributors\n"
+                          "description=Android 16 / Oplus / KSU. Line metrics normalised to carrier; badge fix requires device validation.\n")
             for name in RUNTIME_FILES:
                 dest.write(ROOT / "script" / name, name)
             for directory in ("lang", "webroot", "licenses"):
@@ -110,6 +125,12 @@ def build(base, font, output, revision=None):
                 print("::notice title=Android font metrics::Verified no-visible-glyph carrier; "
                       f"UPM={metrics['unitsPerEm']}; hhea={metrics['hhea']}; "
                       f"SHA256={carrier['sha256']}")
+                print("::notice title=WenYuan metric normalization::"
+                      f"hhea {metric_report['original']['hhea']} -> {metric_report['normalized']['hhea']}; "
+                      f"digitInkY={metric_report['digitInkY']}; "
+                      f"win={metric_report['normalized']['win']}; "
+                      f"useTypoMetrics={metric_report['normalized']['useTypoMetrics']}; "
+                      f"normalizedSHA256={normalized_sha}")
             # Do not inherit a private download umask (0600) for system font files.
             # Central-directory attributes are authoritative for Unix ZIP extraction.
             for info in dest.infolist():
@@ -121,8 +142,12 @@ def build(base, font, output, revision=None):
             if corrupt:
                 raise ValueError(f"Corrupt output archive member: {corrupt}")
             with final.open("system/fonts/" + MANIFEST["installedFile"]) as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != report["sha256"]:
-                    raise ValueError("Packaged primary font SHA-256 differs from verified input")
+                packaged = stream.read()
+            if hashlib.sha256(packaged).hexdigest() != normalized_sha:
+                raise ValueError("Packaged primary font SHA-256 differs from normalised input")
+            # Only line metrics may differ from the original: glyph outlines, cmap,
+            # family name and fvar axes must be byte-for-byte preserved.
+            assert_glyphs_preserved(Path(font).read_bytes(), packaged)
         staged.replace(output)
     print(f"Built {output}; device installation/rendering NOT TESTED")
 

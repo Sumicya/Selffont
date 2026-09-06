@@ -359,3 +359,20 @@ android.text.Layout.draw <- android.widget.TextView.onDraw <- View.draw
 机制推断：TextView 以载体名义度量**测量**出高 35 的框，而 `StaticLayout` 在**绘制**时按回退字体（文渊）更大的 ascent 放置 baseline（典型于开启 fallback line spacing 的通知布局）。载体只统一了名义 Paint 度量，统一不了 glyph run 与 StaticLayout 的回退行距——与此前独立进程、以及 `7`/`10` 两组样本一致。这是该控件“测量用名义、绘制用回退”的行距/基线不一致，不是字体数据损坏，也不是全局问题。
 
 至此具体控件已确认。用户此前选择“保持原版字体、定位具体控件、不做全局像素平移、不生成度量派生字体”。是否对这一个控件做作用域受限的定点基线修正，需用户决定后再从只读观察改为定点修复。
+
+## 2026-09-06：用户改选激进根治——度量归一（1.4-phase2-metrics）
+
+用户指出“部分情况出下沿”，并要求更激进、一次治好而非逐控件补。判定同一根因：**测量用名义度量、绘制用回退真实度量**。凡竖直居中且定高吃紧的紧凑文字槽都会中招——分组通知折叠计数（已确认）、应用图标红点角标（`COUIHintRedDotHelper`）、状态栏时钟/电量小数字、快捷磁贴/Chip 等。宽松多行正文一般不明显。
+
+采纳方案 A（推翻原“不生成度量派生字体”约束）：在**打包阶段**把文渊自身的竖直行度量归一到载体名义度量，使两条路径一致、baseline 不再被顶低。
+
+- 新增 `tools/metric_normalize.py`：将 `hhea` ascent/descent/lineGap、`OS/2` typo asc/desc/linegap 设为**载体名义度量按文渊 UPM 等比缩放**的值；`USE_TYPO_METRICS` 跟随载体（需要时抬 OS/2 版本到 4）；`usWinAscent/Descent` 仍取真实字形 bbox 与墨迹的较大值，保证不裁剪 CJK/带音符墨迹。
+- **只改行度量**：字形轮廓、cmap、family 名、`wght/ital` 轴逐字节保留（`assert_glyphs_preserved` 在打包后逐字形二进制核对，任何轮廓/cmap/family/轴变化都使构建失败）。粗体、斜体、小型大写、语言 shaping、原始码点全部不变。
+- **构建期防切保护**：归一后若数字墨迹会超出新行盒（ascent/descent），抛 `ClipError`、构建失败，绝不出“治好偏低却切正文”的字体。
+- 上游原始 `WenYuanRoundedSCVF.ttf` 及其固定 SHA-256 完全不动；归一只作用于**生成的安装副本**，其 SHA 记入 `module-report.json` 的 `metricNormalization`。
+
+主机数值验证（用真实基础包载体 UPM 2048 / hhea 1900/−500 复算）：文渊 ascent 1160→928，baseline **抬升 6.96px@30px**，与设备实测 `7`/`10` 偏低约 7px 吻合；数字墨迹 −10..744 仍落在归一行盒内，不裁切。下沿裁切属同一 7px 偏移的边缘效应，抬升后一并消除。
+
+主机回归：新增 `tests/test_metric_normalize.py`（行度量匹配载体、UPM 缩放、轮廓/cmap/轴保留、USE_TYPO_METRICS 跟随、usWin 覆盖真实墨迹、上/下溢出拒绝、篡改检测）；打包测试改用真实结构的 `primary_font` fixture 并核对“仅度量变化”。共 62 项 Python、3 项 Node 通过。
+
+这是主机层的度量与打包验证，**尚未装机**。需要用户装新字体模块（`1.4-phase2-metrics / 1717180006`）后，回看分组计数、红点角标、时钟等紧凑槽是否居中且不再切底，并确认正文、粗斜体、小型大写、CJK 回退无回归。诊断 APK 保持只读，不再逐控件 Hook。
