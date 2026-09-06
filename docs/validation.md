@@ -499,3 +499,30 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[glyph-'
 ## 2026-09-06：诊断收尾（1.4-phase2）
 
 emoji 结论确定后移除火狐启动热路径上的诊断调用：从 `ModernEntry` 去掉 `GlyphCoverageProbe.run`（每进程扫描 498 个系统字体）与 `dumpFontPrefs`（prefs 转储），恢复火狐冷启动速度、不再刷诊断日志。Gecko hook 恢复为仅在首次命中记录 `[gecko-prefs]`/`[gecko-skip]`。`GlyphCoverageProbe` 类保留在仓库、标注为休眠，供日后（如 Firefox 更新后复验 emoji）重新接入。角标度量归一与文渊默认字体等已确认修复不受影响。APK 版本 `1.4-phase2 / 22`。
+
+## 2026-09-06：CI 升级 node24 + 合并进 main
+
+### node20 → node24 运行时升级
+GitHub 于 2026-09-16 从 runner 移除 node20，届时仍声明 `using: node20` 的 action 会无法启动。逐一核对各 action 的 `action.yml` 运行时后升级(合并提交 `5288c77`)：
+
+- `actions/setup-python@v5 → v6`(`check.yml`、`build-module.yml`)
+- `actions/setup-node@v4 → v5`(`check.yml`)
+- `gradle/actions/setup-gradle@v4 → v5`(`build-mfga-xposed.yml`)
+- 已是 node24、无需改：`actions/checkout@v6`、`actions/setup-java@v5`、`actions/upload-artifact@v7`、`android-actions/setup-android@v4`。
+
+main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Build font module 均 success。
+
+### 仓库瘦身
+删除 14.4 MB 从未被任何构建步骤读取的字体二进制(`Unicode16/17/18-new.ttf`、`ZUno-Number.ttf`、`NotoSansPro.otf`；提交 `6337b8b`)。模块字体来自外部 base ZIP，`fonts.xml` 仅按名引用；`fonts/` 只保留 `LICENSE-*`(构建会拷进模块)。`.gitignore` 新增字体二进制忽略规则，符合仓库"大文件不入 Git"的既定约定。
+
+### 合并进 main(重要:两条无关历史)
+远程 `main`(`c72bb5e "fix: remove duplicate links"`,Numbersf 2026-09-03)与本 session 分支 `arena/01a07569-selffont` 是**无关历史**(`git` 拒绝自动合并)——main 是一套更早的代码(`ModernEntry.kt`、`LegacyEntry.java`、`build-recolor_glyph.yml`/`build-unicode_filter.yml` 等),其上没有本 session 的任何工作。
+
+按用户要求(冲突全用 session)以合并提交 `7daea50` 落地:tree 完全等于 session,同时保留旧 main `c72bb5e` 作为父提交以可追溯。合并后 `main` 与 `arena/01a07569-selffont` 均指向 `7daea50`,内容一致。
+
+注:此仓库存在多个 Arena session 分支(如 `arena/01a0513e-...`),分属不同会话;本 session 固定 `arena/01a07569-selffont`。
+
+### 本 session 两项用户可见问题的最终状态(重申)
+- 通知/角标数字偏低与切下沿:**度量归一修复,用户真机确认。**
+- 火狐正文统一文渊:**用户确认成功。**
+- 火狐最新 emoji 豆腐块:**Gecko 后端限制,非本模块可修,范围边界。**
