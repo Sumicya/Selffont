@@ -327,3 +327,8 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[badge-'
 同时发现 v17 的固定 18 帧深栈仍可能不够：角标从 `TextView` 继承 `onDraw`，其运行时类不会作为栈帧出现，需要一直向上抓到具名的 SystemUI/Oplus 容器帧。v18 改为：保留最初的绘制上下文帧，之后只保留非 `android.*` 的应用帧,最多 12 个应用帧（或 40 帧上限），越过 v16 截断处的 `ViewGroup.drawChild`，露出真正拥有角标的 Oplus/SystemUI 容器类。仍全程只读，不改绘制参数与 Paint。
 
 **务必先彻底换装 v18**：在 LSPosed 停用并卸载旧诊断 APK，安装 `1.4-badge-diagnostic3`，重新勾选 SystemUI，彻底重启 SystemUI（或重启设备）后再展开带 7/10 角标的界面，确认 `[badge-observe-ready]` 时间戳是新的，再看 `[badge-caller]`。
+
+### v18 构建结果
+
+- [APK 构建 #34018033001](https://github.com/Sumicya/Selffont/actions/runs/34018033001) 与 [契约检查 #34018032973](https://github.com/Sumicya/Selffont/actions/runs/34018032973) 均成功。
+- 产物 `selffont-phase1-debug-apk`，artifact ID `9984555248`，外层 ZIP 36,106 字节。versionCode 18 / versionName `1.4-badge-diagnostic3`。字体模块与 Firefox 分支不变。
