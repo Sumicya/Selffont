@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Selffont 字体路径对照</title><link rel="stylesheet" href="styles.css">
+<style>
+@font-face { font-family: SelffontProbe; src: url('probe.ttf') format('truetype'); }
+@font-face { font-family: WenYuanLocal; src: local('WenYuan Rounded SC VF'); }
+</style></head>
+<body><main><header><p class="eyebrow">READ-ONLY · NO ROOT BRIDGE</p><h1>字体路径对照</h1>
+<p>请在目标手机的 Firefox 打开。分两次冷启动对比：关闭 Selffont 的作用域／开启作用域。此页不改任何设置、不上传文字。</p></header>
+<section><h2>验收规则</h2><p>统一字体家族，但小型大写、粗体、斜体仍应存在。普通字符与特殊 Unicode 字符必须保持区别。</p>
+<p class="note">CSS 计算值和字体加载事件不等于“实际绘制使用了哪一字体”；以下只提供对照，不自动宣布通过。离线打开时需保留同目录的 probe.ttf。</p></section>
+<section><h2>系统家族</h2>
+<div class="sample" style="font-family:sans-serif">sans-serif · 你好圆体 Abc 0123</div>
+<div class="sample" style="font-family:serif">serif · 你好圆体 Abc 0123</div>
+<div class="sample" style="font-family:monospace">monospace · 你好圆体 Abc 0123</div>
+<div class="sample" style="font-family:cursive">cursive · 你好圆体 Abc 0123</div>
+<div class="sample" style="font-family:fantasy">fantasy · 你好圆体 Abc 0123</div></section>
+<section><h2>网页字体加载路径</h2><p>本项目自制测试字体把普通字符 A 画成三角形。未被覆盖时下面应为四个三角形；策略命中后应显示目标字体的四个 A。若对照组也不是三角形，不能用本项判断成功。</p>
+<div class="sample" style="font-family:SelffontProbe,sans-serif">AAAA</div>
+<p>本地文渊家族探针（缺失时会回退，不能仅靠外观确认已安装）：</p>
+<div class="sample" style="font-family:WenYuanLocal,sans-serif">文渊圆体 Abc 0123</div></section>
+<section><h2>排版应保留</h2><div class="sample" style="font-family:cursive">
+<div>Normal: Abc Difficult waffles</div><div style="font-weight:700">Bold: Abc Difficult waffles</div>
+<div style="font-style:italic">Italic: Abc Difficult waffles</div>
+<div style="font-variant-caps:small-caps">Small caps: Abc Difficult waffles</div></div></section>
+<section><h2>字符不改写</h2><div class="sample">普通：Abc　数学花体：𝒜𝒷𝒸　小写大写字形字符：ᴀʙᴄ</div>
+<label for="text">粘贴一小段原文，查看真实码点（只在本页计算）：</label><textarea id="text">Abc 𝒜𝒷𝒸 ᴀʙᴄ</textarea><pre id="codepoints"></pre></section>
+<script type="module">
+const input = document.getElementById('text');
+const output = document.getElementById('codepoints');
+const render = () => { output.textContent = [...input.value].slice(0, 256).map(c => `${c}  U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join('\n'); };
+input.addEventListener('input', render); render();
+</script></main></body></html>

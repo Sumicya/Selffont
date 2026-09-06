@@ -1,0 +1,12 @@
+{
+  "project": "takushun-wu/WenYuanFonts",
+  "version": "v1.010",
+  "family": "WenYuan Rounded SC VF",
+  "file": "WenYuanRoundedSCVF.ttf",
+  "installedFile": "Selffont-WenYuanRoundedSCVF.ttf",
+  "bytes": 48755224,
+  "sha256": "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122",
+  "url": "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf",
+  "apiUrl": "https://api.github.com/repos/takushun-wu/WenYuanFonts/contents/vf/WenYuanRoundedSCVF.ttf?ref=v1.010",
+  "licenseUrl": "https://github.com/takushun-wu/WenYuanFonts/blob/v1.010/LICENSE.md"
+}

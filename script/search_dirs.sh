@@ -1,7 +1,10 @@
 #!/system/bin/sh
 . "$MODPATH/lang/lang.sh"
 
-ui_print() { echo "$1"; }
+command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
+SYSTEM_ROOT=${SELFFONT_SYSTEM_ROOT:-/system}
+COPY_FAILURE=0
+COPY_COUNT=0
 
 ui_print "$SEARCH_FONTS"
 
@@ -66,7 +69,7 @@ handle_file() {
     return
   fi
 
-  mkdir -p "$MODPATH/system/$MOD_SUBDIR"
+  mkdir -p "$MODPATH/system/$MOD_SUBDIR" || { COPY_FAILURE=1; return; }
   local SRC
   if is_reversed "$FILE_NAME" && [ -f "$MODPATH/$FILE_NAME" ]; then
     SRC="$MODPATH/$FILE_NAME"
@@ -75,7 +78,8 @@ handle_file() {
     SRC="$SRC_FONT_XML"
   fi
 
-  cp -f "$SRC" "$MODPATH/system/$MOD_SUBDIR/$FILE_NAME"
+  cp -f "$SRC" "$MODPATH/system/$MOD_SUBDIR/$FILE_NAME" || { COPY_FAILURE=1; return; }
+  COPY_COUNT=$((COPY_COUNT + 1))
 
   if is_whitelisted "$FILE_NAME"; then
     ui_print "$FONT_ALLOWED $FILE_NAME"
@@ -100,8 +104,9 @@ search_and_copy() {
   done
 }
 
-search_and_copy "/system/system_ext/etc" "system_ext/etc"
-search_and_copy "/system/product/etc" "product/etc"
-search_and_copy "/system/etc" "etc"
+search_and_copy "$SYSTEM_ROOT/system_ext/etc" "system_ext/etc"
+search_and_copy "$SYSTEM_ROOT/product/etc" "product/etc"
+search_and_copy "$SYSTEM_ROOT/etc" "etc"
 
-ui_print "$FONTS_DONE"
+[ "$COPY_FAILURE" -eq 0 ] && [ "$COPY_COUNT" -gt 0 ] || { ui_print "[error] No font XML copied or a copy failed."; exit 1; }
+ui_print "$FONTS_DONE ($COPY_COUNT)"

@@ -1,19 +1,8 @@
 pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
 }
-
 dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven("https://artifactory.appodeal.com/appodeal-public/")
-        maven("https://jitpack.io")
-    }
+    repositories { google(); mavenCentral() }
 }
-
-rootProject.name = "MFGA-Xposed"
+rootProject.name = "Selffont-Xposed"
 include(":app")

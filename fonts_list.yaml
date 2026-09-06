@@ -1,10 +1,6 @@
 fallback:
   whitelist:
-    - flyme_font_fallback.xml
-    - flyme_fallback.xml
-
   blacklist:
+    # This file has a different root/schema, not a familyset.
     - fonts_customization.xml
-
   reverse:
-   # - font_fallback.xml

@@ -1,4 +1,4 @@
 <resources>
-    <string name="module_name">MFGA</string>
-    <string name="module_description">Make Fonts Great Again!</string>
+    <string name="module_name">Selffont</string>
+    <string name="module_description">Android 16 / Oplus font-family replacement. Gecko adapter: device verification required.</string>
 </resources>
