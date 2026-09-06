@@ -223,3 +223,13 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 先读取已有的、命令行明确包含 `com.mfga.xposed.diagnostics.FontMetricsProbe` 的文本 tombstone。`tools/collect_probe_crash.sh` 只输出匹配报告中的时间、进程标识、signal、Abort message 和 backtrace 帧；不输出寄存器、内存、maps、protobuf 或其他应用报告，不重新运行探针，也不清空任何记录。找不到会明确报告缺失，而不以通用 app_process 崩溃替代本次证据。
 
 当前没有任何成功的 Android Paint 运行时测量结果；角标偏低的原因仍不能从退出码反推。后续启动器需要补齐原生错误采集能力，再决定是否重跑，不继续凭未完成的测量改变字体数据。
+
+## 原生中止已定位到测量工具类加载阶段
+
+用户提供的 tombstone 指向 `java.lang.ClassNotFoundException: com.mfga.xposed.diagnostics.FontMetricsProbe`。主线程随后在 `AndroidRuntime::startReg` 注册 JNI 时遇到待处理异常而 SIGABRT。还没有进入探针 main 或 Paint 测量；不能据此修改字体、推断字体损坏或把其他等待线程当作新的故障。
+
+旧启动器只提取 `classes.dex`，没有验证入口类所在的实际 DEX，因而不满足多 DEX 容器的启动契约。修订使用完整 APK 的只读临时副本作为 classpath，同时显式传递 `-Djava.class.path` 和 CLASSPATH，避免只加载首个 DEX。系统运行时不继承 Termux 的 LD_PRELOAD／LD_LIBRARY_PATH。启动阶段直接打印容器哈希、类路径、入口类及退出码，不再将诊断默认重定向到文件。
+
+APK 构建新增最终检查：逐一检查 `classes*.dex`（包括 DEX 041 容器头），确认目标 class_def 和有代码的 public static main(String[])。仅仅找到字符串引用不算入口存在。检查不通过时构建失败，不能仅凭 assembleDebug 产出文件判定工具可执行。
+
+该修订仍需要实际构建结果与手机验证；完整 APK classpath 是修正启动契约，不把尚未确认的具体 DEX 分布或手机运行结果写成已验证。
