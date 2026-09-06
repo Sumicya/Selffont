@@ -24,3 +24,9 @@ class BadgeObservationContracts(unittest.TestCase):
         self.assertNotIn('paint.setTextSize', source)
         self.assertNotIn('canvas.translate', source)
         self.assertIn('new BadgeSamplePolicy(12)', source)
+
+    def test_observer_skips_keyboard_and_large_text(self):
+        source = (ROOT/'mfga-xposed/app/src/main/java/com/mfga/xposed/diagnostics/BadgeDrawObserver.java').read_text()
+        # Badge counts are small; the security keypad paints large "7"/"10" that are not badges.
+        self.assertIn('getTextSize() > 48', source)
+        self.assertIn('caller.contains("eyboard")', source)

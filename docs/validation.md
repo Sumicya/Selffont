@@ -283,3 +283,24 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[badge-'
 ```
 
 先确认 `[badge-observe-ready]`，再看 `[badge-sample]`、`[badge-metrics]`、`[badge-font]` 与 `[badge-caller]`。没有样本可能是未出现固定数字、未覆盖实际绘制入口或作用域未生效，不用大量抓取通知正文来代替这些证据。
+
+## 2026-09-06：首批只读观察命中——区分安全键盘与真实角标
+
+用户在 SystemUI 勾选作用域后采到两组 `[badge-sample]`。观察器工作正常，字形都解析到固定原版文渊；但其中一组不是角标：
+
+| 样本 | 调用者 | 字号 | canvas / align | 判断 |
+|---|---|---|---|---|
+| 13:51:59 `text=7` | `com.oplus.securitykeyboardui.SecurityKeyboardView.onDraw` | `px=70.0` | Canvas / CENTER | 密码数字键盘按键，不是角标 |
+| 13:52:26 `text=7` | `android.widget.TextView.onDraw ← Layout.draw` | `px=30.0` | RecordingCanvas / LEFT | **真实通知角标** |
+
+对真实角标那组做度量核对（正偏差表示向下）：
+
+- 局部 clip（角标框）= `[0,0][18,35]`，高 35，垂直中心 y=17.5。
+- Paint 名义度量（Roboto 载体）：ascent −28、descent 7，名义行高 35，正好等于框高——即框高由载体名义度量决定。
+- 实际文渊 glyph run：ascent −34.8、descent 8.64，真实行高 43.4，比框高。
+- baseline 落在 y=35 ≈ |真实 ascent 34.8|，不是 |名义 ascent 28|。数字墨迹 `[−22..+1]` → 绝对 13..36，墨迹中心 24.5。
+- 24.5 − 17.5 = **偏低约 7px**；墨迹底 36 > 框底 35 = **底沿裁切约 1px**。若 baseline 改用名义 ascent 28，数字将居中（差值 7 = 35−28）。
+
+结论：**该控件用文渊真实（更大）的 ascent 定行/基线，而角标框高来自名义载体度量**。载体只改名义 Paint 度量、不改 glyph run 自身度量，与此前独立进程测量一致；这是具体控件的行/基线放置问题，不是字体数据损坏，也不应做全局像素平移。
+
+仍缺具体控件类：真实角标那组的栈在 `TextView.onDraw` 处被截断，未到具体 SystemUI/Oplus view。已调整观察器：跳过 `px>48` 的大字号与 `*eyboard*` 调用者（密码键盘），并把保留的应用栈帧从 10 增到 18，让下一批日志露出真实角标的宿主控件类。字号／键盘过滤与更深栈仍是只读，不改绘制参数与 Paint。下一步用同样命令在展开角标的界面再采一批，读 `[badge-caller]` 定位控件类后再决定修法。

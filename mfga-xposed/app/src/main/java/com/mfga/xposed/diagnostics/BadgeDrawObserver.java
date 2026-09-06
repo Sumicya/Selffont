@@ -101,8 +101,12 @@ public final class BadgeDrawObserver {
         String sample = BadgeSamplePolicy.sample(text, start, end);
         if (sample == null) return;
         Paint original = (Paint) args.get(args.size() - 1);
-        if (original == null || original.getTextSize() <= 0 || original.getTextSize() > 96) return;
+        // Badge counts are small text. Skip large draws such as the security keypad (~70px)
+        // so the bounded sample budget is spent on the notification badge itself.
+        if (original == null || original.getTextSize() <= 0 || original.getTextSize() > 48) return;
         String caller = callers();
+        // The on-screen number keypad also paints "7"/"10"; it is not a badge. Read-only skip.
+        if (caller.contains("eyboard")) return;
         Typeface face = original.getTypeface();
         String key = caller + '|' + sample + '|' + original.getTextSize() + '|'
                 + (face == null ? 0 : face.hashCode());
@@ -162,10 +166,13 @@ public final class BadgeDrawObserver {
             String name = frame.getClassName();
             if (name.startsWith("com.mfga.xposed.") || name.startsWith("io.github.libxposed.")
                     || name.startsWith("org.lsposed.") || name.startsWith("de.robv.android.xposed.")
-                    || name.startsWith("java.") || name.startsWith("android.graphics.")) continue;
+                    || name.startsWith("java.") || name.startsWith("dalvik.")
+                    || name.startsWith("android.graphics.")) continue;
             if (result.length() != 0) result.append(" <- ");
             result.append(name).append('.').append(frame.getMethodName());
-            if (++count == 10) break;
+            // Keep enough app frames to reach the concrete SystemUI/Oplus view past the
+            // generic android.view/android.widget/android.text drawing frames.
+            if (++count == 18) break;
         }
         return result.toString();
     }
