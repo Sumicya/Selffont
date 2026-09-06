@@ -60,12 +60,13 @@ CI：**Build Selffont diagnostic APK**。这是开发签名的诊断 APK，不�
 Gecko 有自己的字体选择路径；Java `Typeface` Hook 不是通用网页字体拦截器。本阶段在 Gecko 的 `RuntimeSettings.getPrefsMap()` 启动入口注入**内存中的默认字体首选项**：
 
 - `browser.display.use_document_fonts = 0`；
-- 将主要 generic family 的 Gecko 字体首选项指向文渊；
+- 将主要 generic family 的 Gecko **首选**字体（`font.name.*`）指向文渊；
+- **保留回退链**：`font.name-list.*` 只把文渊**前置**到 Gecko 原有列表最前，不清空列表；Gecko 没有列出该项时不强行造一个"只有文渊"的窄列表；**不触碰 emoji 首选项** —— 文渊没有的字符（生僻码位、彩色 emoji、非中西文脚本）继续走系统回退与彩色 emoji 字体，避免豆腐块；
 - 不修改 CSS、字号、字重、斜体、小型大写、Unicode 或浏览器配置文件；
 - Firefox 进程中看不到 `/system/fonts/Selffont-WenYuanRoundedSCVF.ttf` 时，不注入；
 - 不使用浏览器扩展或原生函数地址 Hook。
 
-这是**源代码核对过、真机未验证**的适配。已有用户首选项、字体可见性限制、缓存、发布版优化／混淆或更早的初始化路径仍可能影响效果。不能保证覆盖所有网页、图标字体、SVG/canvas 或所有 Gecko 版本；强制网页字体家族可能损坏依赖专用字体的图标。
+这是**源代码核对过、真机未验证**的适配。已有用户首选项、字体可见性限制、缓存、发布版优化／混淆或更早的初始化路径仍可能影响效果。不能保证覆盖所有网页、图标字体、SVG/canvas 或所有 Gecko 版本；强制网页字体家族可能损坏依赖专用字体的图标。早期"覆盖整条 `font.name-list`"会掐断 Gecko 回退，导致文渊缺字（如 Unicode 15/16 新 emoji）显示为豆腐块；现改为前置保留，缺字回退回系统字体。
 
 ## 操作与验证
 

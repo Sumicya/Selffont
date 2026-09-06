@@ -29,11 +29,42 @@ public final class GeckoFontPolicy {
         prefs.put("browser.display.use_document_fonts", 0);
         for (String language : LANGUAGES) {
             for (String family : FAMILIES) {
-                prefs.put("font.name." + family + "." + language, FAMILY);
-                prefs.put("font.name-list." + family + "." + language, FAMILY);
+                String nameKey = "font.name." + family + "." + language;
+                String listKey = "font.name-list." + family + "." + language;
+                // Prefer WenYuan as the default font for this generic/language.
+                prefs.put(nameKey, FAMILY);
+                // Prepend WenYuan to the EXISTING fallback list so Gecko keeps every
+                // downstream fallback it already had (CJK, symbols, colour emoji, rare
+                // codepoints). Never shrink the candidate set: if Gecko exposes no list
+                // here, leave its built-in default untouched rather than forcing a
+                // WenYuan-only list that would tofu anything WenYuan lacks.
+                Object existing = original.get(listKey);
+                if (existing instanceof String) {
+                    String prepended = prependFamily((String) existing);
+                    if (prepended != null) prefs.put(listKey, prepended);
+                }
             }
         }
         // Intentionally do not modify sizes, weight, synthesis, features, CSS or Unicode.
+        // Emoji preferences are left untouched so system colour emoji fallback still applies.
         return Collections.unmodifiableMap(prefs);
+    }
+
+    /** Put WenYuan first while preserving the rest of the list. Null means leave as-is. */
+    public static String prependFamily(String list) {
+        String trimmed = list.trim();
+        if (trimmed.isEmpty()) return null;
+        // Already led by WenYuan (idempotent re-application): keep the value unchanged.
+        int firstComma = trimmed.indexOf(',');
+        String head = (firstComma < 0 ? trimmed : trimmed.substring(0, firstComma)).trim();
+        if (head.equals(FAMILY)) return null;
+        // Drop any later duplicate of WenYuan so it appears exactly once, at the front.
+        StringBuilder rebuilt = new StringBuilder(FAMILY);
+        for (String part : trimmed.split(",")) {
+            String entry = part.trim();
+            if (entry.isEmpty() || entry.equals(FAMILY)) continue;
+            rebuilt.append(", ").append(entry);
+        }
+        return rebuilt.toString();
     }
 }

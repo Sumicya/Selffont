@@ -383,3 +383,22 @@ android.text.Layout.draw <- android.widget.TextView.onDraw <- View.draw
 - 产物 `selffont-phase1-font-module`，artifact ID `9985406225`，约 108 MB。内层安装文件仍为 `Selffont-phase1.zip`，其 `module-report.json` 记录 `metricNormalization`（原始/归一 hhea、digitInkY、usWin、归一副本 SHA-256）。
 - 上游原版 `WenYuanRoundedSCVF.ttf` 固定 SHA-256 不变（仅安装副本的行度量被归一）；诊断 APK 不更新。
 - 装机步骤：正常 KSU 安装内层 ZIP，重启；随后回看分组通知计数、应用红点角标、状态栏时钟/电量等紧凑槽是否居中、是否仍切下沿，并确认正文、粗斜体、小型大写、CJK 回退无回归。
+
+## 2026-09-06：火狐缺字（新 emoji 豆腐块）——恢复 Gecko 回退链
+
+角标居中已由用户确认解决。用户报火狐中 README/changelog 下方符号 `🛙🪋🪌🪍🫌🫝🫫🫹🫺` 为豆腐块，仅个别字符，其他 App（含彩色）正常。
+
+诊断：这 9 个码位是 **Unicode 15.1/16 新 emoji**（U+1F6D9、U+1FA8B–U+1FAFA）。"其他 App 彩色正常、仅火狐豆腐块" → 系统有覆盖它们的彩色字体，是 **Gecko 字体路由被本模块 pref 掐断**，非系统缺字。
+
+根因在 `GeckoFontPolicy`：旧实现对每个 generic/语言把 `font.name-list.*`（回退候选列表）**整个覆盖成只有文渊**，并对本无该项的语言也**新造一个"只有文渊"的窄列表**。Gecko 语义中 `font.name` 是首选、`font.name-list` 是缺字时的回退顺序；列表被清空后，文渊没有的字符（新 emoji、生僻码位）没有任何回退，直接豆腐块，系统彩色 emoji 字体也被排除。
+
+修法（保住已确认的"网页统一成文渊"，同时恢复回退）：
+- `font.name.*` 仍设文渊（首选不变）。
+- `font.name-list.*` 改为把文渊**前置**到 Gecko 原有列表最前（`prependFamily`：去重、幂等、空值不动），保留其后全部下游回退（CJK、符号、彩色 emoji、生僻码位）。
+- Gecko 未暴露该 list 项时**不再造窄列表**，保留其内建默认。
+- **不触碰任何 emoji 首选项**，让系统彩色 emoji 回退继续生效（用户要彩色；仓库里覆盖这些码位的 `Unicode18-new.ttf` 为黑白，不注入以免把 emoji 变黑白）。
+- 仍不改 CSS、字号、字重、synthesis、variant、Unicode；字体不可读时不注入。
+
+主机回归：`tests/java/PolicyTest.java` 新增前置保留、已前置幂等、去重、空列表、无 list 项不新增、emoji 首选项零改动等断言；`prependFamily` 逻辑另以脚本复核通过（本环境无 javac，Java 编译/运行由 CI JDK 17 执行）。
+
+装机验证：安装诊断 APK `1.4-gecko-fallback / 19`（字体模块不变），冷启动火狐后回看那行新 emoji 是否恢复（预期彩色，来自系统 emoji 字体），同时确认正文仍统一为文渊、粗斜体/小型大写/CJK 无回归。这是很窄的回退修复，不宣称覆盖所有网页与全部字符。

@@ -11,19 +11,41 @@ public final class PolicyTest {
     }
     public static void main(String[] args) throws Exception {
         Map<String, Object> original = Map.of("browser.display.use_document_fonts", 1,
-                "font.size.variable.x-western", 19, "unrelated", "retained");
+                "font.size.variable.x-western", 19, "unrelated", "retained",
+                "font.name-list.sans-serif.x-western", "Roboto, Noto Sans, Noto Color Emoji",
+                "font.name-list.serif.zh-CN", GeckoFontPolicy.FAMILY + ", Noto Serif CJK SC");
         check(GeckoFontPolicy.apply(original, false) == original);
         Map<String, Object> changed = GeckoFontPolicy.apply(original, true);
         check(changed.get("browser.display.use_document_fonts").equals(0));
         check(original.get("browser.display.use_document_fonts").equals(1));
         check(changed.get("font.size.variable.x-western").equals(19));
         check(changed.get("unrelated").equals("retained"));
+        // font.name (preferred) is WenYuan for every generic/language.
         check(changed.get("font.name.cursive.zh-CN").equals(GeckoFontPolicy.FAMILY));
         check(changed.get("font.name.serif.x-western").equals(GeckoFontPolicy.FAMILY));
+        // font.name-list keeps the ORIGINAL fallback chain, with WenYuan prepended,
+        // so glyphs WenYuan lacks (rare codepoints, colour emoji) still resolve.
+        check(changed.get("font.name-list.sans-serif.x-western")
+                .equals(GeckoFontPolicy.FAMILY + ", Roboto, Noto Sans, Noto Color Emoji"));
+        // Already led by WenYuan: left unchanged, no duplication.
+        check(changed.get("font.name-list.serif.zh-CN")
+                .equals(GeckoFontPolicy.FAMILY + ", Noto Serif CJK SC"));
+        // Where Gecko exposes no list, we must NOT invent a WenYuan-only list.
+        check(changed.get("font.name-list.monospace.ja") == null);
+        // Emoji preferences are untouched so system colour emoji fallback still applies.
+        check(changed.keySet().stream().noneMatch(key -> key.startsWith("font.name.emoji")
+                || key.startsWith("font.name-list.emoji")));
         check(GeckoFontPolicy.apply(changed, true).equals(changed));
         try { changed.put("oops", true); throw new AssertionError(); }
         catch (UnsupportedOperationException expected) { }
         check(changed.keySet().stream().noneMatch(key -> key.contains("synthesis") || key.contains("variant")));
+
+        // prependFamily: prepend, dedupe, idempotence, empty handling.
+        check(GeckoFontPolicy.prependFamily("A, B").equals(GeckoFontPolicy.FAMILY + ", A, B"));
+        check(GeckoFontPolicy.prependFamily(GeckoFontPolicy.FAMILY + ", A") == null);
+        check(GeckoFontPolicy.prependFamily("A, " + GeckoFontPolicy.FAMILY + ", B")
+                .equals(GeckoFontPolicy.FAMILY + ", A, B"));
+        check(GeckoFontPolicy.prependFamily("   ") == null);
 
         check(ReplacementGuard.replace(null, () -> { throw new AssertionError(); }) == null);
         check(ReplacementGuard.replace("original", () -> null).equals("original"));
