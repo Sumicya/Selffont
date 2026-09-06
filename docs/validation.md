@@ -304,3 +304,16 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[badge-'
 结论：**该控件用文渊真实（更大）的 ascent 定行/基线，而角标框高来自名义载体度量**。载体只改名义 Paint 度量、不改 glyph run 自身度量，与此前独立进程测量一致；这是具体控件的行/基线放置问题，不是字体数据损坏，也不应做全局像素平移。
 
 仍缺具体控件类：真实角标那组的栈在 `TextView.onDraw` 处被截断，未到具体 SystemUI/Oplus view。已调整观察器：跳过 `px>48` 的大字号与 `*eyboard*` 调用者（密码键盘），并把保留的应用栈帧从 10 增到 18，让下一批日志露出真实角标的宿主控件类。字号／键盘过滤与更深栈仍是只读，不改绘制参数与 Paint。下一步用同样命令在展开角标的界面再采一批，读 `[badge-caller]` 定位控件类后再决定修法。
+
+### 观察器修订构建结果（1.4-badge-diagnostic2）
+
+- 提交见本分支 `arena/01a07569-selffont`；[APK 构建 #34017489516](https://github.com/Sumicya/Selffont/actions/runs/34017489516) 与 [契约检查 #34017489424](https://github.com/Sumicya/Selffont/actions/runs/34017489424) 均成功。
+- 产物 `selffont-phase1-debug-apk`，artifact ID `9984380013`，外层 ZIP 36,004 字节。versionCode 17 / versionName `1.4-badge-diagnostic2`。
+- 主机契约新增“跳过键盘与大字号”断言；仍不改绘制参数与 Paint，编译与 DEX 入口检查通过。这些不等于已在设备上定位到具体角标控件；需要用户再采一批日志确认。
+- 安装与之前相同：正常 APK 流程，保留 Firefox 作用域，手动勾选 SystemUI，展开带 7/10 计数角标的界面后：
+
+```sh
+su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[badge-'
+```
+
+这次应只出现小字号角标样本（键盘按键被过滤），且 `[badge-caller]` 会给出更深的宿主控件类。
