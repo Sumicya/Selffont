@@ -215,3 +215,11 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 - 网络或登录失败时停止，不自动登录、不要求用户发送凭据，也不运行 root；产物最多下载两次，每次使用新目录，避免误用半下载文件。失败会显示具体阶段。
 - 已登录不需要重复 `gh auth login`；`gh auth setup-git` 只涉及 Git 认证配置，不是下载 Actions 产物的前置步骤。只有登录确实无效时才在用户自己的 GitHub 授权页面处理。
 - 本轮主机回归 43 项 Python、3 项 Node 通过，包含网络／认证／下载失败不进入 root 阶段的隔离测试；这不表示已验证用户手机代理连通性或完成 Android 运行时测量。
+
+## 测量进程退出 134 且 stdout/stderr 报告为空
+
+网络、已有登录、容器下载及启动脚本校验已通过，进入测量阶段后返回 134（通常为 SIGABRT），用户确认 `selffont-metrics.txt` 为空。不能据此认定字体损坏，也不能继续要求用户上传空报告；原生进程的 abort 信息可能仅进入 Android 日志／tombstone，而不是重定向的 stdout/stderr。
+
+先读取已有的、命令行明确包含 `com.mfga.xposed.diagnostics.FontMetricsProbe` 的文本 tombstone。`tools/collect_probe_crash.sh` 只输出匹配报告中的时间、进程标识、signal、Abort message 和 backtrace 帧；不输出寄存器、内存、maps、protobuf 或其他应用报告，不重新运行探针，也不清空任何记录。找不到会明确报告缺失，而不以通用 app_process 崩溃替代本次证据。
+
+当前没有任何成功的 Android Paint 运行时测量结果；角标偏低的原因仍不能从退出码反推。后续启动器需要补齐原生错误采集能力，再决定是否重跑，不继续凭未完成的测量改变字体数据。
