@@ -196,3 +196,12 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 这个工具测量的是手机上的真实 Android 字体引擎，但不是现有 SystemUI 控件的 Paint 实例或它的共享字体缓存。若新的独立进程结果正常而屏幕仍偏低，下一步应定位控件实际字体、缓存或布局实现，不能把独立进程测量结果冒充具体控件实测。
 
 `tools/run_font_probe.sh` 仅将容器中的 `classes.dex` 复制到独立的临时目录，将这份副本设为只读后运行，并在退出时清理；限时 60 秒。stdout 由调用者保存为报告。Android 16 的 `Typeface.loadPreinstalledSystemFontMap()` 只在这个诊断进程内调用，不更改其他进程或磁盘配置。初始化不支持或测量失败会明确报错，不生成假的测量成功结果。
+
+### 运行时测量工具构建记录
+
+- 源码提交 `eac95ecead1234a157c579ebcf6028626fbb8f2a`。
+- [工具容器编译 #34001516111](https://github.com/Sumicya/Selffont/actions/runs/34001516111) 与 [主机检查 #34001516122](https://github.com/Sumicya/Selffont/actions/runs/34001516122) 成功。
+- 容器沿用 APK 构建产物名，但本次用途是提取其中的诊断 DEX，**不是安装或升级 Xposed APK**。现有 APK 及字体模块保持不变。
+- 产物 ID `9979637602`，外层 ZIP 30,522 字节；外层 ZIP SHA-256 为 `52160d161db7ebe5740b1aa5f39030944c963bd68a3067d8d32feb12d3bf197f`。
+- 启动脚本 `tools/run_font_probe.sh` 的 SHA-256 为 `a42284694942bff1a164247973ac69864e077f3adf81d20254078974cfd7f2d9`。
+- 主机测试覆盖临时 DEX 的只读权限、执行入口、退出清理和“不注册为模块入口”；不把这些测试或编译成功冒充设备上的 Paint 实测。
