@@ -175,3 +175,24 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 
 研究参考：公开反编译样本中的 `COUIHintRedDotHelper` 使用 `sans-serif-medium`，以 `(top + bottom - ascent - descent) / 2` 计算文字基线。样本来自其他 Oplus 应用，不能断言与用户系统组件一致；它仅支持先核对真实 Typeface／配置路由，而不是硬编码像素平移。
 参考：<https://github.com/eduardo3677-ai/com-oplus-aimemory/blob/417268a0e09b6408e6c09f0042bc194d6d706c25/smali/com/coui/appcompat/reddot/COUIHintRedDotHelper.smali>
+
+## 2026-09-06 08:13：安装与首选项链路已确认
+
+本次只记录必要结论，不归档完整的应用用户状态或进程数据。
+
+- 用户实际安装的字体模块为 `1.4-phase1.1 / 1717180005`，APK 为 `1.4-phase1 / 14`。
+- 文渊文件在模块目录、系统路径和 Firefox 进程根目录中的 SHA-256 均为固定原版值；Roboto 载体的系统与模块副本也一致。
+- `font_fallback.xml`、`fonts.xml`、Oplus 的 `fonts_base.xml`、`fonts_ule.xml` 与生成 XML 的 SHA-256 相同：`e07a28c21480b312ae74603d6bf75428e65f34d641c129423269ac8022a7c93c`。不能再把角标问题归因于这些文件没有挂载。
+- 08:11:12.283 的 Firefox 主进程记录出现 `[gecko-prefs] injected`；由进程内检查确认目标字体可读且首选项经过注入。08:11:12.964 仍有 `CustomFallbackBuilder.build()` 的实际命中。
+- APK 的 `stopped=true / notLaunched=true` 不是 Xposed 模块未运行的判据；本 APK 没有普通启动界面，且实际注入日志已经给出了正面证据。
+- 此前空日志在本次采集中已经不再出现，不继续更改过滤策略。网页实际字形效果仍需要用户视觉反馈；角标偏低是单独的布局验收问题。
+
+## 运行时字体测量工具（不安装 APK）
+
+`com.mfga.xposed.diagnostics.FontMetricsProbe` 是独立 `app_process` 入口，不注册为 Xposed 模块入口，也不被现有 Hook 调用。它随诊断 APK 编译，但执行时仅从容器 APK 取出 DEX，不安装或替换任何 APK／字体模块。
+
+工具在自己的新进程中从当前预装 XML 初始化字体映射，比较默认、`sans-serif-medium`、condensed、serif，以及显式构造的“载体＋文渊”和直接文渊对照。只使用固定样本文字，输出 `Paint` 浮点／整数度量、文本边界、`TextRunShaper` 的实际字体文件／轴／字形边界，以及常见居中公式的墨迹中心偏差。正偏差表示向下。
+
+这个工具测量的是手机上的真实 Android 字体引擎，但不是现有 SystemUI 控件的 Paint 实例或它的共享字体缓存。若新的独立进程结果正常而屏幕仍偏低，下一步应定位控件实际字体、缓存或布局实现，不能把独立进程测量结果冒充具体控件实测。
+
+`tools/run_font_probe.sh` 仅将容器中的 `classes.dex` 复制到独立的临时目录，将这份副本设为只读后运行，并在退出时清理；限时 60 秒。stdout 由调用者保存为报告。Android 16 的 `Typeface.loadPreinstalledSystemFontMap()` 只在这个诊断进程内调用，不更改其他进程或磁盘配置。初始化不支持或测量失败会明确报错，不生成假的测量成功结果。
