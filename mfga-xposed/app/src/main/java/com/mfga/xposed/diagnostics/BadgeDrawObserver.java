@@ -161,18 +161,24 @@ public final class BadgeDrawObserver {
 
     private static String callers() {
         StringBuilder result = new StringBuilder();
-        int count = 0;
+        int kept = 0;
+        int appFrames = 0;
         for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
             String name = frame.getClassName();
             if (name.startsWith("com.mfga.xposed.") || name.startsWith("io.github.libxposed.")
                     || name.startsWith("org.lsposed.") || name.startsWith("de.robv.android.xposed.")
                     || name.startsWith("java.") || name.startsWith("dalvik.")
                     || name.startsWith("android.graphics.")) continue;
+            boolean framework = name.startsWith("android.");
+            // Keep the immediate drawing context (first frames), then only non-framework
+            // frames up the hierarchy. The badge inherits onDraw from TextView, so its
+            // concrete class never shows here; its named SystemUI/Oplus container does.
+            if (framework && kept >= 8) continue;
+            if (!framework) appFrames++;
             if (result.length() != 0) result.append(" <- ");
             result.append(name).append('.').append(frame.getMethodName());
-            // Keep enough app frames to reach the concrete SystemUI/Oplus view past the
-            // generic android.view/android.widget/android.text drawing frames.
-            if (++count == 18) break;
+            kept++;
+            if (appFrames >= 12 || kept >= 40) break;
         }
         return result.toString();
     }

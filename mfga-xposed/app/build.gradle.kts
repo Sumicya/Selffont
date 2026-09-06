@@ -7,8 +7,8 @@ android {
         applicationId = "com.mfga.xposed"
         minSdk = 36
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.4-badge-diagnostic2"
+        versionCode = 18
+        versionName = "1.4-badge-diagnostic3"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {

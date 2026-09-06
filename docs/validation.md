@@ -317,3 +317,13 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[badge-'
 ```
 
 这次应只出现小字号角标样本（键盘按键被过滤），且 `[badge-caller]` 会给出更深的宿主控件类。
+
+## 2026-09-06：新增 `10` 角标样本仍来自旧 APK；深化调用栈（1.4-badge-diagnostic3）
+
+用户第三批日志新增一条 `text=10` 角标：`clip=[0,0][31,35]`、ink `[0,-23][30,1]`、baseline=35、align=LEFT，run ascent/descent −34.8/8.64。数字墨迹中心≈24 对框中心 17.5，同样偏低约 6–7px，墨迹底 36 > 框底 35，底沿裁切。与 `7` 结论一致，且 `10` 的框更宽（31），确认横向 LEFT 起笔、纵向偏低。
+
+但这批仍是**旧 APK（v16）**输出，未装 `diagnostic2`：`[badge-observe-ready]` 时间戳仍是最初的 13:51:57（重装/SystemUI 重启后应有新的 observe-ready）；70px 安全键盘样本仍在（v17 已过滤）；栈仍含 `VMStack.getThreadStackTrace` 且约 10 帧截断。因此键盘过滤与深栈都尚未在设备生效。
+
+同时发现 v17 的固定 18 帧深栈仍可能不够：角标从 `TextView` 继承 `onDraw`，其运行时类不会作为栈帧出现，需要一直向上抓到具名的 SystemUI/Oplus 容器帧。v18 改为：保留最初的绘制上下文帧，之后只保留非 `android.*` 的应用帧,最多 12 个应用帧（或 40 帧上限），越过 v16 截断处的 `ViewGroup.drawChild`，露出真正拥有角标的 Oplus/SystemUI 容器类。仍全程只读，不改绘制参数与 Paint。
+
+**务必先彻底换装 v18**：在 LSPosed 停用并卸载旧诊断 APK，安装 `1.4-badge-diagnostic3`，重新勾选 SystemUI，彻底重启 SystemUI（或重启设备）后再展开带 7/10 角标的界面，确认 `[badge-observe-ready]` 时间戳是新的，再看 `[badge-caller]`。
