@@ -34,7 +34,7 @@ artifact=
 for attempt in 1 2; do
     dir="$work/download-$attempt"
     mkdir "$dir"
-    if gh run download 34001516111 -R Sumicya/Selffont \
+    if gh run download 34006028276 -R Sumicya/Selffont \
         -n selffont-phase1-debug-apk -D "$dir"; then
         artifact="$dir/app-debug.apk"
         [ -s "$artifact" ] && break
@@ -46,15 +46,15 @@ done
 stage=launcher
 printf '[4/5] Verify standalone launcher\n'
 gh api -H 'Accept: application/vnd.github.raw+json' \
-    'repos/Sumicya/Selffont/contents/tools/run_font_probe.sh?ref=eac95ecead1234a157c579ebcf6028626fbb8f2a' \
+    'repos/Sumicya/Selffont/contents/tools/run_font_probe.sh?ref=09f145e2cdcf67ea60db8f20acdf6570cbda8bb9' \
     > "$work/run.sh"
 printf '%s  %s\n' \
-    'a42284694942bff1a164247973ac69864e077f3adf81d20254078974cfd7f2d9' \
+    '456f85204e0796124b2de71769692df7ad67c1eee27a4a847ab6285a70b22f7e' \
     "$work/run.sh" | sha256sum -c -
 
 stage=measurement
 printf '[5/5] Standalone Android font measurement (no installation)\n'
 status=0
-su -c "umask 022; sh '$work/run.sh' '$artifact' > /sdcard/Download/selffont-metrics.txt 2>&1" || status=$?
-printf 'Report: /sdcard/Download/selffont-metrics.txt; probe exit=%s\n' "$status"
+su -c "sh '$work/run.sh' '$artifact'" || status=$?
+printf 'Probe exit=%s; diagnostics printed above.\n' "$status"
 exit "$status"

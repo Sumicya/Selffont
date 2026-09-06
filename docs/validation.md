@@ -189,13 +189,13 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 
 ## 运行时字体测量工具（不安装 APK）
 
-`com.mfga.xposed.diagnostics.FontMetricsProbe` 是独立 `app_process` 入口，不注册为 Xposed 模块入口，也不被现有 Hook 调用。它随诊断 APK 编译，但执行时仅从容器 APK 取出 DEX，不安装或替换任何 APK／字体模块。
+`com.mfga.xposed.diagnostics.FontMetricsProbe` 是独立 `app_process` 入口，不注册为 Xposed 模块入口，也不被现有 Hook 调用。它随诊断 APK 编译，但执行时以完整容器 APK 建立类路径，不安装或替换任何 APK／字体模块。
 
 工具在自己的新进程中从当前预装 XML 初始化字体映射，比较默认、`sans-serif-medium`、condensed、serif，以及显式构造的“载体＋文渊”和直接文渊对照。只使用固定样本文字，输出 `Paint` 浮点／整数度量、文本边界、`TextRunShaper` 的实际字体文件／轴／字形边界，以及常见居中公式的墨迹中心偏差。正偏差表示向下。
 
 这个工具测量的是手机上的真实 Android 字体引擎，但不是现有 SystemUI 控件的 Paint 实例或它的共享字体缓存。若新的独立进程结果正常而屏幕仍偏低，下一步应定位控件实际字体、缓存或布局实现，不能把独立进程测量结果冒充具体控件实测。
 
-`tools/run_font_probe.sh` 仅将容器中的 `classes.dex` 复制到独立的临时目录，将这份副本设为只读后运行，并在退出时清理；限时 60 秒。stdout 由调用者保存为报告。Android 16 的 `Typeface.loadPreinstalledSystemFontMap()` 只在这个诊断进程内调用，不更改其他进程或磁盘配置。初始化不支持或测量失败会明确报错，不生成假的测量成功结果。
+`tools/run_font_probe.sh` v2 将完整 APK 复制到独立临时目录，将这份副本设为只读后运行，并在退出时清理；限时 60 秒。诊断默认直接输出终端，不要求保存或上传文件。Android 16 的 `Typeface.loadPreinstalledSystemFontMap()` 只在这个诊断进程内调用，不更改其他进程或磁盘配置。初始化不支持或测量失败会明确报错，不生成假的测量成功结果。
 
 ### 运行时测量工具构建记录
 
@@ -233,3 +233,12 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 APK 构建新增最终检查：逐一检查 `classes*.dex`（包括 DEX 041 容器头），确认目标 class_def 和有代码的 public static main(String[])。仅仅找到字符串引用不算入口存在。检查不通过时构建失败，不能仅凭 assembleDebug 产出文件判定工具可执行。
 
 该修订仍需要实际构建结果与手机验证；完整 APK classpath 是修正启动契约，不把尚未确认的具体 DEX 分布或手机运行结果写成已验证。
+
+### 类路径修订的实际构建结果
+
+- 提交 `09f145e2cdcf67ea60db8f20acdf6570cbda8bb9` 的 [APK 构建 #34006028276](https://github.com/Sumicya/Selffont/actions/runs/34006028276) 与 [契约检查 #34006028278](https://github.com/Sumicya/Selffont/actions/runs/34006028278) 成功。
+- 构建后的 DEX 检查注释确认：入口定义在 **classes2.dex**，headerOffset=0，存在有代码的 public static main(String[])。原启动器只保留 classes.dex，遗漏了所需入口。
+- 产物 ID `9980963550`，外层 ZIP 大小 30,522 字节，外层 SHA-256 `5cdd0c5b28f7059462eea1d8855b4e8cb5231d055a9376f63661774de15e251a`。
+- v2 启动脚本 SHA-256：`456f85204e0796124b2de71769692df7ad67c1eee27a4a847ab6285a70b22f7e`。默认使用整个只读 APK，不再抽取单个 DEX；同时设置显式 VM 类路径和 CLASSPATH。
+- Termux 传输脚本已更新固定运行号与启动器版本，保留代理／网络／认证预检，但直接将测量输出显示在终端。临时容器文件属于执行所需输入，不再额外生成需要用户寻找的诊断 TXT。
+- 新增多 DEX、DEX 041 多头、仅字符串引用不算定义、main 权限与代码存在性、完整容器保留及终端输出测试。编译与入口检查成功仍不是手机测量成功；现有字体模块与已安装 Xposed APK不因此更新。
