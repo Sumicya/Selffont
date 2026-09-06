@@ -402,3 +402,9 @@ android.text.Layout.draw <- android.widget.TextView.onDraw <- View.draw
 主机回归：`tests/java/PolicyTest.java` 新增前置保留、已前置幂等、去重、空列表、无 list 项不新增、emoji 首选项零改动等断言；`prependFamily` 逻辑另以脚本复核通过（本环境无 javac，Java 编译/运行由 CI JDK 17 执行）。
 
 装机验证：安装诊断 APK `1.4-gecko-fallback / 19`（字体模块不变），冷启动火狐后回看那行新 emoji 是否恢复（预期彩色，来自系统 emoji 字体），同时确认正文仍统一为文渊、粗斜体/小型大写/CJK 无回归。这是很窄的回退修复，不宣称覆盖所有网页与全部字符。
+
+### Gecko 回退修复构建结果（1.4-gecko-fallback）
+
+- [契约检查 #34021748098](https://github.com/Sumicya/Selffont/actions/runs/34021748098)（JDK 17 编译并运行 `PolicyTest`，含前置保留/去重/无 list 不新增/emoji 零改动断言）与 [诊断 APK #34021748135](https://github.com/Sumicya/Selffont/actions/runs/34021748135) 均成功。
+- 产物 `selffont-phase1-debug-apk`，artifact ID `9985740512`，外层 ZIP 36,645 字节。versionCode 19 / versionName `1.4-gecko-fallback`。字体模块不变。
+- 装机：停用并卸载旧诊断 APK，安装本版，LSPosed 重新勾选 Firefox，冷启动后回看新 emoji 是否恢复（预期系统彩色），并确认正文仍统一为文渊、粗斜体/小型大写/CJK 无回归。
