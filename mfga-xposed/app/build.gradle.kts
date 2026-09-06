@@ -7,8 +7,8 @@ android {
         applicationId = "com.mfga.xposed"
         minSdk = 36
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.4-gecko-prefdump"
+        versionCode = 21
+        versionName = "1.4-glyph-probe"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {

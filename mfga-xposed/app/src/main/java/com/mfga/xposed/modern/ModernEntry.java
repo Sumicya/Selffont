@@ -9,6 +9,7 @@ import com.mfga.xposed.GeckoFontPolicy;
 import com.mfga.xposed.ReplacementGuard;
 import com.mfga.xposed.TargetPlatform;
 import com.mfga.xposed.diagnostics.BadgeDrawObserver;
+import com.mfga.xposed.diagnostics.GlyphCoverageProbe;
 
 import java.io.File;
 import java.lang.reflect.Method;
@@ -25,6 +26,7 @@ public final class ModernEntry extends XposedModule {
     private static final String TAG = "Selffont";
     private final Set<Method> installed = new HashSet<>();
     private final BadgeDrawObserver badges = new BadgeDrawObserver((priority, message) -> log(priority, TAG, message));
+    private final AtomicBoolean glyphProbed = new AtomicBoolean();
 
     @Override
     public void onPackageReady(PackageReadyParam param) {
@@ -42,6 +44,13 @@ public final class ModernEntry extends XposedModule {
         }
         installTypefaceHooks();
         installGeckoHook(param.getClassLoader());
+        if ("org.mozilla.firefox".equals(param.getPackageName())) {
+            // Read-only: answer the emoji-tofu question with the real Android font
+            // system inside this process. Runs once; changes no rendering.
+            if (glyphProbed.compareAndSet(false, true)) {
+                GlyphCoverageProbe.run((priority, message) -> log(priority, TAG, message));
+            }
+        }
     }
 
     private void installTypefaceHooks() {

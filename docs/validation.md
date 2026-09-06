@@ -422,3 +422,29 @@ android.text.Layout.draw <- android.widget.TextView.onDraw <- View.draw
 ```sh
 su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[gecko-pref'
 ```
+
+## 2026-09-06：pref 转储证明 emoji 不走首选项——改用真机字形覆盖探针
+
+用户装 `1.4-gecko-prefdump` 冷启动火狐后导出：
+
+```
+[gecko-pref] browser.display.use_document_fonts = 1
+[gecko-pref-summary] font.name=0 font.name-list=0 emoji=0 fallback/rendering=0 totalPrefs=133
+```
+
+结论（推翻前两版假设）：原始 prefsMap **没有任何 `font.name*`/`font.name-list`/emoji 键**（这些是运行时默认值，未在 prefsMap 序列化）。因此“把文渊前置到现有 `font.name-list`”是**空操作**，无从生效；emoji 缺字也**不经 pref**。用户另确认火狐正文已统一为文渊，说明火狐确实在读模块生成的 `fonts.xml`。故 emoji 豆腐块属于 **`fonts.xml` + 字体文件覆盖**问题，与 hook/pref 无关。
+
+矛盾待消除：生成的 `fonts.xml` 中 `und-Zsye` 指向 `NotoColorEmoji.ttf`。若它覆盖这些新码位，火狐也应能显示；若不覆盖，则 Chrome 也应豆腐块——但用户在系统浏览器/Chrome 看到彩色正常。需用设备事实判定，不再猜测。
+
+新增只读探针 `GlyphCoverageProbe`（`1.4-glyph-probe / 21`），在火狐进程内用真实 Android 字体系统回答：
+- `[glyph-default]`：`Paint(Typeface.DEFAULT).hasGlyph` 对 9 个样本码位的覆盖/缺失。
+- `[glyph-resolve] U+XXXX -> 文件 readable=? notdef=?`：`TextRunShaper` 把每个码位解析到哪个字体文件、该文件在火狐进程是否可读、是否 .notdef（=豆腐）。
+- `[glyph-system] scanned=N coveringFonts=[...]`：`SystemFonts.getAvailableFonts()` 中真正覆盖样本的字体文件及可读性。
+
+只查固定诊断码位，不改渲染、不读页面/浏览数据。据此区分三种根因：系统根本无覆盖字体（需补字体文件到模块）／有但 `fonts.xml` 未纳入该 `und-Zsye` 家族（需修 XML 家族）／火狐进程读不到该文件（挂载/权限）。
+
+装机：安装诊断 APK `1.4-glyph-probe / 21`（字体模块不变），冷启动火狐，导出：
+
+```sh
+su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[glyph-'
+```
