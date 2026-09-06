@@ -376,3 +376,10 @@ android.text.Layout.draw <- android.widget.TextView.onDraw <- View.draw
 主机回归：新增 `tests/test_metric_normalize.py`（行度量匹配载体、UPM 缩放、轮廓/cmap/轴保留、USE_TYPO_METRICS 跟随、usWin 覆盖真实墨迹、上/下溢出拒绝、篡改检测）；打包测试改用真实结构的 `primary_font` fixture 并核对“仅度量变化”。共 62 项 Python、3 项 Node 通过。
 
 这是主机层的度量与打包验证，**尚未装机**。需要用户装新字体模块（`1.4-phase2-metrics / 1717180006`）后，回看分组计数、红点角标、时钟等紧凑槽是否居中且不再切底，并确认正文、粗斜体、小型大写、CJK 回退无回归。诊断 APK 保持只读，不再逐控件 Hook。
+
+### 度量归一构建结果（1.4-phase2-metrics）
+
+- [字体模块 CI #34020726659](https://github.com/Sumicya/Selffont/actions/runs/34020726659) 与 [契约检查 #34020726662](https://github.com/Sumicya/Selffont/actions/runs/34020726662) 均成功。CI 用**真实 48MB 文渊原版**执行归一与打包，构建期防切保护通过。
+- 产物 `selffont-phase1-font-module`，artifact ID `9985406225`，约 108 MB。内层安装文件仍为 `Selffont-phase1.zip`，其 `module-report.json` 记录 `metricNormalization`（原始/归一 hhea、digitInkY、usWin、归一副本 SHA-256）。
+- 上游原版 `WenYuanRoundedSCVF.ttf` 固定 SHA-256 不变（仅安装副本的行度量被归一）；诊断 APK 不更新。
+- 装机步骤：正常 KSU 安装内层 ZIP，重启；随后回看分组通知计数、应用红点角标、状态栏时钟/电量等紧凑槽是否居中、是否仍切下沿，并确认正文、粗斜体、小型大写、CJK 回退无回归。
