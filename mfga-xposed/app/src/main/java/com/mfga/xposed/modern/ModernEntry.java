@@ -98,12 +98,16 @@ public final class ModernEntry extends XposedModule {
                     boolean visible = new File(GeckoFontPolicy.FONT_PATH).canRead();
                     @SuppressWarnings("unchecked")
                     Map<String, Object> original = (Map<String, Object>) result;
-                    Map<String, Object> patched = GeckoFontPolicy.apply(original, visible);
                     if (firstHit.compareAndSet(false, true)) {
-                        log(visible ? Log.INFO : Log.WARN, TAG, visible
-                                ? "[gecko-prefs] injected; rendered font still needs device verification"
-                                : "[gecko-skip] target font not visible in this process; prefs unchanged");
+                        // Read-only: dump the actual font-selection prefs Gecko exposes here,
+                        // so we can see whether font.name-list.* / emoji keys even exist and
+                        // which path missing-glyph fallback takes. No browsing data is read.
+                        dumpFontPrefs(original);
                     }
+                    Map<String, Object> patched = GeckoFontPolicy.apply(original, visible);
+                    log(visible ? Log.INFO : Log.WARN, TAG, visible
+                            ? "[gecko-prefs] injected; rendered font still needs device verification"
+                            : "[gecko-skip] target font not visible in this process; prefs unchanged");
                     return patched;
                 } catch (RuntimeException | LinkageError error) {
                     if (firstFailure.compareAndSet(false, true)) {
@@ -116,6 +120,41 @@ public final class ModernEntry extends XposedModule {
             log(Log.INFO, TAG, "[gecko-absent] no GeckoView in this classloader");
         } catch (ReflectiveOperationException | LinkageError error) {
             log(Log.WARN, TAG, "[gecko-unsupported] " + error);
+        }
+    }
+
+    /**
+     * Read-only diagnostic: report which font-selection prefs Gecko actually exposes,
+     * so we can tell whether font.name-list.* / emoji fallback keys exist here and how
+     * missing-glyph fallback is routed. Only font config keys are logged; no URLs,
+     * profile data or page content are read. Bounded to keep the log small.
+     */
+    private void dumpFontPrefs(Map<String, Object> prefs) {
+        try {
+            int nameKeys = 0, listKeys = 0, emojiKeys = 0, fallbackKeys = 0;
+            int shown = 0;
+            java.util.List<String> keys = new java.util.ArrayList<>(prefs.keySet());
+            java.util.Collections.sort(keys);
+            for (String key : keys) {
+                boolean emoji = key.contains("emoji");
+                boolean fallback = key.startsWith("font.name-list.") || key.contains("fallback")
+                        || key.startsWith("gfx.font_rendering");
+                if (key.startsWith("font.name.")) nameKeys++;
+                if (key.startsWith("font.name-list.")) listKeys++;
+                if (emoji) emojiKeys++;
+                if (fallback) fallbackKeys++;
+                // Log the keys most relevant to the tofu question, capped at 40 lines.
+                if (shown < 40 && (emoji || fallback || key.equals("browser.display.use_document_fonts")
+                        || key.startsWith("font.name.serif.") || key.startsWith("font.name.sans-serif."))) {
+                    log(Log.INFO, TAG, "[gecko-pref] " + key + " = " + prefs.get(key));
+                    shown++;
+                }
+            }
+            log(Log.INFO, TAG, "[gecko-pref-summary] font.name=" + nameKeys + " font.name-list=" + listKeys
+                    + " emoji=" + emojiKeys + " fallback/rendering=" + fallbackKeys
+                    + " totalPrefs=" + prefs.size());
+        } catch (RuntimeException error) {
+            log(Log.WARN, TAG, "[gecko-pref-dump-failed] " + error);
         }
     }
 

@@ -408,3 +408,17 @@ android.text.Layout.draw <- android.widget.TextView.onDraw <- View.draw
 - [契约检查 #34021748098](https://github.com/Sumicya/Selffont/actions/runs/34021748098)（JDK 17 编译并运行 `PolicyTest`，含前置保留/去重/无 list 不新增/emoji 零改动断言）与 [诊断 APK #34021748135](https://github.com/Sumicya/Selffont/actions/runs/34021748135) 均成功。
 - 产物 `selffont-phase1-debug-apk`，artifact ID `9985740512`，外层 ZIP 36,645 字节。versionCode 19 / versionName `1.4-gecko-fallback`。字体模块不变。
 - 装机：停用并卸载旧诊断 APK，安装本版，LSPosed 重新勾选 Firefox，冷启动后回看新 emoji 是否恢复（预期系统彩色），并确认正文仍统一为文渊、粗斜体/小型大写/CJK 无回归。
+
+## 2026-09-06：回退 pref 修改无效——改为只读转储真实首选项
+
+用户装 `1.4-gecko-fallback` 并冷启动火狐后，新 emoji 仍为豆腐块；系统浏览器/Chrome 彩色正常。说明系统有覆盖这些码位的字体，Chrome 走 Android 框架能用到；但改 `font.name-list` 前置对 Gecko 无效。
+
+这推翻"前置回退即可"的假设。可能真相：这些 emoji 走 Gecko 的 **emoji 专用字体选择**（与 `font.name.*` 无关），或 Gecko 启动时自建的字体枚举/缓存未包含覆盖字体——两者都不是本模块改的 pref 键能解决的。**在没有设备证据前不再改 pref。**
+
+新增只读诊断 `dumpFontPrefs`（`1.4-gecko-prefdump / 20`）：在 `getPrefsMap()` 命中时打印实际存在的 `font.name.*`、`font.name-list.*`、含 `emoji`、含 `fallback`/`gfx.font_rendering` 的键值，以及各类计数汇总（`[gecko-pref]` / `[gecko-pref-summary]`）。只读字体配置键，不读 URL/浏览数据/页面内容，最多 40 行。据此判断：这些键是否存在、emoji 走哪条路、注入是否落点，再决定下一步（可能需要针对 emoji pref 或放弃 pref 路线）。
+
+装机：安装诊断 APK `1.4-gecko-prefdump / 20`，冷启动火狐，导出：
+
+```sh
+su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[gecko-pref'
+```
