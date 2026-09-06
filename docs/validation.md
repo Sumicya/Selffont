@@ -332,3 +332,30 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[badge-'
 
 - [APK 构建 #34018033001](https://github.com/Sumicya/Selffont/actions/runs/34018033001) 与 [契约检查 #34018032973](https://github.com/Sumicya/Selffont/actions/runs/34018032973) 均成功。
 - 产物 `selffont-phase1-debug-apk`，artifact ID `9984555248`，外层 ZIP 36,106 字节。versionCode 18 / versionName `1.4-badge-diagnostic3`。字体模块与 Firefox 分支不变。
+
+## 2026-09-06：v18 生效，角标控件已定位到 NotificationChildrenContainer
+
+用户装 v18 后出现新的 `[badge-observe-ready]`（15:08:21，session `24fc`），且样本不再含 70px 键盘、栈无 `VMStack`。15:08:34 的 `7` 角标给出完整具名栈：
+
+```
+android.text.Layout.draw <- android.widget.TextView.onDraw <- View.draw
+  <- com.android.systemui.statusbar.notification.stack.NotificationChildrenContainer.drawChild
+  <- ...row.ExpandableOutlineView.drawChild
+  <- ...row.ActivatableNotificationView.dispatchDraw
+  <- ...row.ExpandableNotificationRow.dispatchDraw
+  <- ...stack.NotificationStackScrollLayout.drawChild/dispatchDraw
+  <- androidx.constraintlayout.widget.ConstraintLayout.dispatchDraw
+  <- com.android.systemui.shade.NotificationPanelView.dispatchDraw
+```
+
+结论：偏低的 `7`/`10` 是**分组通知的折叠计数**，由 `NotificationChildrenContainer` 内的一个普通 `TextView`（组溢出计数）经 `StaticLayout`/`Layout.draw` 绘制，不是应用图标红点，也不是安全键盘。
+
+度量复核（正偏差向下）：
+- `7`：clip=[0,0][18,35]，`10`：clip=[0,0][31,35]；框高恒为 35。
+- Paint `getFontMetricsInt` = −28/7（Roboto 载体名义值），名义行高 28..(−7) → 35，正好等于框高 → **框由名义度量测量**。
+- 但 baseline 画在 y=35（框底），≈ 文渊真实 run ascent（−34.8→−35），**baseline 由实际回退字体度量放置**。
+- 数字墨迹相对 baseline [−22..1] → 绝对 [13..36]，中心 24.5 vs 框中心 17.5 → **偏低约 7px**；墨迹底 36 > 框底 35 → **底沿裁切 1px**。若 baseline 用名义 ascent 28，墨迹 [6..29] 恰好居中。
+
+机制推断：TextView 以载体名义度量**测量**出高 35 的框，而 `StaticLayout` 在**绘制**时按回退字体（文渊）更大的 ascent 放置 baseline（典型于开启 fallback line spacing 的通知布局）。载体只统一了名义 Paint 度量，统一不了 glyph run 与 StaticLayout 的回退行距——与此前独立进程、以及 `7`/`10` 两组样本一致。这是该控件“测量用名义、绘制用回退”的行距/基线不一致，不是字体数据损坏，也不是全局问题。
+
+至此具体控件已确认。用户此前选择“保持原版字体、定位具体控件、不做全局像素平移、不生成度量派生字体”。是否对这一个控件做作用域受限的定点基线修正，需用户决定后再从只读观察改为定点修复。
