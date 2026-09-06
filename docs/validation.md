@@ -495,3 +495,7 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[glyph-'
 - 火狐最新 emoji 豆腐块：**确认为 Gecko 限制，非本模块可修，列为范围边界。**
 
 诊断类改动（`[gecko-pref]` 转储、`GlyphCoverageProbe`、Gecko `font.name-list` 前置）为只读或空操作，保留备查，不影响字体模块与已确认修复。
+
+## 2026-09-06：诊断收尾（1.4-phase2）
+
+emoji 结论确定后移除火狐启动热路径上的诊断调用：从 `ModernEntry` 去掉 `GlyphCoverageProbe.run`（每进程扫描 498 个系统字体）与 `dumpFontPrefs`（prefs 转储），恢复火狐冷启动速度、不再刷诊断日志。Gecko hook 恢复为仅在首次命中记录 `[gecko-prefs]`/`[gecko-skip]`。`GlyphCoverageProbe` 类保留在仓库、标注为休眠，供日后（如 Firefox 更新后复验 emoji）重新接入。角标度量归一与文渊默认字体等已确认修复不受影响。APK 版本 `1.4-phase2 / 22`。

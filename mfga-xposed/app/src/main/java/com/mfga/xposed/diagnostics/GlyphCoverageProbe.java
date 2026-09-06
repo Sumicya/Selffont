@@ -18,6 +18,11 @@ import java.util.function.BiConsumer;
  * reported Unicode 15/16 emoji, and whether this process can see it. Answers the tofu
  * question with facts instead of guesses. No rendering is changed; no page/profile data
  * is read; only fixed diagnostic codepoints are queried.
+ *
+ * <p>Dormant: not wired into any package path. The emoji-tofu investigation concluded
+ * it is a Gecko backend limitation (see docs/validation.md), so this probe is kept only
+ * for future re-diagnosis. Re-enable by calling {@link #run} from a scoped package; it
+ * scans every system font, so run it once and off the hot startup path.
  */
 public final class GlyphCoverageProbe {
     // The exact codepoints the user saw as tofu in Firefox (Unicode 15.1/16 emoji).
