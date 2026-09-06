@@ -448,3 +448,9 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[gecko-pref'
 ```sh
 su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[glyph-'
 ```
+
+### 字形覆盖探针构建结果（1.4-glyph-probe）
+
+- [诊断 APK #34023445618](https://github.com/Sumicya/Selffont/actions/runs/34023445618) 与 [契约检查 #34023445619](https://github.com/Sumicya/Selffont/actions/runs/34023445619) 均成功。
+- 产物 `selffont-phase1-debug-apk`，artifact ID `9986291807`，外层 ZIP 39,413 字节。versionCode 21 / versionName `1.4-glyph-probe`。字体模块不变。
+- 采集 `[glyph-` 三类日志后即可判定根因，再决定：补字体文件、修 `fonts.xml` 的 `und-Zsye` 家族、或排查挂载/权限。
