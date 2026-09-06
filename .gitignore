@@ -9,3 +9,8 @@ __pycache__/
 **/.gradle/
 **/build/
 mfga-xposed/local.properties
+# Large font binaries stay outside Git (see tools/prepare_font.py / build.yml).
+# fonts/ keeps only LICENSE-* attribution; module fonts come from the base ZIP.
+fonts/*.ttf
+fonts/*.otf
+fonts/*.ttc
