@@ -7,5 +7,6 @@ javac --release 17 -d "$OUT" \
     "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/GeckoFontPolicy.java" \
     "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/ReplacementGuard.java" \
     "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/TargetPlatform.java" \
+    "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/diagnostics/BadgeSamplePolicy.java" \
     "$ROOT/tests/java/PolicyTest.java"
 java -cp "$OUT" PolicyTest

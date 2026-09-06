@@ -242,3 +242,30 @@ APK 构建新增最终检查：逐一检查 `classes*.dex`（包括 DEX 041 容�
 - v2 启动脚本 SHA-256：`456f85204e0796124b2de71769692df7ad67c1eee27a4a847ab6285a70b22f7e`。默认使用整个只读 APK，不再抽取单个 DEX；同时设置显式 VM 类路径和 CLASSPATH。
 - Termux 传输脚本已更新固定运行号与启动器版本，保留代理／网络／认证预检，但直接将测量输出显示在终端。临时容器文件属于执行所需输入，不再额外生成需要用户寻找的诊断 TXT。
 - 新增多 DEX、DEX 041 多头、仅字符串引用不算定义、main 权限与代码存在性、完整容器保留及终端输出测试。编译与入口检查成功仍不是手机测量成功；现有字体模块与已安装 Xposed APK不因此更新。
+
+## 真实 Android 引擎测量成功：度量载体只改变名义度量
+
+用户完成 v2 完整 APK 类路径测量，`failed_cases=0`，启动器及探针均退出 0。仅保存必要汇总，不复制整段设备路径／输出。
+
+| 28px 的数字 10 / 7 | Paint 浮点居中模型 | Paint 整数居中模型 | 实际 glyph run 居中模型 |
+|---|---:|---:|---:|
+| DEFAULT / sans-serif / sans-serif-medium / condensed | -0.430px | -0.500px | +2.208px |
+| 显式 carrier + WenYuan 500 | -0.430px | -0.500px | +2.208px |
+| 直接 WenYuan / serif | +2.208px | +2.000px | +2.208px |
+
+所有这些样本的实际字形都解析到固定原版文渊文件；weight=400/500 与轴相符，中英文 locale 不改变本组结果。1000px 数字样本的 carrier Paint ascent/descent 为 -927.734/244.141，而 run 为 -1160/288。
+
+这证明在独立进程中，XML 与手工构造的 carrier/fallback 行为一致；载体没有丢失，也没有把数字换回 Roboto。但它不改变实际字形 run 的字体自身度量。不能把 standalone 的居中模型当作 SystemUI 角标对象实际使用的公式，更不能由此宣布已定位到具体控件。
+
+用户选择 **保持原版字体，定位具体控件**，不生成度量派生字体。继续保持原版哈希、字形、cmap 与名字不变，也不做全局像素位移。
+
+## SystemUI 只读绘制观察 APK
+
+版本 `1.4-badge-diagnostic`（versionCode 16）仅在 LSPosed 已经将模块加载进 `com.android.systemui` 时安装绘制观察 Hook。它不自动添加作用域，也不把 SystemUI 加入推荐勾选列表。用户需自行选择 SystemUI；不由脚本杀死或重启系统界面。
+
+- SystemUI 分支只观察，不安装原来的 Typeface 替换 Hook，避免在测量时改变待测对象。Firefox 与其他原有分支保持不变。
+- 同时探测软件／录制 Canvas 的 drawText 和 drawTextRun 实现，只接受固定数字样本 `7`、`10`，最多记录 12 组去重结果；不读取或记录其他通知正文。
+- 从真实绘制调用读取基线坐标、局部 clip、Paint 的度量／字体信息和调用类方法；测量使用 Paint 副本。原始参数与原始异常传播不变。
+- 标签：`[badge-diagnostic-only]`、`[badge-observe-ready]`、`[badge-sample]`、`[badge-metrics]`、`[badge-font]`、`[badge-caller]`。达到预算后不再采样，绘制仍然继续。
+- Canvas clip 并不必然等于角标背景矩形；文本运行测量也不等于调用者缓存的布局参数。需要结合调用类继续定位，不能拿 clip 中心盲目修正控件。
+- 这是定位 APK，不是角标修复；不要求更新字体模块，不对既有浏览器结论重复采样。

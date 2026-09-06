@@ -1,6 +1,7 @@
 import com.mfga.xposed.GeckoFontPolicy;
 import com.mfga.xposed.ReplacementGuard;
 import com.mfga.xposed.TargetPlatform;
+import com.mfga.xposed.diagnostics.BadgeSamplePolicy;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -48,6 +49,20 @@ public final class PolicyTest {
         check(!TargetPlatform.supports(35, "OnePlus", "OPLUS"));
         check(!TargetPlatform.supports(36, "google", "google"));
         check(!TargetPlatform.supports(36, null, null));
+        check(BadgeSamplePolicy.sample("7", 0, 1).equals("7"));
+        check(BadgeSamplePolicy.sample(new char[]{'x', '1', '0', 'y'}, 1, 3).equals("10"));
+        check(BadgeSamplePolicy.sample("notification content", 0, 20) == null);
+        check(BadgeSamplePolicy.sample("99", 0, 2) == null);
+        check(BadgeSamplePolicy.sample(null, 0, 1) == null);
+        check(BadgeSamplePolicy.sample("10", -1, 1) == null);
+        check(BadgeSamplePolicy.sample("10", 0, 3) == null);
+        check(BadgeSamplePolicy.sample("", 0, 0) == null);
+        BadgeSamplePolicy budget = new BadgeSamplePolicy(2);
+        check(budget.claim("one"));
+        check(!budget.claim("one"));
+        check(budget.claim("two"));
+        check(budget.full());
+        check(!budget.claim("three"));
         System.out.println("Java policy tests passed");
     }
 }

@@ -101,3 +101,7 @@ sh tests/run_java.sh   # JDK 17+
 ```
 
 Shell 行为测试使用 BusyBox ash 和临时目录，不碰真实 `/data`。打包测试使用合成基础 ZIP，不代替真实完整基础包测试。原有 `tools/GPOS`、字体合并及 Emoji 工具不在这轮重构范围内。
+
+### 当前角标诊断边界
+
+原版字体继续保持不变。已测得 carrier 能校正名义 Paint 度量，但不改变文渊 glyph run 的行度量；用户选择继续定位具体 SystemUI 控件。新版诊断 APK 对用户手动勾选的 SystemUI 只做限量、只读的 `7` / `10` 绘制观察，不替换其 Typeface，不自动添加作用域；Firefox 行为不变。参见 `docs/validation.md`。

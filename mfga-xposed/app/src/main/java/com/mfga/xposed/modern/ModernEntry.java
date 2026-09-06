@@ -8,6 +8,7 @@ import com.mfga.xposed.FontForceCore;
 import com.mfga.xposed.GeckoFontPolicy;
 import com.mfga.xposed.ReplacementGuard;
 import com.mfga.xposed.TargetPlatform;
+import com.mfga.xposed.diagnostics.BadgeDrawObserver;
 
 import java.io.File;
 import java.lang.reflect.Method;
@@ -23,6 +24,7 @@ import io.github.libxposed.api.XposedModule;
 public final class ModernEntry extends XposedModule {
     private static final String TAG = "Selffont";
     private final Set<Method> installed = new HashSet<>();
+    private final BadgeDrawObserver badges = new BadgeDrawObserver((priority, message) -> log(priority, TAG, message));
 
     @Override
     public void onPackageReady(PackageReadyParam param) {
@@ -31,6 +33,13 @@ public final class ModernEntry extends XposedModule {
             return;
         }
         log(Log.INFO, TAG, "[attach] phase1 modern-api102 package=" + param.getPackageName());
+        if ("com.android.systemui".equals(param.getPackageName())) {
+            // Manager scope is still required. Never opt SystemUI in automatically.
+            // Diagnostic mode must not change the Typeface we are trying to observe.
+            log(Log.INFO, TAG, "[badge-diagnostic-only] SystemUI drawing is observed, not replaced");
+            badges.install(this::install);
+            return;
+        }
         installTypefaceHooks();
         installGeckoHook(param.getClassLoader());
     }
