@@ -454,3 +454,26 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[glyph-'
 - [诊断 APK #34023445618](https://github.com/Sumicya/Selffont/actions/runs/34023445618) 与 [契约检查 #34023445619](https://github.com/Sumicya/Selffont/actions/runs/34023445619) 均成功。
 - 产物 `selffont-phase1-debug-apk`，artifact ID `9986291807`，外层 ZIP 39,413 字节。versionCode 21 / versionName `1.4-glyph-probe`。字体模块不变。
 - 采集 `[glyph-` 三类日志后即可判定根因，再决定：补字体文件、修 `fonts.xml` 的 `und-Zsye` 家族、或排查挂载/权限。
+
+## 2026-09-06：字形探针铁证——系统有字体、火狐进程可读、Android 能解析
+
+用户装 `1.4-glyph-probe` 冷启动火狐后导出（主进程与各子进程一致）：
+
+```
+[glyph-default] hasGlyph covered=[U+1F6D9,U+1FA8B,U+1FA8C,U+1FA8D,U+1FACC,U+1FADD,U+1FAEB,U+1FAF9,U+1FAFA] missing=[]
+[glyph-resolve] U+XXXX -> /system/fonts/NotoColorEmoji.ttf readable=true notdef=false glyphs=1   （9 个码位全部如此）
+[glyph-system] scanned=498 coveringFonts=[... NotoColorEmoji 等多个字体 ...]
+```
+
+这排除了此前所有假设：**不是系统缺字体**（有 `NotoColorEmoji.ttf` 覆盖）、**不是权限/挂载**（火狐进程 `readable=true`）、**不是 `fonts.xml` 未纳入**（Android 文字栈 `notdef=false` 能解析）。Chrome 走 Android 框架字体栈（与探针同源）故正常。
+
+结论：火狐用 **Gecko 自有字体后端**，不走 Android 这套；系统一切正常，是 Gecko 内部未选中该 emoji 字体。这解释了改 `fonts.xml`、改 `font.name*`/`font.name-list` pref 全部无效——它们不控制 Gecko 的 emoji 选择路径。
+
+### 下一步是零成本 A/B，而非再出 APK
+
+在 LSPosed 取消勾选 Firefox 作用域（关闭本模块注入）→ 彻底停止并冷启动火狐 → 打开含这些 emoji 的页面：
+
+- 若 emoji 恢复 → 是**本模块注入所致**（最大嫌疑 `browser.display.use_document_fonts=0` 连带抑制了 Gecko emoji 回退）；修法明确：调整注入（不硬关 document fonts，或专设 Gecko emoji 项）并可验证。
+- 若仍豆腐块 → 是 **Gecko 对 Unicode 15.1/16 最新 emoji 的自身限制**，与本模块无关，记为范围边界，不继续追加 Hook。
+
+在拿到该 A/B 结果前不再改动字体、配置或注入；避免又一次无证据的推测。
