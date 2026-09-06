@@ -164,3 +164,14 @@ Tab、GPU、utility、crashhelper 进程中的重复安装记录属于不同进�
 - 内层模块版本 `1.4-phase1.1`，versionCode `1717180005`；原版文渊的固定 SHA-256 不变，APK 不变。
 - 若日志仍无匹配，`parsed_origins=0` 表示这批输入没有解析出来源（可能为空或格式不同）；`parsed_origins>0, own_module=0` 表示识别了来源但未见本模块；`other_tags>0` 表示存在本模块的其他 tag。都不能单独用来判定当前注入状态。
 - 此次仍未在用户设备上确认角标的具体绘制结果。若问题持续，需要偏低数字的裁剪图和所属界面，以区分默认字体度量、具体控件固定基线与其他字体家族。
+
+## 2026-09-06：修订后仍偏低的截图与后续诊断
+
+用户提供的通知计数角标截图中，数字 10 与 7 仍然偏下。第一张局部图的边缘裁切不能单独作为控件裁剪边界的证据。1.4-phase1.1 的实际对齐尚未通过，不能将“已恢复度量载体”写成“已解决”。
+
+新日志报告 `parsed_origins=246 own_module=0 other_tags=0`，表示采集器识别了其他来源，但在这批日志中没找到本模块；不是没有输入，也不能直接判定 APK 被禁用。下一步不继续改过滤条件，而是核对实际安装／运行状态。
+
+`tools/device_state.sh` 一次只读采集：模块版本与更新标记、仅本模块 APK 的版本／用户安装状态、Firefox 主进程、模块目录与系统视图中的两份字体哈希、Firefox 进程根目录中的目标字体、生成与实际字体 XML 的哈希／相关家族行，以及打包时记录的度量信息。读取进程根目录仍以 root 身份进行，不等同于证明 Firefox UID 有读取权限。不修改字体、作用域或系统设置，不停止应用，不清空日志，不读取模块配置数据库。
+
+研究参考：公开反编译样本中的 `COUIHintRedDotHelper` 使用 `sans-serif-medium`，以 `(top + bottom - ascent - descent) / 2` 计算文字基线。样本来自其他 Oplus 应用，不能断言与用户系统组件一致；它仅支持先核对真实 Typeface／配置路由，而不是硬编码像素平移。
+参考：<https://github.com/eduardo3677-ai/com-oplus-aimemory/blob/417268a0e09b6408e6c09f0042bc194d6d706c25/smali/com/coui/appcompat/reddot/COUIHintRedDotHelper.smali>
