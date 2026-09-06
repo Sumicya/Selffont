@@ -269,3 +269,17 @@ APK 构建新增最终检查：逐一检查 `classes*.dex`（包括 DEX 041 容�
 - 标签：`[badge-diagnostic-only]`、`[badge-observe-ready]`、`[badge-sample]`、`[badge-metrics]`、`[badge-font]`、`[badge-caller]`。达到预算后不再采样，绘制仍然继续。
 - Canvas clip 并不必然等于角标背景矩形；文本运行测量也不等于调用者缓存的布局参数。需要结合调用类继续定位，不能拿 clip 中心盲目修正控件。
 - 这是定位 APK，不是角标修复；不要求更新字体模块，不对既有浏览器结论重复采样。
+
+### 只读角标 APK 构建结果
+
+- 提交 `ed694632fa107e541aa4ebed53f53a49fe9128a9` 的 [APK 构建 #34010188489](https://github.com/Sumicya/Selffont/actions/runs/34010188489) 和 [契约检查 #34010188473](https://github.com/Sumicya/Selffont/actions/runs/34010188473) 均成功。
+- [产物 #9982229620](https://github.com/Sumicya/Selffont/actions/runs/34010188489/artifacts/9982229620)：外层 ZIP 35,924 字节，SHA-256 `ec3e86ef779dc2f3c78fb2f24e46cc364c73796303231ff4d961d1e892f5e19a`。
+- 主机 53 项 Python、3 项 Node 测试通过；Java 策略测试覆盖固定采样文本、非法范围和去重／预算上限；APK 编译与 DEX 入口检查通过。仍不能将这些结果视为已在用户 SystemUI 上命中绘制或修复布局。
+- 安装使用正常 APK 流程。由用户保留已有 Firefox 作用域，并明确手动勾选 SystemUI；生效后展开存在 7 或 10 计数角标的通知界面。字体模块不更新。该版本不是之前的独立进程容器运行步骤。
+- 直接查看相关日志，不生成报告文件：
+
+```sh
+su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[badge-'
+```
+
+先确认 `[badge-observe-ready]`，再看 `[badge-sample]`、`[badge-metrics]`、`[badge-font]` 与 `[badge-caller]`。没有样本可能是未出现固定数字、未覆盖实际绘制入口或作用域未生效，不用大量抓取通知正文来代替这些证据。
