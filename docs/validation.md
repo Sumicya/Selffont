@@ -477,3 +477,21 @@ su -c 'sh /data/adb/modules/MFGA/action.sh logs' | grep -F '[glyph-'
 - 若仍豆腐块 → 是 **Gecko 对 Unicode 15.1/16 最新 emoji 的自身限制**，与本模块无关，记为范围边界，不继续追加 Hook。
 
 在拿到该 A/B 结果前不再改动字体、配置或注入；避免又一次无证据的推测。
+
+## 2026-09-06：A/B 结论——emoji 豆腐块是 Gecko 自身限制，非本模块
+
+用户在 LSPosed **取消勾选** Firefox（关闭本模块全部注入），彻底停止并冷启动火狐后，这些 Unicode 15.1/16 新 emoji **仍为豆腐块**。
+
+结合字形探针铁证（系统有 `NotoColorEmoji.ttf`、火狐进程可读、Android 文字栈 `notdef=false` 能解析），判定：
+
+- 该缺字**与本模块无关**——注入开/关都豆腐块，`use_document_fonts=0`、`fonts.xml`、`font.name*` 均非成因。
+- 属于 **Gecko 自有字体后端对该批最新 emoji 的选择限制**（Firefox 155 / GV 155 基线）。Chrome 走 Android 框架字体栈故正常，二者字体选择路径不同。
+- 记为**范围边界**：不新增 Hook、不改字体数据、不改 pref 去强凑；这类 Gecko 版本相关的 emoji 覆盖需由上游或更新 GeckoView 解决。
+
+### 本阶段两项用户可见问题的最终状态
+
+- 通知/角标数字偏低与切下沿：**已由度量归一（1.4-phase2-metrics）修复，用户确认居中解决。**
+- 火狐正文默认字体统一为文渊：**用户先前已确认成功。**
+- 火狐最新 emoji 豆腐块：**确认为 Gecko 限制，非本模块可修，列为范围边界。**
+
+诊断类改动（`[gecko-pref]` 转储、`GlyphCoverageProbe`、Gecko `font.name-list` 前置）为只读或空操作，保留备查，不影响字体模块与已确认修复。
