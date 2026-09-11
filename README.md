@@ -44,7 +44,7 @@ python3 -m venv .venv
 
 ## 构建 Xposed APK
 
-需要 **JDK 17、Gradle 8.11.1、Android SDK 36**：
+需要 **JDK 21、Gradle 8.11.1、Android SDK 36**：
 
 ```sh
 cd mfga-xposed
@@ -99,7 +99,7 @@ sh /data/adb/modules/MFGA/action.sh app-fonts restore --confirm
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --test tests/commands.test.mjs
-sh tests/run_java.sh   # JDK 17+
+sh tests/run_java.sh   # JDK 21+
 ```
 
 Shell 行为测试使用 BusyBox ash 和临时目录，不碰真实 `/data`。打包测试使用合成基础 ZIP，不代替真实完整基础包测试。原有 `tools/GPOS`、字体合并及 Emoji 工具不在这轮重构范围内。
