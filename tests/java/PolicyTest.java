@@ -71,6 +71,14 @@ public final class PolicyTest {
         check(!TargetPlatform.supports(35, "OnePlus", "OPLUS"));
         check(!TargetPlatform.supports(36, "google", "google"));
         check(!TargetPlatform.supports(36, null, null));
+        // allowed(): natively supported platforms attach regardless of the override.
+        check(TargetPlatform.allowed(36, "OnePlus", "OPLUS", false));
+        check(TargetPlatform.allowed(36, "OnePlus", "OPLUS", true));
+        // Untested platforms are blocked by default, but the user may force it.
+        check(!TargetPlatform.allowed(35, "google", "google", false));
+        check(TargetPlatform.allowed(35, "google", "google", true));
+        check(!TargetPlatform.allowed(36, "google", "google", false));
+        check(TargetPlatform.allowed(36, "google", "google", true));
         check(BadgeSamplePolicy.sample("7", 0, 1).equals("7"));
         check(BadgeSamplePolicy.sample(new char[]{'x', '1', '0', 'y'}, 1, 3).equals("10"));
         check(BadgeSamplePolicy.sample("notification content", 0, 20) == null);

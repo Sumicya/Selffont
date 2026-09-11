@@ -26,7 +26,7 @@ import java.util.Set;
  * Uses fixed sample text and stdout only. It never edits files, settings or other processes.
  */
 public final class FontMetricsProbe {
-    private static final String WENYUAN = "/system/fonts/Selffont-WenYuanRoundedSCVF.ttf";
+    private static final String WENYUAN = com.mfga.xposed.FontIdentity.FONT_PATH;
     private static final String CARRIER = "/system/fonts/Roboto-Regular.ttf";
 
     private FontMetricsProbe() {}

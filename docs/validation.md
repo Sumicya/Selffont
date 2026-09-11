@@ -526,3 +526,24 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
 - 通知/角标数字偏低与切下沿:**度量归一修复,用户真机确认。**
 - 火狐正文统一文渊:**用户确认成功。**
 - 火狐最新 emoji 豆腐块:**Gecko 后端限制,非本模块可修,范围边界。**
+
+## 2026-09-06：三化重构(现代化 / 自由化 / 原生化)
+
+用户授权突破先前"自设红线",要求三个方向全做。基于全量源码走查后落地(已确认过的行为——正文统一文渊靠 `use_document_fonts=0`+`font.name.*`、度量归一——均未触碰):
+
+### 现代化
+- 运行时/工具链:CI node24、JDK 17→21(当前 LTS),字节码目标与 `run_java.sh` 同步到 21。
+- Java 惯用法:`TargetPlatform` 的 `String[]`+`switch` fallthrough → `Set.of` + 私有 `isVendor`;`GeckoFontPolicy` 的 `String[]` → `List.of`。行为不变,`PolicyTest` 原断言全部保留。
+
+### 自由化(真正的去锁定)
+- 单一真源:新增 `FontIdentity`(同包),集中字体家族名/路径;`GeckoFontPolicy.FAMILY/FONT_PATH` 与 `FontMetricsProbe.WENYUAN` 改为引用它。想换装其他字体只改一处。`test_java_contract_matches_manifest` 改为校验 `FontIdentity` 与 `config/font-source.json` 一致。
+- 用户自选放行:平台闸门从"硬墙"改为"默认严格 + 可自选绕过"。标记文件 `/data/adb/selffont_allow_unsupported`:
+  - 安装期 `customize.sh`:存在则跳过 API/厂商/KSU 检查(仍要求已备字体),打印提示。
+  - 运行期 `TargetPlatform.allowed(api,brand,manufacturer,userOverride)` + `ModernEntry` 读取标记;非原生支持且有标记时挂钩并打印 `[override]`,否则仍拒绝并提示如何放行。
+  - 新增 `tests/test_customize_override.py`(4 例)与 `PolicyTest` 的 `allowed()` 断言覆盖。默认行为不变——仅额外开口。
+
+### 原生化
+- 现状已达标:`FontForceCore` 用原生 `Typeface.create` 保留 weight/italic;Hook 仅用平台反射 API、不扫描私有地址;架构文档已明示"接口不存在只记录不支持"。不引入 JNI(与项目"少造轮子"原则一致)。
+
+### 验证
+- 主机测试 66(原 62 +4)全绿;node 3 全绿。Java 侧本地无 javac(沙盒出网仅 PyPI/github-git 可达,JDK 二进制源全被墙),`run_java.sh` 已把 `FontIdentity.java` 加入编译列表,靠 CI(temurin JDK 21)验证。

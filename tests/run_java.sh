@@ -4,6 +4,7 @@ ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 OUT="$ROOT/build/policy-tests"
 mkdir -p "$OUT"
 javac --release 21 -d "$OUT" \
+    "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/FontIdentity.java" \
     "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/GeckoFontPolicy.java" \
     "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/ReplacementGuard.java" \
     "$ROOT/mfga-xposed/app/src/main/java/com/mfga/xposed/TargetPlatform.java" \

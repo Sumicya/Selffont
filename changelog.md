@@ -1,5 +1,9 @@
 # Selffont 第一阶段（未发布诊断版）
 
+- 三化重构（现代化/自由化/原生化）：
+  - 现代化：CI 与构建统一到 node24 + JDK 21（当前 LTS）；Java 源码改用 `Set.of`/`List.of` 等 Java 21 惯用写法，逻辑不变。
+  - 自由化：新增 `FontIdentity` 作为字体家族名/路径的单一真源（消除 `GeckoFontPolicy`、`FontMetricsProbe` 的重复硬编码）；平台闸门新增用户自选放行标记 `/data/adb/selffont_allow_unsupported`，默认严格不变、仅额外开放"自担风险"的绕过口(安装期 `customize.sh` 与运行期 `TargetPlatform.allowed` 同步支持,含测试)。
+  - 原生化：确认现状已达标（`FontForceCore` 用原生 `Typeface.create`、Hook 仅用平台 API），不强塞 JNI。
 - Gecko `font.name-list` 前置保留（1.4-gecko-fallback）：由"覆盖成只有文渊"改为"前置保留原回退链"，不再对无 list 项造窄列表，不触碰 emoji 首选项。注：设备 prefsMap 无 `font.name-list`/emoji 键，故此改动对火狐缺字为空操作；火狐 Unicode 15.1/16 新 emoji 豆腐块经 A/B 证明属 Gecko 后端限制，非本模块可修（见 docs/validation.md）。
 - 打包期度量归一（1.4-phase2-metrics）：将安装副本文渊的竖直行度量对齐 Roboto 载体名义度量，根治通知计数/红点角标/时钟等紧凑槽的数字偏低与切下沿；只改行度量，字形/cmap/family/轴与原版 SHA-256 不变，带构建期防切保护。
 - 文渊圆体固定资源与配置生成、KSU/Oplus/Android 16 支持边界。

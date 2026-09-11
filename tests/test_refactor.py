@@ -68,7 +68,9 @@ class FontConfigurationTests(unittest.TestCase):
                 verify_font(file, manifest)
 
     def test_java_contract_matches_manifest(self):
-        source = (ROOT / 'mfga-xposed/app/src/main/java/com/mfga/xposed/GeckoFontPolicy.java').read_text()
+        # FontIdentity is the single source of truth for the installed font's
+        # family/path; other Java classes reference it instead of re-hardcoding.
+        source = (ROOT / 'mfga-xposed/app/src/main/java/com/mfga/xposed/FontIdentity.java').read_text()
         self.assertIn('"' + MANIFEST['family'] + '"', source)
         self.assertIn('"/system/fonts/' + MANIFEST['installedFile'] + '"', source)
 

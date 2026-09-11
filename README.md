@@ -17,6 +17,17 @@
 - 打包阶段将**安装副本**文渊的竖直行度量（`hhea`/`OS/2` typo，随载体设 `USE_TYPO_METRICS`）归一到 Roboto 载体名义度量，修正紧凑定高槽（通知计数、红点角标、时钟等）中数字偏低/切下沿。**只改行度量**：字形、cmap、family、`wght/ital` 轴逐字节保留；上游原版文件与其固定 SHA-256 不变；带构建期防切保护。见 `tools/metric_normalize.py`。
 - 未适配其他 Android/ROM/root 管理器；不能将这个个人方案的测试结果外推为通用兼容承诺。
 
+## 平台闸门与用户自选放行
+
+默认仅在 **Android 16 / API 36 且 Oplus 系（oplus/oppo/oneplus/realme）/ KernelSU** 上安装并挂钩——这是唯一经过验证的组合。若你清楚风险、想在未测试的平台上自行尝试,创建放行标记即可绕过安装期与运行期的平台检查:
+
+```sh
+# root shell:自担风险,行为在未测试平台上不保证
+touch /data/adb/selffont_allow_unsupported
+```
+
+标记存在时:安装脚本跳过 API/厂商/KSU 检查(仍要求已备好字体文件),Xposed 入口即使平台不匹配也会挂钩并在日志打印 `[override]`。删除该文件即恢复默认的严格闸门。这是“额外开一个口子”,不改变默认的安全行为。
+
 ## 构建字体模块
 
 要求 Python 3.11+：

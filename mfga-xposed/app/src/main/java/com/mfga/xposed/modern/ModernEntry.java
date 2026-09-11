@@ -28,9 +28,17 @@ public final class ModernEntry extends XposedModule {
 
     @Override
     public void onPackageReady(PackageReadyParam param) {
-        if (!TargetPlatform.supports(Build.VERSION.SDK_INT, Build.BRAND, Build.MANUFACTURER)) {
-            log(Log.WARN, TAG, "[unsupported] requires Android 16 / API 36 and Oplus");
+        boolean nativelySupported =
+                TargetPlatform.supports(Build.VERSION.SDK_INT, Build.BRAND, Build.MANUFACTURER);
+        boolean override = !nativelySupported && new File(TargetPlatform.OVERRIDE_MARKER).exists();
+        if (!nativelySupported && !override) {
+            log(Log.WARN, TAG, "[unsupported] requires Android 16 / API 36 and Oplus; "
+                    + "create " + TargetPlatform.OVERRIDE_MARKER + " to force-enable at your own risk");
             return;
+        }
+        if (override) {
+            log(Log.WARN, TAG, "[override] user opted into an untested platform via "
+                    + TargetPlatform.OVERRIDE_MARKER + "; behaviour is unverified here");
         }
         log(Log.INFO, TAG, "[attach] phase1 modern-api102 package=" + param.getPackageName());
         if ("com.android.systemui".equals(param.getPackageName())) {
