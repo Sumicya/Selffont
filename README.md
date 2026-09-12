@@ -45,7 +45,7 @@ python3 -m venv .venv
 # 如已有基础包，也可用 prepare_base.py --base /path/to/MFGA-SELFUSE.zip 校验。
 ```
 
-**下载字体模块（度量归一，角标已修复）**：字体模块版本 `1.4-phase2-metrics`，产物 `Selffont-phase1.zip`（解开 CI 外层压缩包后安装）。由 **Build Selffont font module** 工作流构建，同目录有校验文件与构建报告。此版本把安装副本文渊的竖直行度量归一到载体名义度量，角标数字偏低/切底已由用户真机确认修复。早期 `1.4-phase1.1` 仅恢复度量载体、角标仍偏低，已废弃，勿再安装。
+**下载字体模块（度量归一，角标已修复）**：字体模块版本 `v1.4.0`，产物 `Selffont-phase1.zip`（解开 CI 外层压缩包后安装）。由 **Build Selffont font module** 工作流构建，同目录有校验文件与构建报告。此版本把安装副本文渊的竖直行度量归一到载体名义度量，角标数字偏低/切底已由用户真机确认修复。早期 `1.4-phase1.1` 仅恢复度量载体、角标仍偏低,已废弃,勿再安装。
 
 产物：`build/Selffont-phase1.zip`。**Build Selffont font module** 工作流负责资源下载、验证和打包，与 APK 工作流分开；提交 `10f9eef` 的完整构建已通过，真机安装与网页绘制仍待验收。KSU 模块 ID 保持 `MFGA`，避免与现有 MFGA 同时挂载冲突。不要把本仓库直接压缩成 ZIP 安装。
 

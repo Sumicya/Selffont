@@ -1,5 +1,11 @@
-# Selffont 第一阶段（未发布诊断版）
+# 更新日志
 
+## v1.4.0（预发布 · 2026-09-12）
+
+面向 Android 16 / Oplus(oplus/oppo/oneplus/realme) / KernelSU 的文渊圆体系统字体模块 + 只读诊断 APK。真机安装、完整字体模块与网页覆盖标注为待验证（见 docs/validation.md）。
+
+- 主字体为文渊圆体可变字体（WenYuan Rounded SC VF，`wght` 100–900 + `ital` 0–1）；`fonts.xml` 为每个字重生成 `<axis>` 指向同一 VF 文件，构建期用真实字体 `fvar` 校验轴值不越界（`dynamicWeightAxes`）。
+- 模块减重：仅打包 `fonts.xml` 实际引用的补充字体，未引用者作为死重丢弃并记入 `module-report.json`（`unreferencedFontsDropped`）。
 - 三化重构（现代化/自由化/原生化）：
   - 现代化：CI 与构建统一到 node24 + JDK 21（当前 LTS）；Java 源码改用 `Set.of`/`List.of` 等 Java 21 惯用写法，逻辑不变。
   - 自由化：新增 `FontIdentity` 作为字体家族名/路径的单一真源（消除 `GeckoFontPolicy`、`FontMetricsProbe` 的重复硬编码）；平台闸门新增用户自选放行标记 `/data/adb/selffont_allow_unsupported`，默认严格不变、仅额外开放"自担风险"的绕过口(安装期 `customize.sh` 与运行期 `TargetPlatform.allowed` 同步支持,含测试)。

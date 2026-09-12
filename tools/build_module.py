@@ -115,9 +115,9 @@ def build(base, font, output, revision=None):
                     dest.writestr(entry.filename, source.read(entry))
             dest.writestr("system/fonts/" + MANIFEST["installedFile"], normalized_font)
             dest.writestr("fonts.xml", xml)
-            dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=1.4-phase2-metrics\n"
-                          "versionCode=1717180006\nauthor=Selffont contributors\n"
-                          "description=Android 16 / Oplus / KSU. Line metrics normalised to carrier; badge fix requires device validation.\n")
+            dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=v1.4.0\n"
+                          "versionCode=2026091200\nauthor=Selffont contributors\n"
+                          "description=Android 16 / Oplus / KSU. WenYuan variable font; line metrics normalised to carrier. Device install/rendering requires validation.\n")
             for name in RUNTIME_FILES:
                 dest.write(ROOT / "script" / name, name)
             for directory in ("lang", "webroot", "licenses"):
