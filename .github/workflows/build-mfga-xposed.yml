@@ -22,7 +22,7 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v5
         with:
-          gradle-version: '9.5'
+          gradle-version: '9.5.0'
       - uses: android-actions/setup-android@v4
       - name: Install Android 16 SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
