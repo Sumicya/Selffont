@@ -1,6 +1,6 @@
 # 更新日志
 
-## v1.4.0（预发布 · 2026-09-12）
+## v1.4.0（2026-09-12）
 
 面向 Android 16 / Oplus(oplus/oppo/oneplus/realme) / KernelSU 的文渊圆体系统字体模块 + 只读诊断 APK。真机安装、完整字体模块与网页覆盖标注为待验证（见 docs/validation.md）。
 
