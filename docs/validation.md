@@ -83,11 +83,10 @@ python3 -m http.server 8080 --bind 0.0.0.0 --directory webroot
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --test tests/commands.test.mjs
-sh tests/run_java.sh
 .venv/bin/python tools/prepare_font.py --font /path/to/original/WenYuanRoundedSCVF.ttf
 ```
 
-完整 APK 构建另需 JDK 17、Gradle 8.11.1、SDK 36；本次 CI 运行结果记录如下。测试基础 ZIP 是合成输入，不是现有完整 MFGA 的装机证据。
+模块 `mfga-xposed` 现为全 Kotlin(`src/main/kotlin`，无 `src/main/java`）；策略断言已从旧 `tests/run_java.sh` / `tests/java/PolicyTest.java` 迁移为 Gradle 单元测试 `mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt`，本地或 CI 用 `gradle test` 执行。完整 APK 构建另需 JDK 21、Gradle 9.5.0、SDK 36、AGP 9.3.0（AGP 9 内置 Kotlin，无需单独的 Kotlin 插件）；本次 CI 运行结果记录如下。测试基础 ZIP 是合成输入，不是现有完整 MFGA 的装机证据。
 
 ## 本轮主机验证记录（2026-09-05）
 
@@ -599,3 +598,20 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
 - 测试链:废弃 `tests/run_java.sh` 与 `tests/java/PolicyTest.java`,策略断言以等价形式移入 Gradle 单元测试 `mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt`(JUnit4,`testImplementation`)。`check.yml` 去掉 `sh tests/run_java.sh` 步并把 node 升到 24;`build-mfga-xposed.yml` 以 `gradle test` 取代 `run_java.sh` 步,并移除 `tests/java/**`、`tests/run_java.sh` 触发路径。
 - 读取 `.java` 源做静态契约断言的 Python 测试(`test_refactor`/`test_platform_support`/`test_badge_contract`/`test_probe_transport`)改指 `.kt` 源并适配 Kotlin 语法标记。
 - 验证:主机测试 71 全绿;node 全绿;两轮 APK 构建(全 Kotlin 混编→纯 Kotlin)CI 全绿,探针入口每轮确认。测试链改动因触及 workflow,以 handoff patch 交付,待维护者 Termux 推送。
+
+## 2026-09-12：AGP 9 内置 Kotlin + 重构清理
+
+上一节的 AGP 8.10.1 + 独立 `kotlin-android 2.1.21` 插件方案已被取代：升级到 **AGP 9.3.0 / Gradle 9.5.0**，改用 AGP 9 **内置 Kotlin**（`com.android.application` 自带，无需任何单独的 Kotlin 插件；`android.builtInKotlin` 默认开启，KGP 运行时自动对齐）。独立 `org.jetbrains.kotlin.android` 插件与 AGP 9 不兼容（`BaseExtension` 已移除，apply 时 `ClassCastException`），已删除。JDK 保持 21，`jvmTarget` 由 `compileOptions.targetCompatibility` 决定。CI 双 job（APK 构建 + 主机检查）全绿。
+
+- `build-mfga-xposed.yml` 的 `setup-gradle` 需精确 `gradle-version: '9.5.0'`（`'9.5'` 会报 does not exist）。
+- 配置期不再用 `kotlinOptions {}`（AGP 9 下 unresolved），相关块删除。
+
+重构清理（在全 Kotlin 基础上，逐批 CI 验证）：
+
+- **死代码/陈旧引用**：删除 `handoff/` 与 `tools/GPOS/`；修正 3 处仍指向 `.java` 的陈旧引用。
+- **单一真源**：`module.prop` 抽取到 `config/module.json` + `render_module_prop()`（字节一致），新增 `test_module_metadata.py`；`platform-support.json` 的 `_comment` 收敛到 `.kt`。
+- **契约守卫**：`test_font_paths.py` 断言 shell/Kotlin 内联字体名与 `config` 对齐。
+- **Kotlin 地道化**：`ReplacementGuard` 去 `java.lang.Boolean`（`ACTIVE.get() == true` / `set(true)`）；12 处异常分流由 `when(error){is A,is B -> …; else -> throw error}` 扁平为守卫子句 `catch(error){ if (error !is A && error !is B) throw error; … }`，语义一致（Kotlin 无原生 multi-catch），少一层嵌套。
+- **shell 覆盖**：`test_gms_fallback.py`（5）+ `test_uninstall.py`（3）覆盖此前未测的 `gms_fallback.sh` / `uninstall.sh`。
+- **文档对齐**：`README.md` / `docs/*.md` 的当前构建要求更新为 JDK 21 / Gradle 9.5.0 / SDK 36 / AGP 9.3.0（全 Kotlin，无 `src/main/java`）；本文件与 `architecture.md` 里描述本模块源码语言处消除 "Java" 歧义（framework `Typeface` 是 Android Java API，非本模块源码语言）。带日期的历史条目保留原貌。
+- 主机测试全绿（88 项 Python + node）。

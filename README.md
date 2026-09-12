@@ -4,7 +4,7 @@
 
 **目标是统一字体家族，不是删除排版语义。** 粗体、斜体、小型大写、语言与原始 Unicode 字符应保留。系统 UI 与 Firefox 网页是两条不同的字体加载路径。
 
-> 状态：主机回归、Java 策略测试与 CI 构建均通过；字体原版资源已校验。设备已确认：现代入口命中、目标字体挂载、Gecko 首选项注入、Firefox 默认字体统一为文渊、通知/角标数字偏低与切下沿经度量归一后居中。仍存在的范围边界：Firefox 对 Unicode 15.1/16 最新 emoji 显示豆腐块，经字形探针与 A/B 证明属 Gecko 自有字体后端限制、与本模块无关（系统有覆盖字体、火狐进程可读、注入开关都豆腐块）。源码存在某个 Hook 入口、日志显示成功，不等于网页已使用目标字体。
+> 状态：主机回归、Kotlin 策略单元测试（`gradle test`）与 CI 构建均通过；字体原版资源已校验。设备已确认：现代入口命中、目标字体挂载、Gecko 首选项注入、Firefox 默认字体统一为文渊、通知/角标数字偏低与切下沿经度量归一后居中。仍存在的范围边界：Firefox 对 Unicode 15.1/16 最新 emoji 显示豆腐块，经字形探针与 A/B 证明属 Gecko 自有字体后端限制、与本模块无关（系统有覆盖字体、火狐进程可读、注入开关都豆腐块）。源码存在某个 Hook 入口、日志显示成功，不等于网页已使用目标字体。
 
 ## 当前范围
 
@@ -55,7 +55,7 @@ python3 -m venv .venv
 
 ## 构建 Xposed APK
 
-需要 **JDK 21、Gradle 8.11.1、Android SDK 36**：
+模块 `mfga-xposed` 为全 Kotlin 工程（`src/main/kotlin`，无 `src/main/java`；AGP 9 内置 Kotlin，无需单独 Kotlin 插件）。需要 **JDK 21、Gradle 9.5.0、Android SDK 36、AGP 9.3.0**：
 
 ```sh
 cd mfga-xposed
@@ -68,7 +68,7 @@ CI：**Build Selffont diagnostic APK**。这是开发签名的诊断 APK，不�
 
 用户基线：Firefox **155.0.1 (2016182535)**，GV **155.0.1-20260903215306**，AS **155.0**，Android 16。
 
-Gecko 有自己的字体选择路径；Java `Typeface` Hook 不是通用网页字体拦截器。本阶段在 Gecko 的 `RuntimeSettings.getPrefsMap()` 启动入口注入**内存中的默认字体首选项**：
+Gecko 有自己的字体选择路径；Android `Typeface`（framework Java API）Hook 不是通用网页字体拦截器。本阶段在 Gecko 的 `RuntimeSettings.getPrefsMap()` 启动入口注入**内存中的默认字体首选项**：
 
 - `browser.display.use_document_fonts = 0`；
 - 将主要 generic family 的 Gecko **首选**字体（`font.name.*`）指向文渊；
