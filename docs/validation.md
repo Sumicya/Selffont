@@ -617,3 +617,9 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
 - **shell 覆盖**：`test_gms_fallback.py`（5）+ `test_uninstall.py`（3）覆盖此前未测的 `gms_fallback.sh` / `uninstall.sh`。
 - **文档对齐**：`README.md` / `docs/*.md` 的当前构建要求更新为 JDK 21 / Gradle 9.5.0 / SDK 36 / AGP 9.3.0（全 Kotlin，无 `src/main/java`）；本文件与 `architecture.md` 里描述本模块源码语言处消除 "Java" 歧义（framework `Typeface` 是 Android Java API，非本模块源码语言）。带日期的历史条目保留原貌。
 - 主机测试全绿（88 项 Python + node）。
+
+## 2026-09-12：v1.4.0 发版 + CI 抗 Maven Central 429 加固
+
+- **发版**：`changelog.md` 去掉「预发布」标记；git tag `v1.4.0` 从旧的 `bc0ec09`（落后 22 个 commit）重打到当前 `c39d042` 并强推；创建正式 GitHub Release（`isPrerelease=false`/`isDraft=false`/latest）。此前 GitHub 上并无 release，仅有落后的 tag。
+- **APK 构建偶发红（非代码问题）**：tag `v1.4.0` 触发的诊断 APK 构建 `34676467102` 一度失败，日志确诊为 `HttpErrorStatusCodeException: Could not GET .../asm-commons-9.9.pom. Received status code 429 from server: Too Many Requests`，`BUILD FAILED in 29s`——GitHub runner 拉 Maven Central 依赖被限流,与本仓库代码无关（`mfga-xposed/**` 自 `1f8009f` 构建绿以来一字未改）。**重跑即绿**。tag 构建更易触发是因为 GitHub Actions 缓存按 ref 隔离，tag 读不到分支的 Gradle 缓存而冷启动直连 Central。
+- **加固 `build-mfga-xposed.yml`**：①把原先 `gradle test` 与 `gradle assembleDebug` 两次调用合并为单次 `gradle test assembleDebug`（依赖只解析一次，对 Central 的请求减半——Sonatype 对 429 的官方建议正是「减少请求而非更猛地重试」）；②启用 Maven 3.9+/Gradle 真正生效的 Aether 重试属性 `-Daether.connector.http.retryHandler.count=5`（旧的 `maven.wagon.http.*` 已失效）+ 拉长 HTTP 超时；③外层加有界退避重试（3 次，60s/120s），仅作兜底不制造重试风暴。`assembleDebug` 的 `finalizedBy(verifyProbeContainer)` 在合并调用下仍触发，探针容器校验不丢。此改动触及 workflow，由维护者 Termux 推送。
