@@ -4,6 +4,9 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class TargetPlatform {
+    // These values are the single source of truth in config/platform-support.json,
+    // inlined here for the on-device runtime. tests/test_platform_support.py fails
+    // if they drift; changing support means editing the manifest and both call sites.
     private static final int SUPPORTED_API = 36;
     private static final Set<String> VENDORS = Set.of("oplus", "oppo", "oneplus", "realme");
 

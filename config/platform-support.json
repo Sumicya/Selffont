@@ -1,0 +1,8 @@
+{
+  "_comment": "Single source of truth for which platforms Selffont natively supports. Java (TargetPlatform.java) and the installer (script/customize.sh) each inline these values for their own runtime; tests/test_platform_support.py enforces that both stay in sync with this file. Adding a vendor or bumping the API means editing here plus both call sites, or CI fails.",
+  "api": 36,
+  "androidVersion": "16",
+  "manager": "KernelSU",
+  "vendors": ["oplus", "oppo", "oneplus", "realme"],
+  "overrideMarker": "/data/adb/selffont_allow_unsupported"
+}

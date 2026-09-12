@@ -579,3 +579,12 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
 
 ### 验证
 - 主机测试 70(原 68 +2)全绿;node 3 全绿。Java 由 CI 的 APK 构建 + `run_java.sh`(JDK 21)编译验证。
+
+## 2026-09-12:自由化补强——平台支持单一真源
+
+三化盘点结论:现代化(JDK21/node24/Set.of·List.of)、原生化(原生 Typeface.create,不引入 JNI)均已达标;自由化尚有一处真实缺口——平台支持的定义(API 36 + 厂商列表 oplus/oppo/oneplus/realme)在 Java `TargetPlatform` 与 shell `customize.sh` 各硬编码一份,无声明式真源、无跨语言一致性保证,加厂商时易改一处漏一处。
+
+- 新增 `config/platform-support.json` 作为平台支持的单一真源(api / vendors / overrideMarker 等)。Java 与 shell 仍各自内联字面量(设备端不解析 JSON,避免脆弱),但由测试锁定一致。
+- 新增 `tests/test_platform_support.py`:强制 `TargetPlatform.java` 的 `SUPPORTED_API`/`VENDORS`/`OVERRIDE_MARKER` 与 `customize.sh` 的 API 判断/厂商 case 分支/OVERRIDE 路径,三处均与 JSON 逐一致。反向验证:故意删去 shell 中一个厂商即触发 FAIL。
+- 两处调用点加注释指回单一真源。`config/platform-support.json` 为构建期配置,不打包进模块 ZIP。
+- 主机测试 73(原 70 +3)全绿。
