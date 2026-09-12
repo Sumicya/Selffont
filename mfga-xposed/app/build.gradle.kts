@@ -18,9 +18,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
-    kotlinOptions {
-        jvmTarget = "21"
-    }
+    // AGP 9 removed the android.kotlinOptions {} DSL; the Kotlin jvmTarget now
+    // defaults to compileOptions.targetCompatibility (21) above, so no explicit
+    // kotlin { compilerOptions { ... } } block is needed here.
     sourceSets["main"].resources.srcDirs("src/main/resources")
     testOptions { unitTests.all { it.useJUnit() } }
 }
