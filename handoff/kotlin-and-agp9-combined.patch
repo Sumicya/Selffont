@@ -1,0 +1,448 @@
+From 34a6c2e3e1ef394f297e650718e9863c4a891574 Mon Sep 17 00:00:00 2001
+From: Sumicya <306456895+Sumicya@users.noreply.github.com>
+Date: Sat, 12 Sep 2026 03:40:03 +0000
+Subject: [PATCH] Kotlin test-chain + AGP 9 upgrade (combined handoff)
+
+Two coordinated changes that both touch .github/workflows/* (unpushable by
+the CI app token) and mfga-xposed build files, merged into one commit so it
+applies as a single git-am.
+
+Test-chain (was tests/run_java.sh):
+- delete tests/run_java.sh + tests/java/PolicyTest.java
+- add Gradle unit test app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt
+  (JUnit4 via testImplementation) with the same policy assertions
+- check.yml: drop the run_java step; node 22 -> 24
+- build-mfga-xposed.yml: run 'gradle test'; drop stale trigger paths
+- README/docs updated
+
+AGP 9 upgrade:
+- AGP 8.10.1 -> 9.3.0 (root build.gradle.kts); Gradle 8.11.1 -> 9.5;
+  build-tools 35 -> 36 (build-mfga-xposed.yml)
+- new mfga-xposed/gradle.properties: useAndroidX=false and
+  builtInKotlin=false (keep the standalone kotlin-android 2.1.21 plugin
+  pinning the Kotlin version instead of AGP's built-in Kotlin)
+
+Co-authored-by: arena-agent <297053741+arena-agent@users.noreply.github.com>
+---
+ .github/workflows/build-mfga-xposed.yml       |   9 +-
+ .github/workflows/check.yml                   |   3 +-
+ README.md                                     |   2 +-
+ docs/validation.md                            |  11 ++
+ mfga-xposed/app/build.gradle.kts              |   6 +-
+ .../test/kotlin/com/mfga/xposed/PolicyTest.kt | 133 ++++++++++++++++++
+ mfga-xposed/build.gradle.kts                  |   2 +-
+ mfga-xposed/gradle.properties                 |  11 ++
+ tests/java/PolicyTest.java                    |  98 -------------
+ tests/run_java.sh                             |  27 ----
+ 10 files changed, 167 insertions(+), 135 deletions(-)
+ create mode 100644 mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt
+ create mode 100644 mfga-xposed/gradle.properties
+ delete mode 100644 tests/java/PolicyTest.java
+ delete mode 100644 tests/run_java.sh
+
+diff --git a/.github/workflows/build-mfga-xposed.yml b/.github/workflows/build-mfga-xposed.yml
+index e7088aa..df6af8e 100644
+--- a/.github/workflows/build-mfga-xposed.yml
++++ b/.github/workflows/build-mfga-xposed.yml
+@@ -4,8 +4,6 @@ on:
+   push:
+     paths:
+       - 'mfga-xposed/**'
+-      - 'tests/java/**'
+-      - 'tests/run_java.sh'
+       - '.github/workflows/build-mfga-xposed.yml'
+   pull_request:
+     paths:
+@@ -24,12 +22,13 @@ jobs:
+           java-version: '21'
+       - uses: gradle/actions/setup-gradle@v5
+         with:
+-          gradle-version: '8.11.1'
++          gradle-version: '9.5'
+       - uses: android-actions/setup-android@v4
+       - name: Install Android 16 SDK
+-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
++        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+       - name: Test pure policies
+-        run: sh tests/run_java.sh
++        working-directory: mfga-xposed
++        run: gradle --no-daemon test --stacktrace
+       - name: Build installable diagnostic APK
+         working-directory: mfga-xposed
+         run: gradle --no-daemon assembleDebug --stacktrace
+diff --git a/.github/workflows/check.yml b/.github/workflows/check.yml
+index b0624df..2e3552f 100644
+--- a/.github/workflows/check.yml
++++ b/.github/workflows/check.yml
+@@ -15,7 +15,7 @@ jobs:
+           python-version: '3.11'
+       - uses: actions/setup-node@v5
+         with:
+-          node-version: '22'
++          node-version: '24'
+       - uses: actions/setup-java@v5
+         with:
+           distribution: temurin
+@@ -27,6 +27,5 @@ jobs:
+           python -m pip install -r tools/requirements.txt
+           python -m unittest discover -s tests -v
+           node --test tests/commands.test.mjs
+-          sh tests/run_java.sh
+           for file in script/*.sh lang/*.sh; do busybox sh -n "$file"; done
+           git diff --check
+diff --git a/README.md b/README.md
+index b82b855..77e879b 100644
+--- a/README.md
++++ b/README.md
+@@ -110,7 +110,7 @@ sh /data/adb/modules/MFGA/action.sh app-fonts restore --confirm
+ ```sh
+ .venv/bin/python -m unittest discover -s tests -v
+ node --test tests/commands.test.mjs
+-sh tests/run_java.sh   # JDK 21+
++(cd mfga-xposed && gradle test)   # Kotlin policy unit tests (JDK 21+)
+ ```
+ 
+ Shell 行为测试使用 BusyBox ash 和临时目录，不碰真实 `/data`。打包测试使用合成基础 ZIP，不代替真实完整基础包测试。原有 `tools/GPOS`、字体合并及 Emoji 工具不在这轮重构范围内。
+diff --git a/docs/validation.md b/docs/validation.md
+index cdad10c..592ad20 100644
+--- a/docs/validation.md
++++ b/docs/validation.md
+@@ -588,3 +588,14 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
+ - 新增 `tests/test_platform_support.py`:强制 `TargetPlatform.java` 的 `SUPPORTED_API`/`VENDORS`/`OVERRIDE_MARKER` 与 `customize.sh` 的 API 判断/厂商 case 分支/OVERRIDE 路径,三处均与 JSON 逐一致。反向验证:故意删去 shell 中一个厂商即触发 FAIL。
+ - 两处调用点加注释指回单一真源。`config/platform-support.json` 为构建期配置,不打包进模块 ZIP。
+ - 主机测试 73(原 70 +3)全绿。
++
++## 2026-09-12:全量 Kotlin 化 + 测试链并入 Gradle
++
++模块 `mfga-xposed` 的全部 10 个类由 Java 迁移到 Kotlin;`src/main/java` 目录整体移除,新增 `src/main/kotlin`。构建侧在 AGP 8.10.1 之上单独引入 kotlin-android 2.1.21 插件(与 park 中的 AGP 9 升级解耦以降低单次风险),`jvmTarget=21`。
++
++- 纯逻辑 6 类(`FontIdentity`/`ReplacementGuard`/`TargetPlatform`/`FontForceCore`/`GeckoFontPolicy`/`BadgeSamplePolicy`)先行转换,分两轮 CI 验证。
++- Android/Xposed 4 类(`ModernEntry`/`BadgeDrawObserver`/`FontMetricsProbe`/`GlyphCoverageProbe`)第二轮转换。
++- 互操作红线保留:`FontMetricsProbe` 仍是 `object` + `@JvmStatic fun main(Array<String>)`,DEX 仍定义 `Lcom/mfga/xposed/diagnostics/FontMetricsProbe;` 的具体 `public static main(String[])`,`verify_probe_container.py` 每轮均确认在 classes3.dex 命中。策略类以 `@JvmStatic`/`const val`/`@JvmField`/`@JvmSuppressWildcards` 保持从测试与仍存的调用点可 Java 调用。
++- 测试链:废弃 `tests/run_java.sh` 与 `tests/java/PolicyTest.java`,策略断言以等价形式移入 Gradle 单元测试 `mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt`(JUnit4,`testImplementation`)。`check.yml` 去掉 `sh tests/run_java.sh` 步并把 node 升到 24;`build-mfga-xposed.yml` 以 `gradle test` 取代 `run_java.sh` 步,并移除 `tests/java/**`、`tests/run_java.sh` 触发路径。
++- 读取 `.java` 源做静态契约断言的 Python 测试(`test_refactor`/`test_platform_support`/`test_badge_contract`/`test_probe_transport`)改指 `.kt` 源并适配 Kotlin 语法标记。
++- 验证:主机测试 71 全绿;node 全绿;两轮 APK 构建(全 Kotlin 混编→纯 Kotlin)CI 全绿,探针入口每轮确认。测试链改动因触及 workflow,以 handoff patch 交付,待维护者 Termux 推送。
+diff --git a/mfga-xposed/app/build.gradle.kts b/mfga-xposed/app/build.gradle.kts
+index 247e1e0..1f904a5 100644
+--- a/mfga-xposed/app/build.gradle.kts
++++ b/mfga-xposed/app/build.gradle.kts
+@@ -22,8 +22,12 @@ android {
+         jvmTarget = "21"
+     }
+     sourceSets["main"].resources.srcDirs("src/main/resources")
++    testOptions { unitTests.all { it.useJUnit() } }
++}
++dependencies {
++    compileOnly("io.github.libxposed:api:102.0.0")
++    testImplementation("junit:junit:4.13.2")
+ }
+-dependencies { compileOnly("io.github.libxposed:api:102.0.0") }
+ 
+ // Verify actual DEX definitions, including secondary DEX files, before CI uploads the container.
+ tasks.register<Exec>("verifyProbeContainer") {
+diff --git a/mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt b/mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt
+new file mode 100644
+index 0000000..f6ded18
+--- /dev/null
++++ b/mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt
+@@ -0,0 +1,133 @@
++package com.mfga.xposed
++
++import com.mfga.xposed.diagnostics.BadgeSamplePolicy
++import java.util.concurrent.atomic.AtomicBoolean
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertSame
++import org.junit.Assert.assertTrue
++import org.junit.Assert.fail
++import org.junit.Test
++
++/**
++ * Host-side (JVM) unit tests for the pure policy classes. This replaces the old
++ * tests/run_java.sh + tests/java/PolicyTest.java, folding the same behavioural
++ * assertions into the Gradle `test` task so `gradle test` is the single source
++ * of policy verification. Only classes with no Android dependency are covered
++ * here; Android/Xposed classes are exercised by the APK build.
++ */
++class PolicyTest {
++    @Test
++    fun geckoFontPolicyTransformsPrefsSafely() {
++        val original: Map<String, Any> = mapOf(
++            "browser.display.use_document_fonts" to 1,
++            "font.size.variable.x-western" to 19,
++            "unrelated" to "retained",
++            "font.name-list.sans-serif.x-western" to "Roboto, Noto Sans, Noto Color Emoji",
++            "font.name-list.serif.zh-CN" to GeckoFontPolicy.FAMILY + ", Noto Serif CJK SC"
++        )
++        assertSame(original, GeckoFontPolicy.apply(original, false))
++        val changed = GeckoFontPolicy.apply(original, true)
++        assertEquals(0, changed["browser.display.use_document_fonts"])
++        assertEquals(1, original["browser.display.use_document_fonts"])
++        assertEquals(19, changed["font.size.variable.x-western"])
++        assertEquals("retained", changed["unrelated"])
++        // font.name (preferred) is WenYuan for every generic/language.
++        assertEquals(GeckoFontPolicy.FAMILY, changed["font.name.cursive.zh-CN"])
++        assertEquals(GeckoFontPolicy.FAMILY, changed["font.name.serif.x-western"])
++        // font.name-list keeps the ORIGINAL fallback chain, with WenYuan prepended,
++        // so glyphs WenYuan lacks (rare codepoints, colour emoji) still resolve.
++        assertEquals(
++            GeckoFontPolicy.FAMILY + ", Roboto, Noto Sans, Noto Color Emoji",
++            changed["font.name-list.sans-serif.x-western"]
++        )
++        // Already led by WenYuan: left unchanged, no duplication.
++        assertEquals(
++            GeckoFontPolicy.FAMILY + ", Noto Serif CJK SC",
++            changed["font.name-list.serif.zh-CN"]
++        )
++        // Where Gecko exposes no list, we must NOT invent a WenYuan-only list.
++        assertNull(changed["font.name-list.monospace.ja"])
++        // Emoji preferences are untouched so system colour emoji fallback still applies.
++        assertTrue(changed.keys.none { it.startsWith("font.name.emoji") || it.startsWith("font.name-list.emoji") })
++        assertEquals(changed, GeckoFontPolicy.apply(changed, true))
++        try {
++            (changed as MutableMap<String, Any>)["oops"] = true
++            fail("prefs map must be unmodifiable")
++        } catch (expected: UnsupportedOperationException) {
++        }
++        assertTrue(changed.keys.none { it.contains("synthesis") || it.contains("variant") })
++    }
++
++    @Test
++    fun prependFamilyPrependsDedupesAndIsIdempotent() {
++        assertEquals(GeckoFontPolicy.FAMILY + ", A, B", GeckoFontPolicy.prependFamily("A, B"))
++        assertNull(GeckoFontPolicy.prependFamily(GeckoFontPolicy.FAMILY + ", A"))
++        assertEquals(
++            GeckoFontPolicy.FAMILY + ", A, B",
++            GeckoFontPolicy.prependFamily("A, " + GeckoFontPolicy.FAMILY + ", B")
++        )
++        assertNull(GeckoFontPolicy.prependFamily("   "))
++    }
++
++    @Test
++    fun replacementGuardBlocksRecursionAndPreservesNullsAndExceptions() {
++        assertNull(ReplacementGuard.replace<Any?>(null) { throw AssertionError() })
++        assertEquals("original", ReplacementGuard.replace<String?>("original") { null })
++        assertEquals("replacement", ReplacementGuard.replace("original") {
++            assertTrue(ReplacementGuard.isActive())
++            assertEquals("nested", ReplacementGuard.replace("nested") { throw AssertionError() })
++            "replacement"
++        })
++        assertFalse(ReplacementGuard.isActive())
++        try {
++            ReplacementGuard.replace("original") { throw IllegalStateException("test") }
++        } catch (expected: IllegalStateException) {
++        }
++        assertFalse(ReplacementGuard.isActive())
++        val separateThread = AtomicBoolean()
++        ReplacementGuard.replace("original") {
++            val thread = Thread { separateThread.set(!ReplacementGuard.isActive()) }
++            thread.start()
++            thread.join()
++            "replacement"
++        }
++        assertTrue(separateThread.get())
++    }
++
++    @Test
++    fun targetPlatformGatesByApiVendorAndOverride() {
++        assertTrue(TargetPlatform.supports(36, "OnePlus", "OPLUS"))
++        assertTrue(TargetPlatform.supports(36, "realme", "unknown"))
++        assertFalse(TargetPlatform.supports(35, "OnePlus", "OPLUS"))
++        assertFalse(TargetPlatform.supports(36, "google", "google"))
++        assertFalse(TargetPlatform.supports(36, null, null))
++        // allowed(): natively supported platforms attach regardless of the override.
++        assertTrue(TargetPlatform.allowed(36, "OnePlus", "OPLUS", false))
++        assertTrue(TargetPlatform.allowed(36, "OnePlus", "OPLUS", true))
++        // Untested platforms are blocked by default, but the user may force it.
++        assertFalse(TargetPlatform.allowed(35, "google", "google", false))
++        assertTrue(TargetPlatform.allowed(35, "google", "google", true))
++        assertFalse(TargetPlatform.allowed(36, "google", "google", false))
++        assertTrue(TargetPlatform.allowed(36, "google", "google", true))
++    }
++
++    @Test
++    fun badgeSamplePolicySamplesFixedTextAndEnforcesBudget() {
++        assertEquals("7", BadgeSamplePolicy.sample("7", 0, 1))
++        assertEquals("10", BadgeSamplePolicy.sample(charArrayOf('x', '1', '0', 'y'), 1, 3))
++        assertNull(BadgeSamplePolicy.sample("notification content", 0, 20))
++        assertNull(BadgeSamplePolicy.sample("99", 0, 2))
++        assertNull(BadgeSamplePolicy.sample(null, 0, 1))
++        assertNull(BadgeSamplePolicy.sample("10", -1, 1))
++        assertNull(BadgeSamplePolicy.sample("10", 0, 3))
++        assertNull(BadgeSamplePolicy.sample("", 0, 0))
++        val budget = BadgeSamplePolicy(2)
++        assertTrue(budget.claim("one"))
++        assertFalse(budget.claim("one"))
++        assertTrue(budget.claim("two"))
++        assertTrue(budget.full())
++        assertFalse(budget.claim("three"))
++    }
++}
+diff --git a/mfga-xposed/build.gradle.kts b/mfga-xposed/build.gradle.kts
+index 60678e4..216b17f 100644
+--- a/mfga-xposed/build.gradle.kts
++++ b/mfga-xposed/build.gradle.kts
+@@ -1,4 +1,4 @@
+ plugins {
+-    id("com.android.application") version "8.10.1" apply false
++    id("com.android.application") version "9.3.0" apply false
+     id("org.jetbrains.kotlin.android") version "2.1.21" apply false
+ }
+diff --git a/mfga-xposed/gradle.properties b/mfga-xposed/gradle.properties
+new file mode 100644
+index 0000000..c749a60
+--- /dev/null
++++ b/mfga-xposed/gradle.properties
+@@ -0,0 +1,11 @@
++# AGP 9 default changes this module opts out of. Both are the officially
++# documented gradle.properties opt-outs (temporary until AGP 10).
++#
++# useAndroidX: no AndroidX dependencies here (only the libxposed compileOnly API
++# and the JUnit testImplementation for the host-side policy unit tests).
++android.useAndroidX=false
++# builtInKotlin: AGP 9 turns on built-in Kotlin by default. This module applies
++# the standalone org.jetbrains.kotlin.android 2.1.21 plugin instead, so the
++# Kotlin toolchain version stays pinned by us rather than following AGP's bundled
++# Kotlin. Opt out of the built-in one to avoid two Kotlin plugins fighting.
++android.builtInKotlin=false
+diff --git a/tests/java/PolicyTest.java b/tests/java/PolicyTest.java
+deleted file mode 100644
+index 7eaf426..0000000
+--- a/tests/java/PolicyTest.java
++++ /dev/null
+@@ -1,98 +0,0 @@
+-import com.mfga.xposed.GeckoFontPolicy;
+-import com.mfga.xposed.ReplacementGuard;
+-import com.mfga.xposed.TargetPlatform;
+-import com.mfga.xposed.diagnostics.BadgeSamplePolicy;
+-import java.util.Map;
+-import java.util.concurrent.atomic.AtomicBoolean;
+-
+-public final class PolicyTest {
+-    private static void check(boolean condition) {
+-        if (!condition) throw new AssertionError();
+-    }
+-    public static void main(String[] args) throws Exception {
+-        Map<String, Object> original = Map.of("browser.display.use_document_fonts", 1,
+-                "font.size.variable.x-western", 19, "unrelated", "retained",
+-                "font.name-list.sans-serif.x-western", "Roboto, Noto Sans, Noto Color Emoji",
+-                "font.name-list.serif.zh-CN", GeckoFontPolicy.FAMILY + ", Noto Serif CJK SC");
+-        check(GeckoFontPolicy.apply(original, false) == original);
+-        Map<String, Object> changed = GeckoFontPolicy.apply(original, true);
+-        check(changed.get("browser.display.use_document_fonts").equals(0));
+-        check(original.get("browser.display.use_document_fonts").equals(1));
+-        check(changed.get("font.size.variable.x-western").equals(19));
+-        check(changed.get("unrelated").equals("retained"));
+-        // font.name (preferred) is WenYuan for every generic/language.
+-        check(changed.get("font.name.cursive.zh-CN").equals(GeckoFontPolicy.FAMILY));
+-        check(changed.get("font.name.serif.x-western").equals(GeckoFontPolicy.FAMILY));
+-        // font.name-list keeps the ORIGINAL fallback chain, with WenYuan prepended,
+-        // so glyphs WenYuan lacks (rare codepoints, colour emoji) still resolve.
+-        check(changed.get("font.name-list.sans-serif.x-western")
+-                .equals(GeckoFontPolicy.FAMILY + ", Roboto, Noto Sans, Noto Color Emoji"));
+-        // Already led by WenYuan: left unchanged, no duplication.
+-        check(changed.get("font.name-list.serif.zh-CN")
+-                .equals(GeckoFontPolicy.FAMILY + ", Noto Serif CJK SC"));
+-        // Where Gecko exposes no list, we must NOT invent a WenYuan-only list.
+-        check(changed.get("font.name-list.monospace.ja") == null);
+-        // Emoji preferences are untouched so system colour emoji fallback still applies.
+-        check(changed.keySet().stream().noneMatch(key -> key.startsWith("font.name.emoji")
+-                || key.startsWith("font.name-list.emoji")));
+-        check(GeckoFontPolicy.apply(changed, true).equals(changed));
+-        try { changed.put("oops", true); throw new AssertionError(); }
+-        catch (UnsupportedOperationException expected) { }
+-        check(changed.keySet().stream().noneMatch(key -> key.contains("synthesis") || key.contains("variant")));
+-
+-        // prependFamily: prepend, dedupe, idempotence, empty handling.
+-        check(GeckoFontPolicy.prependFamily("A, B").equals(GeckoFontPolicy.FAMILY + ", A, B"));
+-        check(GeckoFontPolicy.prependFamily(GeckoFontPolicy.FAMILY + ", A") == null);
+-        check(GeckoFontPolicy.prependFamily("A, " + GeckoFontPolicy.FAMILY + ", B")
+-                .equals(GeckoFontPolicy.FAMILY + ", A, B"));
+-        check(GeckoFontPolicy.prependFamily("   ") == null);
+-
+-        check(ReplacementGuard.replace(null, () -> { throw new AssertionError(); }) == null);
+-        check(ReplacementGuard.replace("original", () -> null).equals("original"));
+-        check(ReplacementGuard.replace("original", () -> {
+-            check(ReplacementGuard.isActive());
+-            check(ReplacementGuard.replace("nested", () -> { throw new AssertionError(); }).equals("nested"));
+-            return "replacement";
+-        }).equals("replacement"));
+-        check(!ReplacementGuard.isActive());
+-        try { ReplacementGuard.replace("original", () -> { throw new IllegalStateException("test"); }); }
+-        catch (IllegalStateException expected) { }
+-        check(!ReplacementGuard.isActive());
+-        AtomicBoolean separateThread = new AtomicBoolean();
+-        ReplacementGuard.replace("original", () -> {
+-            Thread thread = new Thread(() -> separateThread.set(!ReplacementGuard.isActive()));
+-            thread.start();
+-            try { thread.join(); } catch (InterruptedException e) { throw new RuntimeException(e); }
+-            return "replacement";
+-        });
+-        check(separateThread.get());
+-        check(TargetPlatform.supports(36, "OnePlus", "OPLUS"));
+-        check(TargetPlatform.supports(36, "realme", "unknown"));
+-        check(!TargetPlatform.supports(35, "OnePlus", "OPLUS"));
+-        check(!TargetPlatform.supports(36, "google", "google"));
+-        check(!TargetPlatform.supports(36, null, null));
+-        // allowed(): natively supported platforms attach regardless of the override.
+-        check(TargetPlatform.allowed(36, "OnePlus", "OPLUS", false));
+-        check(TargetPlatform.allowed(36, "OnePlus", "OPLUS", true));
+-        // Untested platforms are blocked by default, but the user may force it.
+-        check(!TargetPlatform.allowed(35, "google", "google", false));
+-        check(TargetPlatform.allowed(35, "google", "google", true));
+-        check(!TargetPlatform.allowed(36, "google", "google", false));
+-        check(TargetPlatform.allowed(36, "google", "google", true));
+-        check(BadgeSamplePolicy.sample("7", 0, 1).equals("7"));
+-        check(BadgeSamplePolicy.sample(new char[]{'x', '1', '0', 'y'}, 1, 3).equals("10"));
+-        check(BadgeSamplePolicy.sample("notification content", 0, 20) == null);
+-        check(BadgeSamplePolicy.sample("99", 0, 2) == null);
+-        check(BadgeSamplePolicy.sample(null, 0, 1) == null);
+-        check(BadgeSamplePolicy.sample("10", -1, 1) == null);
+-        check(BadgeSamplePolicy.sample("10", 0, 3) == null);
+-        check(BadgeSamplePolicy.sample("", 0, 0) == null);
+-        BadgeSamplePolicy budget = new BadgeSamplePolicy(2);
+-        check(budget.claim("one"));
+-        check(!budget.claim("one"));
+-        check(budget.claim("two"));
+-        check(budget.full());
+-        check(!budget.claim("three"));
+-        System.out.println("Java policy tests passed");
+-    }
+-}
+diff --git a/tests/run_java.sh b/tests/run_java.sh
+deleted file mode 100644
+index d5dc744..0000000
+--- a/tests/run_java.sh
++++ /dev/null
+@@ -1,27 +0,0 @@
+-#!/bin/sh
+-# Compile the pure Kotlin policy classes and run the Java interop test against them.
+-# PolicyTest is deliberately kept in Java: it proves the Kotlin classes still expose
+-# Java-callable static/const shapes (@JvmStatic / const val / @JvmField) that the
+-# still-Java Xposed code and this host-side test both depend on.
+-set -eu
+-ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+-OUT="$ROOT/build/policy-tests"
+-JAR="$OUT/policy.jar"
+-rm -rf "$OUT"
+-mkdir -p "$OUT"
+-
+-SRC="$ROOT/mfga-xposed/app/src/main/kotlin/com/mfga/xposed"
+-
+-# -include-runtime bundles kotlin-stdlib into the jar, so both javac and java can
+-# resolve the Kotlin classes without hunting for the stdlib on this machine.
+-kotlinc \
+-    "$SRC/FontIdentity.kt" \
+-    "$SRC/GeckoFontPolicy.kt" \
+-    "$SRC/ReplacementGuard.kt" \
+-    "$SRC/TargetPlatform.kt" \
+-    "$SRC/diagnostics/BadgeSamplePolicy.kt" \
+-    -jvm-target 21 -include-runtime -d "$JAR"
+-
+-javac --release 21 -cp "$JAR" -d "$OUT" "$ROOT/tests/java/PolicyTest.java"
+-
+-java -cp "$JAR:$OUT" PolicyTest
+-- 
+2.39.5
+
