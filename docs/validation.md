@@ -588,3 +588,14 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
 - 新增 `tests/test_platform_support.py`:强制 `TargetPlatform.java` 的 `SUPPORTED_API`/`VENDORS`/`OVERRIDE_MARKER` 与 `customize.sh` 的 API 判断/厂商 case 分支/OVERRIDE 路径,三处均与 JSON 逐一致。反向验证:故意删去 shell 中一个厂商即触发 FAIL。
 - 两处调用点加注释指回单一真源。`config/platform-support.json` 为构建期配置,不打包进模块 ZIP。
 - 主机测试 73(原 70 +3)全绿。
+
+## 2026-09-12:全量 Kotlin 化 + 测试链并入 Gradle
+
+模块 `mfga-xposed` 的全部 10 个类由 Java 迁移到 Kotlin;`src/main/java` 目录整体移除,新增 `src/main/kotlin`。构建侧在 AGP 8.10.1 之上单独引入 kotlin-android 2.1.21 插件(与 park 中的 AGP 9 升级解耦以降低单次风险),`jvmTarget=21`。
+
+- 纯逻辑 6 类(`FontIdentity`/`ReplacementGuard`/`TargetPlatform`/`FontForceCore`/`GeckoFontPolicy`/`BadgeSamplePolicy`)先行转换,分两轮 CI 验证。
+- Android/Xposed 4 类(`ModernEntry`/`BadgeDrawObserver`/`FontMetricsProbe`/`GlyphCoverageProbe`)第二轮转换。
+- 互操作红线保留:`FontMetricsProbe` 仍是 `object` + `@JvmStatic fun main(Array<String>)`,DEX 仍定义 `Lcom/mfga/xposed/diagnostics/FontMetricsProbe;` 的具体 `public static main(String[])`,`verify_probe_container.py` 每轮均确认在 classes3.dex 命中。策略类以 `@JvmStatic`/`const val`/`@JvmField`/`@JvmSuppressWildcards` 保持从测试与仍存的调用点可 Java 调用。
+- 测试链:废弃 `tests/run_java.sh` 与 `tests/java/PolicyTest.java`,策略断言以等价形式移入 Gradle 单元测试 `mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt`(JUnit4,`testImplementation`)。`check.yml` 去掉 `sh tests/run_java.sh` 步并把 node 升到 24;`build-mfga-xposed.yml` 以 `gradle test` 取代 `run_java.sh` 步,并移除 `tests/java/**`、`tests/run_java.sh` 触发路径。
+- 读取 `.java` 源做静态契约断言的 Python 测试(`test_refactor`/`test_platform_support`/`test_badge_contract`/`test_probe_transport`)改指 `.kt` 源并适配 Kotlin 语法标记。
+- 验证:主机测试 71 全绿;node 全绿;两轮 APK 构建(全 Kotlin 混编→纯 Kotlin)CI 全绿,探针入口每轮确认。测试链改动因触及 workflow,以 handoff patch 交付,待维护者 Termux 推送。

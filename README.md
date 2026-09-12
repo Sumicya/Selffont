@@ -110,7 +110,7 @@ sh /data/adb/modules/MFGA/action.sh app-fonts restore --confirm
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --test tests/commands.test.mjs
-sh tests/run_java.sh   # JDK 21+
+(cd mfga-xposed && gradle test)   # Kotlin policy unit tests (JDK 21+)
 ```
 
 Shell 行为测试使用 BusyBox ash 和临时目录，不碰真实 `/data`。打包测试使用合成基础 ZIP，不代替真实完整基础包测试。原有 `tools/GPOS`、字体合并及 Emoji 工具不在这轮重构范围内。

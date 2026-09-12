@@ -22,8 +22,12 @@ android {
         jvmTarget = "21"
     }
     sourceSets["main"].resources.srcDirs("src/main/resources")
+    testOptions { unitTests.all { it.useJUnit() } }
 }
-dependencies { compileOnly("io.github.libxposed:api:102.0.0") }
+dependencies {
+    compileOnly("io.github.libxposed:api:102.0.0")
+    testImplementation("junit:junit:4.13.2")
+}
 
 // Verify actual DEX definitions, including secondary DEX files, before CI uploads the container.
 tasks.register<Exec>("verifyProbeContainer") {

@@ -15,7 +15,7 @@ jobs:
           python-version: '3.11'
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -27,6 +27,5 @@ jobs:
           python -m pip install -r tools/requirements.txt
           python -m unittest discover -s tests -v
           node --test tests/commands.test.mjs
-          sh tests/run_java.sh
           for file in script/*.sh lang/*.sh; do busybox sh -n "$file"; done
           git diff --check
