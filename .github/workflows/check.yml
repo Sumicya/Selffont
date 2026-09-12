@@ -24,7 +24,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y busybox
-          python -m pip install -r tools/requirements.txt
+          python -m pip install -r tools/requirements-dev.txt
+          ruff check .
           python -m unittest discover -s tests -v
           node --test tests/commands.test.mjs
           for file in script/*.sh lang/*.sh; do busybox sh -n "$file"; done
