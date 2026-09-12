@@ -113,7 +113,7 @@ node --test tests/commands.test.mjs
 (cd mfga-xposed && gradle test)   # Kotlin policy unit tests (JDK 21+)
 ```
 
-Shell 行为测试使用 BusyBox ash 和临时目录，不碰真实 `/data`。打包测试使用合成基础 ZIP，不代替真实完整基础包测试。原有 `tools/GPOS`、字体合并及 Emoji 工具不在这轮重构范围内。
+Shell 行为测试使用 BusyBox ash 和临时目录，不碰真实 `/data`。打包测试使用合成基础 ZIP，不代替真实完整基础包测试。字体合并及 Emoji 工具（`tools/otfcc*`、`script/remove_emoji_overlap.py`，由 `build.yml` 驱动）不在主机测试范围内。
 
 ### 角标修复：度量归一（1.4-phase2-metrics）
 

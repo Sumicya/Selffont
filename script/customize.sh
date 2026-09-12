@@ -7,7 +7,7 @@ OVERRIDE=/data/adb/selffont_allow_unsupported
 if [ -e "$OVERRIDE" ]; then
     ui_print "Selffont: override marker present; skipping platform checks (unverified, at your own risk)."
 else
-    # Platform gates mirror config/platform-support.json (see TargetPlatform.java);
+    # Platform gates mirror config/platform-support.json (see TargetPlatform.kt);
     # tests/test_platform_support.py enforces that all three stay in sync.
     [ "${API:-}" = 36 ] || abort "Selffont requires Android 16 (API 36). Create $OVERRIDE to force-install at your own risk."
     [ "${KSU:-}" = true ] || abort "Selffont requires KernelSU; other managers are not supported."
