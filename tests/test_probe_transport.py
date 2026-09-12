@@ -50,5 +50,5 @@ printf 'probe fixture executed\\n'
     def test_probe_is_not_registered_as_a_module_entry(self):
         registrations = (ROOT/'mfga-xposed/app/src/main/resources/META-INF/xposed/java_init.list').read_text()
         self.assertNotIn('FontMetricsProbe', registrations)
-        source = (ROOT/'mfga-xposed/app/src/main/java/com/mfga/xposed/modern/ModernEntry.java').read_text()
+        source = (ROOT/'mfga-xposed/app/src/main/kotlin/com/mfga/xposed/modern/ModernEntry.kt').read_text()
         self.assertNotIn('FontMetricsProbe', source)

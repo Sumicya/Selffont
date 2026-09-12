@@ -1,7 +1,7 @@
 """Bind the platform-support single source of truth to every call site.
 
 config/platform-support.json declares which platforms Selffont natively supports.
-Java (TargetPlatform.java) and the installer (script/customize.sh) each inline
+Kotlin (TargetPlatform.kt) and the installer (script/customize.sh) each inline
 those values for their own runtime -- neither parses JSON on-device. These tests
 fail if any call site drifts from the manifest, so adding a vendor or bumping the
 API is a single decision enforced across languages instead of a silent mismatch.
