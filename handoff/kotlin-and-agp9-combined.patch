@@ -1,6 +1,6 @@
-From 34a6c2e3e1ef394f297e650718e9863c4a891574 Mon Sep 17 00:00:00 2001
+From a7f9578cf2324dd1ecf5cd7db872b8fe985ba526 Mon Sep 17 00:00:00 2001
 From: Sumicya <306456895+Sumicya@users.noreply.github.com>
-Date: Sat, 12 Sep 2026 03:40:03 +0000
+Date: Sat, 12 Sep 2026 03:47:26 +0000
 Subject: [PATCH] Kotlin test-chain + AGP 9 upgrade (combined handoff)
 
 Two coordinated changes that both touch .github/workflows/* (unpushable by
@@ -16,7 +16,7 @@ Test-chain (was tests/run_java.sh):
 - README/docs updated
 
 AGP 9 upgrade:
-- AGP 8.10.1 -> 9.3.0 (root build.gradle.kts); Gradle 8.11.1 -> 9.5;
+- AGP 8.10.1 -> 9.3.0 (root build.gradle.kts); Gradle 8.11.1 -> 9.5.0;
   build-tools 35 -> 36 (build-mfga-xposed.yml)
 - new mfga-xposed/gradle.properties: useAndroidX=false and
   builtInKotlin=false (keep the standalone kotlin-android 2.1.21 plugin
@@ -41,7 +41,7 @@ Co-authored-by: arena-agent <297053741+arena-agent@users.noreply.github.com>
  delete mode 100644 tests/run_java.sh
 
 diff --git a/.github/workflows/build-mfga-xposed.yml b/.github/workflows/build-mfga-xposed.yml
-index e7088aa..df6af8e 100644
+index e7088aa..235c10d 100644
 --- a/.github/workflows/build-mfga-xposed.yml
 +++ b/.github/workflows/build-mfga-xposed.yml
 @@ -4,8 +4,6 @@ on:
@@ -58,7 +58,7 @@ index e7088aa..df6af8e 100644
        - uses: gradle/actions/setup-gradle@v5
          with:
 -          gradle-version: '8.11.1'
-+          gradle-version: '9.5'
++          gradle-version: '9.5.0'
        - uses: android-actions/setup-android@v4
        - name: Install Android 16 SDK
 -        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
