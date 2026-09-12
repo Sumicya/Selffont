@@ -4,11 +4,9 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.fonts.Font
 import android.graphics.text.TextRunShaper
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
-import java.io.File
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.util.Locale

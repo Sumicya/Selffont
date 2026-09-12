@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,12 +86,12 @@ class GmsFallbackTests(unittest.TestCase):
         self.assertIn("[gms-exit] 0", out)
 
     def test_non_numeric_user_dirs_are_skipped(self):
-        rc, out, log, _ = self.run_script("--confirm")
+        _, _, log, _ = self.run_script("--confirm")
         # The 'list' directory is not a user id; pm disable must not target it.
         self.assertNotIn("--user list", log)
 
     def test_no_user_profiles_reports_failure(self):
-        rc, out, log, _ = self.run_script("--confirm", data_users=())
+        rc, _, _, _ = self.run_script("--confirm", data_users=())
         # found=0 -> non-zero exit even though apps were stopped.
         self.assertNotEqual(rc, 0)
 

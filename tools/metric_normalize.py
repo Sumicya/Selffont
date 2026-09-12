@@ -142,8 +142,7 @@ def normalize_metrics(font_bytes, carrier_metrics):
     # Match the carrier's USE_TYPO_METRICS flag so either metric path agrees.
     # Bit 7 is only defined in OS/2 version 4+, so raise the version if needed.
     if carrier_metrics.get("useTypoMetrics"):
-        if os2.version < 4:
-            os2.version = 4
+        os2.version = max(os2.version, 4)
         os2.fsSelection |= USE_TYPO_METRICS
     else:
         os2.fsSelection &= ~USE_TYPO_METRICS

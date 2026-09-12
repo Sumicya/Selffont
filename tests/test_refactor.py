@@ -171,9 +171,9 @@ class PackagingTests(unittest.TestCase):
             with zipfile.ZipFile(base, 'w') as archive:
                 archive.writestr('system/fonts/NotoSansPro.otf', b'fixture')
                 archive.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
-            with patch('build_module.verify_font', return_value={'sha256': '0' * 64}):
-                with self.assertRaisesRegex(ValueError, 'changed after verification'):
-                    build(base, font, output)
+            with patch('build_module.verify_font', return_value={'sha256': '0' * 64}), \
+                    self.assertRaisesRegex(ValueError, 'changed after verification'):
+                build(base, font, output)
             self.assertEqual(output.read_bytes(), b'previous output')
 
     def test_malformed_archive_is_rejected(self):

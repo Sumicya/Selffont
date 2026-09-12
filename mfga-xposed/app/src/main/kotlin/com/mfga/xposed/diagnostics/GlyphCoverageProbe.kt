@@ -2,12 +2,10 @@ package com.mfga.xposed.diagnostics
 
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.graphics.fonts.Font
 import android.graphics.fonts.FontFamily
 import android.graphics.fonts.SystemFonts
 import android.graphics.text.TextRunShaper
 import android.util.Log
-import java.io.File
 import java.util.function.BiConsumer
 
 /**

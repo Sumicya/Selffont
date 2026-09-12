@@ -43,7 +43,7 @@ class NormalizationTests(unittest.TestCase):
         # WenYuan-like 2048 UPM against a 1000 UPM carrier scales proportionally.
         font = primary_font(upm=2048, hhea=(2400, -600, 0), typo=(1800, -400, 0),
                             digit_ink=(-20, 1500))
-        norm, report = normalize_metrics(font, self.carrier)
+        norm, _ = normalize_metrics(font, self.carrier)
         nf = TTFont(io.BytesIO(norm))
         self.assertEqual(nf['hhea'].ascent, round(930 * 2048 / 1000))
         self.assertEqual(nf['hhea'].descent, round(-250 * 2048 / 1000))
