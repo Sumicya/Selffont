@@ -26,12 +26,21 @@ jobs:
       - uses: android-actions/setup-android@v4
       - name: Install Android 16 SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
-      - name: Test pure policies
+      - name: Test policies and build diagnostic APK
         working-directory: mfga-xposed
-        run: gradle --no-daemon test --stacktrace
-      - name: Build installable diagnostic APK
-        working-directory: mfga-xposed
-        run: gradle --no-daemon assembleDebug --stacktrace
+        run: |
+          for attempt in 1 2 3; do
+            if gradle --no-daemon test assembleDebug --stacktrace \
+                -Daether.connector.http.retryHandler.count=5 \
+                -Dorg.gradle.internal.http.connectionTimeout=60000 \
+                -Dorg.gradle.internal.http.socketTimeout=60000; then
+              exit 0
+            fi
+            echo "::warning::Gradle attempt $attempt failed (possibly a transient Maven Central 429); retrying after backoff."
+            sleep $((attempt * 60))
+          done
+          echo "::error::Gradle build failed after 3 attempts."
+          exit 1
       - uses: actions/upload-artifact@v7
         with:
           name: selffont-phase1-debug-apk
