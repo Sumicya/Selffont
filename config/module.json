@@ -1,0 +1,9 @@
+{
+  "_comment": "Single source of truth for the KSU module.prop. tools/build_module.py renders module.prop from these fields; tests/test_module_metadata.py enforces that the rendered output matches. Bumping the module release means editing here only.",
+  "id": "MFGA",
+  "name": "Selffont · WenYuan",
+  "version": "v1.4.0",
+  "versionCode": "2026091200",
+  "author": "Selffont contributors",
+  "description": "Android 16 / Oplus / KSU. WenYuan variable font; line metrics normalised to carrier. Device install/rendering requires validation."
+}

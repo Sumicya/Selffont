@@ -19,6 +19,21 @@ from font_config import configure_fonts, assert_axes_within_font, METRIC_CARRIER
 from prepare_font import MANIFEST, ROOT, verify_font, verify_metric_carrier
 from metric_normalize import normalize_metrics, assert_glyphs_preserved
 
+MODULE = json.loads((ROOT / "config/module.json").read_text())
+# module.prop key order is fixed so the rendered output is deterministic.
+MODULE_PROP_KEYS = ("id", "name", "version", "versionCode", "author", "description")
+
+
+def render_module_prop(fields=MODULE):
+    """Render Magisk/KSU module.prop from config/module.json (single source of truth)."""
+    missing = [key for key in MODULE_PROP_KEYS if not fields.get(key)]
+    if missing:
+        raise ValueError(f"config/module.json is missing required keys: {missing}")
+    for key in MODULE_PROP_KEYS:
+        if "\n" in str(fields[key]):
+            raise ValueError(f"module.prop field {key!r} must be single-line")
+    return "".join(f"{key}={fields[key]}\n" for key in MODULE_PROP_KEYS)
+
 RUNTIME_FILES = ("customize.sh", "action.sh", "service.sh", "uninstall.sh", "search_dirs.sh",
                    "diagnose.sh", "gms_fallback.sh", "app_fonts.sh", "collect_logs.sh", "filter_logs.awk")
 MAX_FONT_BYTES = 128 * 1024 * 1024
@@ -115,9 +130,7 @@ def build(base, font, output, revision=None):
                     dest.writestr(entry.filename, source.read(entry))
             dest.writestr("system/fonts/" + MANIFEST["installedFile"], normalized_font)
             dest.writestr("fonts.xml", xml)
-            dest.writestr("module.prop", "id=MFGA\nname=Selffont · WenYuan\nversion=v1.4.0\n"
-                          "versionCode=2026091200\nauthor=Selffont contributors\n"
-                          "description=Android 16 / Oplus / KSU. WenYuan variable font; line metrics normalised to carrier. Device install/rendering requires validation.\n")
+            dest.writestr("module.prop", render_module_prop())
             for name in RUNTIME_FILES:
                 dest.write(ROOT / "script" / name, name)
             for directory in ("lang", "webroot", "licenses"):
