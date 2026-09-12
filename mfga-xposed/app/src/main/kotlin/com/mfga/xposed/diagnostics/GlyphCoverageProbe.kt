@@ -82,10 +82,8 @@ object GlyphCoverageProbe {
                         FontFamily.Builder(font).build()
                     ).build()
                 } catch (e: Throwable) {
-                    when (e) {
-                        is RuntimeException, is Error -> continue
-                        else -> throw e
-                    }
+                    if (e !is RuntimeException && e !is Error) throw e
+                    continue
                 }
                 var any = false
                 for (cp in SAMPLES) {
@@ -102,10 +100,8 @@ object GlyphCoverageProbe {
                     if (coveringFiles.isEmpty()) "[NONE]" else coveringFiles.toString()
             )
         } catch (error: Throwable) {
-            when (error) {
-                is RuntimeException, is LinkageError -> report.accept(Log.WARN, "[glyph-probe-failed] $error")
-                else -> throw error
-            }
+            if (error !is RuntimeException && error !is LinkageError) throw error
+            report.accept(Log.WARN, "[glyph-probe-failed] $error")
         }
     }
 }

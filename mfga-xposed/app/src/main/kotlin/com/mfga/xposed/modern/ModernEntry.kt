@@ -74,15 +74,11 @@ class ModernEntry : XposedModule() {
                         }
                         replacement
                     } catch (error: Throwable) {
-                        when (error) {
-                            is RuntimeException, is LinkageError -> {
-                                if (firstFailure.compareAndSet(false, true)) {
-                                    log(Log.WARN, TAG, "[replacement-failed] preserving original: $error")
-                                }
-                                result
-                            }
-                            else -> throw error
+                        if (error !is RuntimeException && error !is LinkageError) throw error
+                        if (firstFailure.compareAndSet(false, true)) {
+                            log(Log.WARN, TAG, "[replacement-failed] preserving original: $error")
                         }
+                        result
                     }
                 })
             }
@@ -122,25 +118,18 @@ class ModernEntry : XposedModule() {
                     }
                     patched
                 } catch (error: Throwable) {
-                    when (error) {
-                        is RuntimeException, is LinkageError -> {
-                            if (firstFailure.compareAndSet(false, true)) {
-                                log(Log.WARN, TAG, "[gecko-failed] preserving original prefs: $error")
-                            }
-                            result
-                        }
-                        else -> throw error
+                    if (error !is RuntimeException && error !is LinkageError) throw error
+                    if (firstFailure.compareAndSet(false, true)) {
+                        log(Log.WARN, TAG, "[gecko-failed] preserving original prefs: $error")
                     }
+                    result
                 }
             })
         } catch (absent: ClassNotFoundException) {
             log(Log.INFO, TAG, "[gecko-absent] no GeckoView in this classloader")
         } catch (error: Throwable) {
-            when (error) {
-                is ReflectiveOperationException, is LinkageError ->
-                    log(Log.WARN, TAG, "[gecko-unsupported] $error")
-                else -> throw error
-            }
+            if (error !is ReflectiveOperationException && error !is LinkageError) throw error
+            log(Log.WARN, TAG, "[gecko-unsupported] $error")
         }
     }
 
@@ -153,22 +142,16 @@ class ModernEntry : XposedModule() {
                     log(Log.WARN, TAG, "[deopt-not-applied] " + method.toGenericString())
                 }
             } catch (error: Throwable) {
-                when (error) {
-                    // A failed deoptimization must not prevent attempting the hook itself.
-                    is RuntimeException, is LinkageError ->
-                        log(Log.WARN, TAG, "[deopt-failed] " + method.name + ": " + error)
-                    else -> throw error
-                }
+                // A failed deoptimization must not prevent attempting the hook itself.
+                if (error !is RuntimeException && error !is LinkageError) throw error
+                log(Log.WARN, TAG, "[deopt-failed] " + method.name + ": " + error)
             }
             hook(method).intercept(hooker)
             installed.add(method)
             log(Log.INFO, TAG, "[hook-installed] " + method.toGenericString())
         } catch (error: Throwable) {
-            when (error) {
-                is RuntimeException, is LinkageError ->
-                    log(Log.ERROR, TAG, "[hook-failed] " + method.toGenericString() + ": " + error)
-                else -> throw error
-            }
+            if (error !is RuntimeException && error !is LinkageError) throw error
+            log(Log.ERROR, TAG, "[hook-failed] " + method.toGenericString() + ": " + error)
         }
     }
 

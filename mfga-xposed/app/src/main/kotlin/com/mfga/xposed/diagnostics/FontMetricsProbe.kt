@@ -41,14 +41,12 @@ object FontMetricsProbe {
             init.isAccessible = true
             init.invoke(null)
         } catch (error: Throwable) {
-            when (error) {
-                is ReflectiveOperationException, is RuntimeException, is LinkageError -> {
-                    val cause = if (error is InvocationTargetException) error.cause else error
-                    println("[probe-init-error] $cause")
-                    exitProcess(2)
-                }
-                else -> throw error
-            }
+            if (error !is ReflectiveOperationException && error !is RuntimeException &&
+                error !is LinkageError
+            ) throw error
+            val cause = if (error is InvocationTargetException) error.cause else error
+            println("[probe-init-error] $cause")
+            exitProcess(2)
         }
 
         val cases = LinkedHashMap<String, Typeface>()
@@ -60,10 +58,8 @@ object FontMetricsProbe {
             cases["explicit-carrier-wenyuan-500"] = explicit(true, 500)
             cases["direct-wenyuan-500"] = explicit(false, 500)
         } catch (error: Throwable) {
-            when (error) {
-                is Exception, is LinkageError -> println("[probe-explicit-font-error] $error")
-                else -> throw error
-            }
+            if (error !is Exception && error !is LinkageError) throw error
+            println("[probe-explicit-font-error] $error")
         }
 
         var failures = 0
@@ -75,13 +71,9 @@ object FontMetricsProbe {
                         try {
                             measure(name, face, locale, size, text)
                         } catch (error: Throwable) {
-                            when (error) {
-                                is RuntimeException, is LinkageError -> {
-                                    failures++
-                                    println("[probe-case-error] $name: $error")
-                                }
-                                else -> throw error
-                            }
+                            if (error !is RuntimeException && error !is LinkageError) throw error
+                            failures++
+                            println("[probe-case-error] $name: $error")
                         }
                     }
                 }

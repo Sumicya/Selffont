@@ -48,15 +48,12 @@ class BadgeDrawObserver(private val report: BiConsumer<Int, String>) {
                             try {
                                 capture(method, chain.thisObject, chain.args)
                             } catch (error: Throwable) {
-                                when (error) {
-                                    is RuntimeException, is LinkageError ->
-                                        if (failed.compareAndSet(false, true)) {
-                                            report.accept(
-                                                Log.WARN,
-                                                "[badge-observe-failed] drawing unchanged: $error"
-                                            )
-                                        }
-                                    else -> throw error
+                                if (error !is RuntimeException && error !is LinkageError) throw error
+                                if (failed.compareAndSet(false, true)) {
+                                    report.accept(
+                                        Log.WARN,
+                                        "[badge-observe-failed] drawing unchanged: $error"
+                                    )
                                 }
                             }
                             // Original drawing and its exceptions always proceed untouched.
@@ -67,12 +64,8 @@ class BadgeDrawObserver(private val report: BiConsumer<Int, String>) {
                     })
                 }
             } catch (absent: Throwable) {
-                when (absent) {
-                    is ClassNotFoundException, is LinkageError -> {
-                        // Different Android builds may expose different canvas implementation classes.
-                    }
-                    else -> throw absent
-                }
+                // Different Android builds may expose different canvas implementation classes.
+                if (absent !is ClassNotFoundException && absent !is LinkageError) throw absent
             }
         }
         report.accept(
