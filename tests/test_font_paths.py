@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from font_config import METRIC_CARRIER  # noqa: E402
+from font_config import METRIC_CARRIER
 
 FONT = json.loads((ROOT / "config/font-source.json").read_text())
 INSTALLED = FONT["installedFile"]

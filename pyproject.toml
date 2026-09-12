@@ -1,0 +1,23 @@
+[tool.ruff]
+# Host-side tooling and tests target the CI Python (3.11).
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Curated, high-signal rule set: real bugs, dead code, import hygiene and
+# idiom modernization — deliberately excluding purely stylistic line-length
+# (E501) and opinionated complexity/magic-value checks (PLR) that would churn
+# intentionally long, explicit code without improving correctness.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = [
+    "E501",   # long lines are intentional in several tables/URLs
+    "E402",   # tests deliberately mutate sys.path before importing helpers
+    "RUF001", # ambiguous-unicode is expected: this repo handles CJK text
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally leave subprocess return codes unchecked (they assert on
+# them) and keep the sys.path shim; no need to flag those patterns.
+"tests/*" = ["PLW1510"]

@@ -11,7 +11,7 @@ def metrics_carrier(visible=False):
     builder.setupGlyphOrder(order)
     builder.setupCharacterMap({32: 'space', **({65: 'A'} if visible else {})})
     builder.setupGlyf({name: TTGlyphPen(None).glyph() for name in order})
-    builder.setupHorizontalMetrics({name: (500, 0) for name in order})
+    builder.setupHorizontalMetrics(dict.fromkeys(order, (500, 0)))
     builder.setupHorizontalHeader(ascent=930, descent=-250)
     builder.setupNameTable({'familyName': 'Test Metrics Fixture', 'styleName': 'Regular',
                            'uniqueFontIdentifier': 'TestMetricsFixture',
@@ -40,7 +40,7 @@ def primary_font(upm=1000, hhea=(1160, -288, 0), typo=(880, -120, 0),
     Digits carry visible ink at ``digit_ink`` (yMin, yMax) so the normalization
     guard has something to validate; outlines/cmap/axes must survive untouched.
     """
-    order = ['.notdef', 'space'] + list('0123456789') + list('Ag')
+    order = ['.notdef', 'space', *'0123456789', *'Ag']
     builder = FontBuilder(upm, isTTF=True)
     builder.setupGlyphOrder(order)
     cmap = {32: 'space', 65: 'A', 97: 'g'}
@@ -54,7 +54,7 @@ def primary_font(upm=1000, hhea=(1160, -288, 0), typo=(880, -120, 0),
     glyphs['A'] = _box_glyph(20, 0, 480, 700)
     glyphs['g'] = _box_glyph(20, -200, 480, 500)
     builder.setupGlyf(glyphs)
-    builder.setupHorizontalMetrics({name: (500, 0) for name in order})
+    builder.setupHorizontalMetrics(dict.fromkeys(order, (500, 0)))
     builder.setupHorizontalHeader(ascent=hhea[0], descent=hhea[1], lineGap=hhea[2])
     builder.setupNameTable({'familyName': family, 'styleName': 'Regular',
                             'uniqueFontIdentifier': family.replace(' ', ''),

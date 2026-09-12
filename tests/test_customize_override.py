@@ -1,11 +1,11 @@
 """The install-time platform gate blocks untested platforms by default, but an
 explicit user opt-in marker lets an advanced user force installation."""
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 

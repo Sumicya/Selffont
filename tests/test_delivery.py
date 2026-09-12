@@ -2,20 +2,20 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 import zipfile
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'tools'))
-from prepare_base import verify_base, prepare
-from prepare_font import verify_metric_carrier
 from font_fixtures import metrics_carrier
+from prepare_base import prepare, verify_base
+from prepare_font import verify_metric_carrier
 
 
 class BaseSourceTests(unittest.TestCase):

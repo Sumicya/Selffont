@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from build_module import render_module_prop, MODULE, MODULE_PROP_KEYS  # noqa: E402
+from build_module import MODULE, MODULE_PROP_KEYS, render_module_prop
 
 MANIFEST = json.loads((ROOT / "config/module.json").read_text())
 

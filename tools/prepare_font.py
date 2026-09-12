@@ -3,18 +3,17 @@
 import argparse
 import hashlib
 import io
-import unicodedata
 import json
 import shutil
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from fontTools.ttLib import TTFont
-
-from fontTools.pens.boundsPen import BoundsPen
 from font_config import METRIC_CARRIER
+from fontTools.pens.boundsPen import BoundsPen
+from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads((ROOT / "config/font-source.json").read_text())

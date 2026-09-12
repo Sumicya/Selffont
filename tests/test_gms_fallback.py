@@ -7,10 +7,10 @@ contract (confirmation gate, tool checks, numeric-user-only scope, cache
 deletion) is locked down without touching a real device.
 """
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "script/gms_fallback.sh"

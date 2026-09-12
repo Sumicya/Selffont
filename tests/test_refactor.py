@@ -2,24 +2,30 @@ import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import zipfile
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from font_config import (configure_fonts, assert_axes_within_font, font_axis_ranges,
-                         PRIMARY_NAMES, METRIC_FAMILIES, METRIC_CARRIER)
-from prepare_font import MANIFEST, verify_font
 from build_module import build, font_members
+from font_config import (
+    METRIC_CARRIER,
+    METRIC_FAMILIES,
+    PRIMARY_NAMES,
+    assert_axes_within_font,
+    configure_fonts,
+    font_axis_ranges,
+)
 from font_fixtures import metrics_carrier, primary_font
+from prepare_font import MANIFEST, verify_font
 
 
 class FontConfigurationTests(unittest.TestCase):
@@ -41,8 +47,11 @@ class FontConfigurationTests(unittest.TestCase):
         for name in METRIC_FAMILIES:
             before = source.find(f"family[@name='{name}']")
             after = root.find(f"family[@name='{name}']")
-            describe = lambda family: [(f.attrib, (f.text or '').strip(), [a.attrib for a in f])
-                                       for f in family.findall('font')]
+
+            def describe(family):
+                return [(f.attrib, (f.text or '').strip(), [a.attrib for a in f])
+                        for f in family.findall('font')]
+
             self.assertEqual(describe(before), describe(after))
         families = root.findall('family')
         self.assertEqual(families[0].get('name'), 'sans-serif')
@@ -68,10 +77,12 @@ class FontConfigurationTests(unittest.TestCase):
         xml = configure_fonts((ROOT / 'fonts.xml').read_bytes(), MANIFEST['installedFile'])
         # A font whose weight axis stops at 800 must fail the 900 the config asks for.
         import io
+
         from fontTools.ttLib import TTFont
         tt = TTFont(io.BytesIO(primary_font()))
         tt['fvar'].axes[0].maxValue = 800
-        out = io.BytesIO(); tt.save(out)
+        out = io.BytesIO()
+        tt.save(out)
         with self.assertRaisesRegex(ValueError, 'outside font range'):
             assert_axes_within_font(xml, MANIFEST['installedFile'], out.getvalue())
         # A non-variable font cannot back dynamic weights at all.
@@ -323,7 +334,9 @@ class InstallerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             mod, system, bin_dir = root/'module', root/'system', root/'bin'
-            mod.mkdir(); bin_dir.mkdir(); (system/'etc').mkdir(parents=True)
+            mod.mkdir()
+            bin_dir.mkdir()
+            (system/'etc').mkdir(parents=True)
             (mod/'system/fonts').mkdir(parents=True)
             (mod/'system/fonts'/MANIFEST['installedFile']).write_text('prepared fixture')
             shutil.copytree(ROOT/'lang', mod/'lang')

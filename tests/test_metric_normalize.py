@@ -13,11 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'tests'))
 
+from font_fixtures import metrics_carrier, primary_font
 from fontTools.ttLib import TTFont
-
-from metric_normalize import normalize_metrics, assert_glyphs_preserved, ClipError
+from metric_normalize import ClipError, assert_glyphs_preserved, normalize_metrics
 from prepare_font import layout_metrics
-from font_fixtures import primary_font, metrics_carrier
 
 
 def carrier_metrics(**kw):

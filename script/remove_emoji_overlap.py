@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Remove glyphs from target fonts that overlap with emoji defined in all.toml
@@ -10,10 +9,12 @@ Logic:
 3. Clean unused glyphs via fontTools Subsetter
 """
 
-import sys
+import contextlib
 import re
+import sys
+
+from fontTools.subset import Options, Subsetter
 from fontTools.ttLib import TTFont
-from fontTools.subset import Subsetter, Options
 
 
 def parse_all_toml(toml_path):
@@ -22,7 +23,7 @@ def parse_all_toml(toml_path):
     """
     emoji_codepoints = set()
 
-    with open(toml_path, "r", encoding="utf-8") as f:
+    with open(toml_path, encoding="utf-8") as f:
         for line in f:
             # match: emoji_uXXXX.svg or emoji_uXXXX_XXXX.svg
             m = re.search(r'emoji_u([0-9a-fA-F_]+)\.svg', line)
@@ -33,10 +34,8 @@ def parse_all_toml(toml_path):
             parts = sequence.split("_")
 
             for p in parts:
-                try:
+                with contextlib.suppress(ValueError):
                     emoji_codepoints.add(int(p, 16))
-                except ValueError:
-                    pass
 
     return emoji_codepoints
 

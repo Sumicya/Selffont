@@ -1,9 +1,9 @@
 """Existing native crash collection must stay limited to this standalone probe."""
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -1,10 +1,10 @@
 """Synthetic DEX headers/tables exercise entry inspection, not ART execution."""
 import importlib.util
-from pathlib import Path
 import struct
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('verify_probe_container', ROOT/'mfga-xposed/verify_probe_container.py')

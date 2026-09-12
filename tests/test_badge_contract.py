@@ -1,6 +1,6 @@
 """Static safety contracts complement the JVM sample policy and APK compilation."""
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 

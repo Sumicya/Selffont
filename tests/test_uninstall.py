@@ -6,10 +6,10 @@ sibling app_fonts.sh, and never a destructive 'block'. The restore logic itself
 is covered by the PermissionTests in test_refactor.py.
 """
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 UNINSTALL = (ROOT / "script/uninstall.sh").read_text()

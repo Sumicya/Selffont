@@ -11,13 +11,13 @@ import os
 import re
 import stat
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path, PurePosixPath
-import xml.etree.ElementTree as ET
 
-from font_config import configure_fonts, assert_axes_within_font, METRIC_CARRIER
+from font_config import METRIC_CARRIER, assert_axes_within_font, configure_fonts
+from metric_normalize import assert_glyphs_preserved, normalize_metrics
 from prepare_font import MANIFEST, ROOT, verify_font, verify_metric_carrier
-from metric_normalize import normalize_metrics, assert_glyphs_preserved
 
 MODULE = json.loads((ROOT / "config/module.json").read_text())
 # module.prop key order is fixed so the rendered output is deterministic.
