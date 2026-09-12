@@ -7,12 +7,12 @@ object ReplacementGuard {
     private val ACTIVE = ThreadLocal<Boolean>()
 
     @JvmStatic
-    fun isActive(): Boolean = java.lang.Boolean.TRUE == ACTIVE.get()
+    fun isActive(): Boolean = ACTIVE.get() == true
 
     @JvmStatic
     fun <T> replace(original: T?, factory: Supplier<T>): T? {
         if (original == null || isActive()) return original
-        ACTIVE.set(java.lang.Boolean.TRUE)
+        ACTIVE.set(true)
         return try {
             val replacement = factory.get()
             replacement ?: original
