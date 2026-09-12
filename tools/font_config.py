@@ -1,6 +1,8 @@
 """Build the Android-16 font-family policy without editing any font binary."""
 import xml.etree.ElementTree as ET
 
+from fontTools.ttLib import TTFont
+
 METRIC_CARRIER = "Roboto-Regular.ttf"
 
 PRIMARY_NAMES = {"sans-serif", "sans-serif-condensed", "serif", "monospace",
@@ -51,3 +53,41 @@ def configure_fonts(source, filename):
     root.insert(list(root).index(default) + 1, glyph_family)
     ET.indent(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def font_axis_ranges(font_bytes):
+    """Return {axisTag: (min, max)} for the variable font we actually ship."""
+    import io
+    with TTFont(io.BytesIO(font_bytes)) as font:
+        if "fvar" not in font:
+            raise ValueError("Primary font is not a variable font; dynamic weights need fvar")
+        return {axis.axisTag: (axis.minValue, axis.maxValue) for axis in font["fvar"].axes}
+
+
+def assert_axes_within_font(xml, filename, font_bytes):
+    """Guard the dynamic-weight config against the real font's fvar axes.
+
+    Every <axis> the configuration selects on our glyph font must name a real
+    fvar axis and stay inside its range, so no requested weight/italic value is
+    silently clamped. Runs at build time against the exact font being packaged;
+    if a future font revision narrows an axis, packaging fails loudly instead of
+    shipping a degraded weight ladder.
+    """
+    ranges = font_axis_ranges(font_bytes)
+    root = ET.fromstring(xml)
+    checked = 0
+    for font in root.iter("font"):
+        if (font.text or "").strip() != filename:
+            continue
+        for axis in font.findall("axis"):
+            tag, raw = axis.get("tag"), axis.get("stylevalue")
+            if tag not in ranges:
+                raise ValueError(f"Configured axis {tag!r} is absent from the font's fvar")
+            low, high = ranges[tag]
+            if not low <= float(raw) <= high:
+                raise ValueError(
+                    f"Axis {tag} value {raw} outside font range [{low}, {high}]")
+            checked += 1
+    if not checked:
+        raise ValueError("No dynamic-weight axes were validated against the font")
+    return {tag: [low, high] for tag, (low, high) in ranges.items()}

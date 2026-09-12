@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 import xml.etree.ElementTree as ET
 
-from font_config import configure_fonts, METRIC_CARRIER
+from font_config import configure_fonts, assert_axes_within_font, METRIC_CARRIER
 from prepare_font import MANIFEST, ROOT, verify_font, verify_metric_carrier
 from metric_normalize import normalize_metrics, assert_glyphs_preserved
 
@@ -74,6 +74,10 @@ def build(base, font, output, revision=None):
             original_font = Path(font).read_bytes()
             if hashlib.sha256(original_font).hexdigest() != report["sha256"]:
                 raise ValueError("Primary font changed after verification")
+            # Bind the dynamic-weight configuration to the font actually shipped:
+            # every wght/ital axis value the XML selects must exist and stay in
+            # range, so no weight is silently clamped if the font revision changes.
+            font_axis_ranges = assert_axes_within_font(xml, MANIFEST["installedFile"], original_font)
             normalized_font, metric_report = normalize_metrics(
                 original_font, carrier["layoutMetrics"])
             normalized_sha = hashlib.sha256(normalized_font).hexdigest()
@@ -86,6 +90,7 @@ def build(base, font, output, revision=None):
                 "sourceRevision": revision or "UNSPECIFIED",
                 "primaryFont": report,
                 "metricNormalization": metric_report,
+                "dynamicWeightAxes": font_axis_ranges,
                 "androidMetricsCarrier": carrier,
                 "baseArchiveSha256": base_digest,
                 "supplementalFontCount": len(entries),

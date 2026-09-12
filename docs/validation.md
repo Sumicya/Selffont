@@ -547,3 +547,17 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
 
 ### 验证
 - 主机测试 66(原 62 +4)全绿;node 3 全绿。Java 侧本地无 javac(沙盒出网仅 PyPI/github-git 可达,JDK 二进制源全被墙),`run_java.sh` 已把 `FontIdentity.java` 加入编译列表,靠 CI(temurin JDK 21)验证。
+
+## 2026-09-12:动态字重与无用字重清理(验证收尾)
+
+对"动态字重 / 清理无用字重"方向做了源码核查与契约固化。核查结论:两件事在既有 pipeline 里其实已经成立,本次补上了防回归守卫。
+
+### 现状核查(基于真实 WenYuan VF)
+- 拉取并解析源字体 `WenYuanRoundedSCVF.ttf`(v1.010):确认为可变字体,`fvar` 轴 `wght` 100–900、`ital` 0–1,含 18 个命名实例(9 字重 × 正/斜)。
+- 动态字重:`font_config.primary_fonts()` 为每个字重生成 `<font weight=X><axis tag="wght" stylevalue=X><axis tag="ital" .../>` 指向同一个 VF 文件——即"一个可变字体文件供全部字重",而非每字重一个静态文件。stylevalue 100–900 精确匹配轴范围,`ital` 为真斜体轴(非伪斜)。
+- 清理无用字重:MFGA 基础包里的静态字重 `100.ttf`–`900.ttf` 在 `build_module.font_members`(第 42 行 `continue`)被排除、不打进模块;`font_config.configure_fonts` 亦删除引用它们的旧家族。最终 `fonts.xml` 无任何 `N00.ttf` 残留(已用真实 VF 生成核对)。
+
+### 新增防回归守卫
+- `font_config.assert_axes_within_font(xml, filename, font_bytes)`:用**正在打包的真实字体**的 `fvar` 校验生成配置里每个 `<axis>`——轴必须存在且 stylevalue 落在 [min,max] 内,否则打包失败。绑定"动态字重配置"与"真实字体轴",防止将来换字体版本轴范围收窄却静默 clamp。
+- `build_module.build` 在核对字体 SHA 后调用该守卫,并把轴范围写入 `module-report.json` 的 `dynamicWeightAxes`。
+- 测试:`tests/test_refactor.py` 新增 `test_dynamic_weight_axes_stay_within_font`、`test_axis_guard_rejects_out_of_range_and_missing_axis`;打包测试断言报告含 `dynamicWeightAxes`。主机测试 68(原 66 +2)全绿;守卫对真实 48MB VF 通过。

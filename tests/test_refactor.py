@@ -15,7 +15,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from font_config import configure_fonts, PRIMARY_NAMES, METRIC_FAMILIES, METRIC_CARRIER
+from font_config import (configure_fonts, assert_axes_within_font, font_axis_ranges,
+                         PRIMARY_NAMES, METRIC_FAMILIES, METRIC_CARRIER)
 from prepare_font import MANIFEST, verify_font
 from build_module import build, font_members
 from font_fixtures import metrics_carrier, primary_font
@@ -53,6 +54,29 @@ class FontConfigurationTests(unittest.TestCase):
         self.assertTrue(any((f.text or '').strip() == 'NotoSansPro.otf' for f in root.iter('font')))
         self.assertIsNotNone(root.find("alias[@name='sans-serif-semibold']"))
         self.assertFalse(any((f.text or '').strip() == '400.ttf' for f in root.iter('font')))
+
+    def test_dynamic_weight_axes_stay_within_font(self):
+        # Every wght/ital value the config selects must exist in the font's fvar
+        # and sit inside its range, so no dynamic weight is silently clamped.
+        font = primary_font()
+        xml = configure_fonts((ROOT / 'fonts.xml').read_bytes(), MANIFEST['installedFile'])
+        ranges = assert_axes_within_font(xml, MANIFEST['installedFile'], font)
+        self.assertEqual(ranges, {'wght': [100.0, 900.0], 'ital': [0.0, 1.0]})
+        self.assertEqual(set(font_axis_ranges(font)), {'wght', 'ital'})
+
+    def test_axis_guard_rejects_out_of_range_and_missing_axis(self):
+        xml = configure_fonts((ROOT / 'fonts.xml').read_bytes(), MANIFEST['installedFile'])
+        # A font whose weight axis stops at 800 must fail the 900 the config asks for.
+        import io
+        from fontTools.ttLib import TTFont
+        tt = TTFont(io.BytesIO(primary_font()))
+        tt['fvar'].axes[0].maxValue = 800
+        out = io.BytesIO(); tt.save(out)
+        with self.assertRaisesRegex(ValueError, 'outside font range'):
+            assert_axes_within_font(xml, MANIFEST['installedFile'], out.getvalue())
+        # A non-variable font cannot back dynamic weights at all.
+        with self.assertRaisesRegex(ValueError, 'not a variable font'):
+            assert_axes_within_font(xml, MANIFEST['installedFile'], metrics_carrier())
 
     def test_reject_wrong_schema_and_path(self):
         for xml, filename in [(b'<fonts-modification/>', 'a.ttf'), (b'<familyset/>', '../a.ttf')]:
@@ -111,6 +135,9 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn('module-report.json', z.namelist())
                 report = json.loads(z.read('module-report.json'))
                 self.assertEqual(report['androidMetricsCarrier']['visibleCodepoints'], 0)
+                # The dynamic-weight ladder was validated against the packaged font.
+                self.assertEqual(report['dynamicWeightAxes'],
+                                 {'wght': [100.0, 900.0], 'ital': [0.0, 1.0]})
                 # Line metrics were normalised to the carrier; outlines were not.
                 metric = report['metricNormalization']
                 self.assertEqual(metric['normalized']['hhea'], metric['normalized']['typo'])
