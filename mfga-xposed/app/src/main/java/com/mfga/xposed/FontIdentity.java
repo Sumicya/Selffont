@@ -14,6 +14,11 @@ public final class FontIdentity {
     public static final String FAMILY = "WenYuan Rounded SC VF";
     /** Matches {@code /system/fonts/} + {@code installedFile} in config/font-source.json. */
     public static final String FONT_PATH = "/system/fonts/Selffont-WenYuanRoundedSCVF.ttf";
+    /**
+     * The verified no-visible-glyph metrics carrier whose nominal line metrics
+     * WenYuan is normalised to. Matches {@code METRIC_CARRIER} in tools/font_config.py.
+     */
+    public static final String CARRIER_PATH = "/system/fonts/Roboto-Regular.ttf";
 
     private FontIdentity() {}
 }

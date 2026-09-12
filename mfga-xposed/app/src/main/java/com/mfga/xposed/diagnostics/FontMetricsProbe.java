@@ -27,7 +27,7 @@ import java.util.Set;
  */
 public final class FontMetricsProbe {
     private static final String WENYUAN = com.mfga.xposed.FontIdentity.FONT_PATH;
-    private static final String CARRIER = "/system/fonts/Roboto-Regular.ttf";
+    private static final String CARRIER = com.mfga.xposed.FontIdentity.CARRIER_PATH;
 
     private FontMetricsProbe() {}
 

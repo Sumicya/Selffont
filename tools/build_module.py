@@ -86,6 +86,17 @@ def build(base, font, output, revision=None):
             with Path(base).open("rb") as stream:
                 base_digest = hashlib.file_digest(stream, "sha256").hexdigest()
             referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
+            # Only bundle supplemental fonts the configuration actually loads. This
+            # module overlays /system/fonts, and fonts.xml is the full font policy,
+            # so a bundled face that fonts.xml never references can never be loaded --
+            # it is pure dead weight. Dropping it cannot change rendering. The
+            # code-required faces (NotoSansPro.otf, the metrics carrier) are all
+            # referenced, so this never removes anything the build depends on.
+            bundled = [e for e in entries
+                       if PurePosixPath(e.filename).name in referenced
+                       or PurePosixPath(e.filename).name == MANIFEST["installedFile"]]
+            dropped = sorted({PurePosixPath(e.filename).name for e in entries}
+                             - {PurePosixPath(e.filename).name for e in bundled})
             module_report = {
                 "sourceRevision": revision or "UNSPECIFIED",
                 "primaryFont": report,
@@ -93,12 +104,13 @@ def build(base, font, output, revision=None):
                 "dynamicWeightAxes": font_axis_ranges,
                 "androidMetricsCarrier": carrier,
                 "baseArchiveSha256": base_digest,
-                "supplementalFontCount": len(entries),
+                "supplementalFontCount": len(bundled),
+                "unreferencedFontsDropped": dropped,
                 "unbundledFontReferences": sorted(referenced - names - {MANIFEST["installedFile"]}),
                 "deviceInstallation": "NOT_TESTED",
                 "webpageRendering": "NOT_TESTED",
             }
-            for entry in entries:
+            for entry in bundled:
                 if PurePosixPath(entry.filename).name != MANIFEST["installedFile"]:
                     dest.writestr(entry.filename, source.read(entry))
             dest.writestr("system/fonts/" + MANIFEST["installedFile"], normalized_font)

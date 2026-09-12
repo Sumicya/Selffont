@@ -115,6 +115,9 @@ class PackagingTests(unittest.TestCase):
                 z.writestr('system/fonts/NotoSansPro.otf', b'fallback fixture')
                 z.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
                 z.writestr('system/fonts/400.ttf', b'old primary')
+                # Referenced by the real fonts.xml -> kept; never referenced -> dropped.
+                z.writestr('system/fonts/NotoNaskhArabic-Regular.ttf', b'referenced fixture')
+                z.writestr('system/fonts/SelffontUnusedFace.ttf', b'unreferenced dead weight')
                 z.writestr('service.sh', 'dangerous old boot hook')
                 z.writestr('bin/old_tool', 'old tool')
                 z.writestr('module.prop', 'updateJson=https://upstream.example/update')
@@ -125,6 +128,12 @@ class PackagingTests(unittest.TestCase):
             with zipfile.ZipFile(output) as z:
                 self.assertIn('system/fonts/' + MANIFEST['installedFile'], z.namelist())
                 self.assertNotIn('system/fonts/400.ttf', z.namelist())
+                # A supplemental face fonts.xml references is bundled; a face nothing
+                # references is dropped as dead weight (it could never be loaded).
+                self.assertIn('system/fonts/NotoNaskhArabic-Regular.ttf', z.namelist())
+                self.assertNotIn('system/fonts/SelffontUnusedFace.ttf', z.namelist())
+                self.assertIn('SelffontUnusedFace.ttf',
+                              json.loads(z.read('module-report.json'))['unreferencedFontsDropped'])
                 self.assertNotIn('bin/old_tool', z.namelist())
                 self.assertNotIn('updateJson', z.read('module.prop').decode())
                 self.assertEqual(z.read('service.sh'), (ROOT/'script/service.sh').read_bytes())

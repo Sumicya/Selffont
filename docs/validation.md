@@ -561,3 +561,21 @@ main 上三条 workflow 在 node24 下实跑通过：contracts、Build APK、Bui
 - `font_config.assert_axes_within_font(xml, filename, font_bytes)`:用**正在打包的真实字体**的 `fvar` 校验生成配置里每个 `<axis>`——轴必须存在且 stylevalue 落在 [min,max] 内,否则打包失败。绑定"动态字重配置"与"真实字体轴",防止将来换字体版本轴范围收窄却静默 clamp。
 - `build_module.build` 在核对字体 SHA 后调用该守卫,并把轴范围写入 `module-report.json` 的 `dynamicWeightAxes`。
 - 测试:`tests/test_refactor.py` 新增 `test_dynamic_weight_axes_stay_within_font`、`test_axis_guard_rejects_out_of_range_and_missing_axis`;打包测试断言报告含 `dynamicWeightAxes`。主机测试 68(原 66 +2)全绿;守卫对真实 48MB VF 通过。
+
+## 2026-09-12:模块减重 + 剩余可重构点
+
+### 减重:只打包 fonts.xml 引用到的补充字体
+- 现状:`build_module.py` 原先把 MFGA 基础包 `system/fonts/` 里所有 ttf/otf 全搬进模块(仅排除静态字重 `N00.ttf` 与 emoji-fallback)。
+- 观察:本模块以 overlay 方式叠加 `/system/fonts`,而 `fonts.xml` 是完整字体策略;被打包却不被 `fonts.xml` 引用的字体永远不会被加载,是纯死重,删除不改变任何渲染。
+- 改动:打包时按 `referenced`(fonts.xml 引用集)过滤补充字体,未引用者不打包;`module-report.json` 新增 `unreferencedFontsDropped` 列表,`supplementalFontCount` 改为实际打包数。
+- 安全性:已核实所有代码强制要求的字体(`NotoSansPro.otf`、度量载体 `Roboto-Regular.ttf`、主字体)都在 fonts.xml 引用集内,故过滤永不删除构建依赖项。
+- 主字体 WenYuan VF(≈46.5MB 原始 / deflate 后 ≈27.8MB)受"不改 glyph/cmap/family/fvar、保留上游原文件"约束,不子集化;WOFF2 无损压缩虽更小但 Android `fonts.xml` 不加载 woff2,故主字体体积为硬成本,不动。
+- 测试:`test_base_code_never_inherited` 扩展——被 fonts.xml 引用的补充字体(NotoNaskhArabic-Regular.ttf)保留、未引用者(SelffontUnusedFace.ttf)被丢弃且列入 `unreferencedFontsDropped`。
+
+### 剩余可重构点:度量载体路径归一
+- `FontMetricsProbe.CARRIER` 原为硬编码 `/system/fonts/Roboto-Regular.ttf`,与 `font_config.METRIC_CARRIER` 重复。
+- 按 `FontIdentity` 单一真源原则,新增 `FontIdentity.CARRIER_PATH`,`FontMetricsProbe` 改为引用之。Java 侧字体路径常量现全部集中于 `FontIdentity`。
+- 其余扫描(Python `PurePosixPath` 用法、品牌列表 Java/shell 各一份)均为跨语言必要复制,无进一步安全合并空间。
+
+### 验证
+- 主机测试 70(原 68 +2)全绿;node 3 全绿。Java 由 CI 的 APK 构建 + `run_java.sh`(JDK 21)编译验证。
