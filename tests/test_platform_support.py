@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads((ROOT / "config/platform-support.json").read_text())
-JAVA = (ROOT / "mfga-xposed/app/src/main/java/com/mfga/xposed/TargetPlatform.java").read_text()
+JAVA = (ROOT / "mfga-xposed/app/src/main/kotlin/com/mfga/xposed/TargetPlatform.kt").read_text()
 CUSTOMIZE = (ROOT / "script/customize.sh").read_text()
 
 
@@ -27,9 +27,9 @@ class PlatformSupportManifestTests(unittest.TestCase):
 
     def test_java_matches_manifest(self):
         self.assertIn(f"SUPPORTED_API = {MANIFEST['api']}", JAVA)
-        # Set.of("oplus", "oppo", ...) must equal exactly the manifest vendor set.
-        match = re.search(r"VENDORS\s*=\s*Set\.of\(([^)]*)\)", JAVA)
-        self.assertIsNotNone(match, "VENDORS Set.of literal not found")
+        # setOf("oplus", "oppo", ...) must equal exactly the manifest vendor set.
+        match = re.search(r"VENDORS\s*=\s*setOf\(([^)]*)\)", JAVA)
+        self.assertIsNotNone(match, "VENDORS setOf literal not found")
         java_vendors = re.findall(r'"([^"]+)"', match.group(1))
         self.assertEqual(sorted(java_vendors), sorted(MANIFEST["vendors"]))
         self.assertIn(f'OVERRIDE_MARKER = "{MANIFEST["overrideMarker"]}"', JAVA)
