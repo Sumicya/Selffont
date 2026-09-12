@@ -81,12 +81,14 @@ python3 -m http.server 8080 --bind 0.0.0.0 --directory webroot
 ## 5. 本地可复现检查
 
 ```sh
+.venv/bin/pip install -r tools/requirements-dev.txt   # fonttools + pinned ruff
+ruff check .                                           # Python lint (CI 亦强制)
 .venv/bin/python -m unittest discover -s tests -v
 node --test tests/commands.test.mjs
 .venv/bin/python tools/prepare_font.py --font /path/to/original/WenYuanRoundedSCVF.ttf
 ```
 
-模块 `mfga-xposed` 现为全 Kotlin(`src/main/kotlin`，无 `src/main/java`）；策略断言已从旧 `tests/run_java.sh` / `tests/java/PolicyTest.java` 迁移为 Gradle 单元测试 `mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt`，本地或 CI 用 `gradle test` 执行。完整 APK 构建另需 JDK 21、Gradle 9.5.0、SDK 36、AGP 9.3.0（AGP 9 内置 Kotlin，无需单独的 Kotlin 插件）；本次 CI 运行结果记录如下。测试基础 ZIP 是合成输入，不是现有完整 MFGA 的装机证据。
+Python 代码风格由 `ruff` 统一，规则集见 `pyproject.toml` 的 `[tool.ruff]`（高信号规则，刻意排除行长 `E501` 与主观复杂度检查）；`check.yml` 在主机契约步骤中运行 `ruff check .` 强制零告警。模块 `mfga-xposed` 现为全 Kotlin(`src/main/kotlin`，无 `src/main/java`）；策略断言已从旧 `tests/run_java.sh` / `tests/java/PolicyTest.java` 迁移为 Gradle 单元测试 `mfga-xposed/app/src/test/kotlin/com/mfga/xposed/PolicyTest.kt`，本地或 CI 用 `gradle test` 执行。完整 APK 构建另需 JDK 21、Gradle 9.5.0、SDK 36、AGP 9.3.0（AGP 9 内置 Kotlin，无需单独的 Kotlin 插件）；本次 CI 运行结果记录如下。测试基础 ZIP 是合成输入，不是现有完整 MFGA 的装机证据。
 
 ## 本轮主机验证记录（2026-09-05）
 
