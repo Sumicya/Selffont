@@ -25,11 +25,16 @@ from font_config import SOURCE_FONT_PATH
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONT_DIR = os.path.join(ROOT, "build")
+PREVIEW_DIR = os.path.join(FONT_DIR, "preview")
 
 # (url, path, mime)
 FILES = {
-    "/font/orig.ttf": (str(SOURCE_FONT_PATH), "font/ttf"),
-    "/font/edit.ttf": (os.path.join(FONT_DIR, "font-edited.ttf"), "font/ttf"),
+    "/font/orig.woff2": (os.path.join(PREVIEW_DIR, "font-orig-subset.woff2"), "font/woff2"),
+    "/font/edit.woff2": (os.path.join(PREVIEW_DIR, "font-edit-subset.woff2"), "font/woff2"),
+    "/font/orig.ttf": (os.path.join(PREVIEW_DIR, "font-orig-subset.ttf"), "font/ttf"),
+    "/font/edit.ttf": (os.path.join(PREVIEW_DIR, "font-edit-subset.ttf"), "font/ttf"),
+    "/font/orig-full.ttf": (str(SOURCE_FONT_PATH), "font/ttf"),
+    "/font/edit-full.ttf": (os.path.join(FONT_DIR, "font-edited.ttf"), "font/ttf"),
 }
 
 
@@ -42,12 +47,20 @@ def _meta(path):
     return {"mtime": st.st_mtime, "size": st.st_size, "md5": md5}
 
 
+def _font_file(name):
+    for ext in (".woff2", ".ttf"):
+        url = f"/font/{name}{ext}"
+        if url in FILES and os.path.exists(FILES[url][0]):
+            return url, FILES[url][0]
+    return f"/font/{name}-full.ttf", FILES[f"/font/{name}-full.ttf"][0]
+
+
 def _font_url(name):
-    path = FILES[f"/font/{name}.ttf"][0]
+    url, path = _font_file(name)
     m = _meta(path)
     if not m:
-        return f"/font/{name}.ttf?v=0"
-    return f"/font/{name}.ttf?v={int(m['mtime'])}"
+        return f"{url}?v=0"
+    return f"{url}?v={int(m['mtime'])}"
 
 
 SRC_URL = _font_url("orig")
@@ -212,9 +225,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "__EDIT__", _font_url("edit")).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
         elif path == "/api/info":
+            _, orig_path = _font_file("orig")
+            _, edit_path = _font_file("edit")
             body = json.dumps({
-                "orig": _meta(FILES["/font/orig.ttf"][0]),
-                "edit": _meta(FILES["/font/edit.ttf"][0]),
+                "orig": _meta(orig_path),
+                "edit": _meta(edit_path),
                 "srcLoaded": False, "editLoaded": False,
             }).encode("utf-8")
             self._send(200, "application/json", body)
@@ -237,8 +252,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def log_message(self, fmt, *args):  # keep the log quiet
-        pass
+    def log_message(self, fmt, *args):
+        sys.stderr.write(f"[HTTP] {fmt % args}\n")
+        sys.stderr.flush()
 
 
 if __name__ == "__main__":
