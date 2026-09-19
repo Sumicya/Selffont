@@ -528,6 +528,22 @@ def _box_smooth(vals, half, iters=1):
     return vals
 
 
+def _chaikin_open(poly):
+    """One Chaikin corner-cutting pass on an open chain (endpoints
+    preserved). Cuts every corner angle by a factor of 4; a convex
+    combination, so it removes high frequencies only."""
+    out = [poly[0]]
+    for i in range(len(poly) - 1):
+        p, q = poly[i], poly[i + 1]
+        out.append((0.75 * p[0] + 0.25 * q[0],
+                    0.75 * p[1] + 0.25 * q[1]))
+        if i < len(poly) - 2:
+            out.append((0.25 * p[0] + 0.75 * q[0],
+                        0.25 * p[1] + 0.75 * q[1]))
+    out.append(poly[-1])
+    return out
+
+
 def _resample_open(poly, n):
     """Resample an open chain to n+1 arc-length-uniform points
     (endpoints included)."""
@@ -552,50 +568,53 @@ def _resample_open(poly, n):
 
 
 def smooth_centerline(center, widths):
-    """Kill the hand-drawn wobble in the centerline — a real smooth, not a
-    light touch: coarse resample -> projected heat smoothing (every
-    iteration clamps the drift to 12u of the raw centerline, so the
-    calligraphic shape is kept while the wobble dies) -> resample back.
-    Returns (center_s, widths_s) or None when a bend is tighter than the
-    stroke width (rebuild would self-intersect).
+    """Kill the hand-drawn wobble in the centerline: coarse resample ->
+    pure low-pass (3 x 7-sample box, no clamp, ends pinned) -> resample
+    back. Returns (center_s, widths_s) or None when a bend is tighter
+    than the stroke width (rebuild would self-intersect).
 
-    The width profile is only smoothed in the central 70% (the tapered
-    ends are calligraphic design), clamped to ±14u so the taper gradient
-    is not flattened."""
+    The width profile is smoothed lightly (jitter only; the calligraphic
+    width modulation is kept): central 70% with a 7-sample box x 3
+    clamped to ±20u, plus a tight ±3u full-range pass for the ends."""
     m = len(center)
     N = max(48, m // 4)
     raw = _resample_open(center, N)
     pts = list(raw)
-    for _ in range(300):
-        moved = 0.0
-        # stable Laplacian (alpha 0.5; a full step is unstable and the
-        # period-2 mode never decays, so the 12u clamp would pin a
-        # zigzag to its boundary)
-        for i in range(1, N):
-            x0, y0 = pts[i - 1]
-            x2, y2 = pts[i + 1]
-            dx = ((x0 + x2) / 2 - pts[i][0]) * 0.5
-            dy = ((y0 + y2) / 2 - pts[i][1]) * 0.5
-            d = math.hypot(dx, dy)
-            if d > moved:
-                moved = d
-            pts[i] = (pts[i][0] + dx, pts[i][1] + dy)
-        # drift clamp: the raw centerline wobble in this font reaches
-        # ~20-25u, so the clamp must exceed it or an 8-12u S-wave
-        # survives (visible on long 撇 / 弯钩). 24u flattens the whole
-        # wobble; genuine calligraphic features (uniform arcs, the 捺
-        # shoulder) are never pulled far by the Laplacian because
-        # their neighbours sit on the same curve.
-        for i in range(1, N):
-            dx = pts[i][0] - raw[i][0]
-            dy = pts[i][1] - raw[i][1]
-            d = math.hypot(dx, dy)
-            if d > 24.0:
-                pts[i] = (raw[i][0] + dx * 24.0 / d,
-                          raw[i][1] + dy * 24.0 / d)
-        if moved < 0.15:
-            break
+    # Pure low-pass: 3 box passes over a 7-sample window (~56u, sigma
+    # ~27u) with the ends pinned. NO drift clamp: a positive kernel
+    # can only remove high frequencies, never add them, so the result
+    # is by definition at least as smooth as the source. The old
+    # 300-iteration Laplacian + 24u drift clamp pinned the heat
+    # solution to the raw wobble wherever the ideal was > 24u away,
+    # creating flat pinned arcs that met the still-wavy pinned arcs at
+    # kinks -- the "一段段拼出来的" pipe look on long 撇 / 弯钩.
+    # The box kills the 20-25u hand-drawn wobble (60-150u wavelength,
+    # ~99% gone) while softening, not removing, the calligraphic S-
+    # curves (250u+, partially attenuated, curvature stays continuous).
+    for _ in range(3):
+        new = [pts[0]]
+        for i in range(1, N - 1):
+            lo = max(0, i - 2)
+            hi = min(N, i + 3)
+            sx = 0.0
+            sy = 0.0
+            for j in range(lo, hi):
+                sx += pts[j][0]
+                sy += pts[j][1]
+            c = hi - lo
+            new.append((sx / c, sy / c))
+        new.append(pts[-1])
+        pts = new
     cs = _resample_open(pts, m - 1)
+    # Chaikin corner cutting x3: the box-smoothed coarse grid (~m/4
+    # points) still carries a small angle at every coarse vertex, and
+    # the linear resample above keeps them as polyline kinks -- the
+    # "一段段拼出来" look at large sizes (a 5-degree coarse corner
+    # reads as a visible bend even though each 8u segment is smooth).
+    # Three cuts shrink every corner angle by 1/64; both operations
+    # are convex combinations, so the result is strictly smoother.
+    for _ in range(3):
+        cs = _resample_open(_chaikin_open(cs), m - 1)
     ws = list(widths)
     s0 = int(m * 0.15)
     s1 = int(m * 0.85)
@@ -604,7 +623,7 @@ def smooth_centerline(center, widths):
     # back (a bare ws[s0:s1] argument is a copy the call could not
     # touch -- that silently no-op'd the whole width smoothing).
     seg = ws[s0:s1]
-    _box_smooth(seg, max(3, m // 6), iters=8)
+    _box_smooth(seg, 3, iters=3)
     ws[s0:s1] = seg
     for i in range(s0, s1):
         if ws[i] > raw_ws[i] + 20:
@@ -1050,18 +1069,32 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
     # body samples next to the junction get dragged along, the head
     # chord [left[k], right[k]] skews and shrinks, and the rebuilt
     # semicircle cuts into the original end (a notch at the 收笔).
-    ldirs = edge_dirs(rail_p, +1, None, capB)
-    rdirs = edge_dirs(rail_q, -1, None, capB)
-    for k in range(m):
-        dx, dy = dir_at(k)
-        nx, ny = -dy, dx
-        w2 = widths[k] / 2
-        ld = ldirs[k] if ldirs[k] is not None else (nx, ny)
-        rd = rdirs[k] if rdirs[k] is not None else (-nx, -ny)
-        lx, ly = ld
-        rx, ry = rd
-        left.append((center[k][0] + lx * w2, center[k][1] + ly * w2))
-        right.append((center[k][0] + rx * w2, center[k][1] + ry * w2))
+    # rail = low-pass of the ORIGINAL edge (NOT a parallel tube around
+    # the smoothed centerline): a tube reads as "一段段拼出来的" —
+    # geometric straight/arc segments welded at the caps — because the
+    # calligraphic bow and width modulation live in the edge, not in
+    # the centerline. Low-passing the edge itself keeps the bow and
+    # modulation (low frequency) while killing the hand-drawn jitter
+    # (high frequency); the result is by definition no rougher than
+    # the source, and rail and tip arcs are the same material (no
+    # welded seam). 7-sample box x 3 passes (sigma ~26u) at 8u
+    # spacing; a single flipped pairing outlier is diluted ~7x per
+    # pass, so three passes erase it.
+    def _lowpass(rail):
+        pts = [tuple(p) for p in rail]
+        for _ in range(3):
+            new = [pts[0]]
+            for i in range(1, m - 1):
+                lo = max(0, i - 3)
+                hi = min(m, i + 4)
+                c = hi - lo
+                new.append((sum(pts[j][0] for j in range(lo, hi)) / c,
+                            sum(pts[j][1] for j in range(lo, hi)) / c))
+            new.append(pts[-1])
+            pts = new
+        return pts
+    left = _lowpass(rail_p)
+    right = _lowpass(rail_q)
 
     # rails must keep exactly m points so the 全端半圆 cut indices
     # (kA/kB, defined on the centerline) index the rails correctly
