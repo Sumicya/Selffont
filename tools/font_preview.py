@@ -218,6 +218,11 @@ fetch('/api/info').then(r => r.json()).then(info => {
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self._is_head = True
+        self.do_GET()
+        self._is_head = False
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
@@ -250,7 +255,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # never serve a stale font face from disk cache
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(data)
+        if not getattr(self, "_is_head", False):
+            self.wfile.write(data)
 
     def log_message(self, fmt, *args):
         sys.stderr.write(f"[HTTP] {fmt % args}\n")
