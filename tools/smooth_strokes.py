@@ -600,12 +600,31 @@ def smooth_centerline(center, widths):
     s0 = int(m * 0.15)
     s1 = int(m * 0.85)
     raw_ws = list(ws)
-    _box_smooth(ws[s0:s1], max(1, m // 10), iters=6)
+    # NOTE: _box_smooth mutates in place, so smooth a copy and write it
+    # back (a bare ws[s0:s1] argument is a copy the call could not
+    # touch -- that silently no-op'd the whole width smoothing).
+    seg = ws[s0:s1]
+    _box_smooth(seg, max(3, m // 6), iters=8)
+    ws[s0:s1] = seg
     for i in range(s0, s1):
         if ws[i] > raw_ws[i] + 20:
             ws[i] = raw_ws[i] + 20
         elif ws[i] < raw_ws[i] - 20:
             ws[i] = raw_ws[i] - 20
+    # light full-range pass: the end regions (k < 0.15m / k > 0.85m)
+    # kept the raw width, whose 1-2u wobble zig-zags the rail at the
+    # flat/blunt junction (a Bezier overshoot into a micro-crossing).
+    # Small window + tight 3u clamp: removes jitter, cannot flatten a
+    # gradual taper.
+    ref_ws = list(ws)
+    seg = list(ws)
+    _box_smooth(seg, max(3, m // 20), iters=3)
+    for i in range(m):
+        if seg[i] > ref_ws[i] + 3:
+            seg[i] = ref_ws[i] + 3
+        elif seg[i] < ref_ws[i] - 3:
+            seg[i] = ref_ws[i] - 3
+    ws[:] = seg
     # self-intersection check on the body only (the tip regions are
     # replaced by the tip curve, which is locally safe)
     for k in range(max(1, int(m * 0.08)), int(m * 0.92)):
@@ -764,6 +783,120 @@ def _semicircle_head(p1, p2, outward, n=6):
     return out
 
 
+def _seg_seg_dist(p1, p2, p3, p4):
+    def pt_seg(px, py, a, b):
+        ax, ay = a
+        bx, by = b
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        if L2 < 1e-12:
+            return math.hypot(px - ax, py - ay)
+        t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+        return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+    return min(pt_seg(p1[0], p1[1], p3, p4), pt_seg(p2[0], p2[1], p3, p4),
+               pt_seg(p3[0], p3[1], p1, p2), pt_seg(p4[0], p4[1], p1, p2))
+
+
+def _unfold_hairpins(ring, thresh=3.0, max_gap=16, max_iters=6):
+    # A rebuilt rail can fold back on itself by 1-2u at a junction
+    # (duplicate/oscillating samples). The polyline does not strictly
+    # cross, but the quadratic Bezier fit overshoots the fold into a
+    # micro-crossing. Detect near-contact segment pairs (ring distance
+    # 3..max_gap) whose connecting arc is a real loop-back (arc length
+    # well above the chord) and delete the loop-back points. Straight
+    # pass-bys (two edges running close in parallel) are left alone.
+    for _ in range(max_iters):
+        n = len(ring)
+        if n < 10:
+            break
+        fixed = False
+        for i in range(n):
+            p1, p2 = ring[i], ring[(i + 1) % n]
+            for d in range(2, min(max_gap, n - 2) + 1):
+                j = (i + d) % n
+                p3, p4 = ring[j], ring[(j + 1) % n]
+                if (max(p1[0], p2[0]) + thresh < min(p3[0], p4[0]) or
+                        max(p3[0], p4[0]) + thresh < min(p1[0], p2[0]) or
+                        max(p1[1], p2[1]) + thresh < min(p3[1], p4[1]) or
+                        max(p3[1], p4[1]) + thresh < min(p1[1], p2[1])):
+                    continue
+                if _seg_seg_dist(p1, p2, p3, p4) >= thresh:
+                    continue
+                rot = ring[i:] + ring[:i]  # p1 -> 0, p2 -> 1, p3 -> d
+                if d == 2:
+                    # 4-point zigzag: the outer segments cross because
+                    # of a spike at p2 or p3 (a near-reversal). Delete
+                    # the spiking point; a gentle 4-point arc (no
+                    # reversal) is left alone.
+                    v1 = (p2[0] - p1[0], p2[1] - p1[1])
+                    v2 = (p3[0] - p2[0], p3[1] - p2[1])
+                    v3 = (p4[0] - p3[0], p4[1] - p3[1])
+                    l1 = math.hypot(v1[0], v1[1])
+                    l2 = math.hypot(v2[0], v2[1])
+                    l3 = math.hypot(v3[0], v3[1])
+                    if l1 < 0.5 or l2 < 0.5 or l3 < 0.5:
+                        continue
+                    cos2 = (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2)
+                    cos3 = (v2[0] * v3[0] + v2[1] * v3[1]) / (l2 * l3)
+                    if cos2 < -0.77:
+                        rot = rot[:1] + rot[2:]      # delete p2 (idx 1)
+                    elif cos3 < -0.77:
+                        rot = rot[:2] + rot[3:]      # delete p3 (idx 2)
+                    else:
+                        continue
+                    if len(rot) < 8:
+                        return ring
+                    ring = rot
+                    fixed = True
+                    break
+                fwd_cnt = d - 2
+                bwd_cnt = n - d - 1
+                if fwd_cnt < bwd_cnt:
+                    arc = rot[2:d]
+                else:
+                    arc = [rot[0]] + rot[d + 1:]
+                if len(arc) < 1:
+                    continue
+                # replace the shorter connecting arc with its chord
+                # when the arc is near-straight (max deviation from the
+                # chord <= 3u): this flattens a junction hairpin and is
+                # an invisible no-op for a straight pass-by; a genuine
+                # curve (deviation > 3u) is left alone.
+                dx = p3[0] - p2[0]
+                dy = p3[1] - p2[1]
+                L = math.hypot(dx, dy)
+                dev = 0.0
+                if L > 1e-9:
+                    for q in arc:
+                        cr = abs((q[0] - p2[0]) * dy - (q[1] - p2[1]) * dx) / L
+                        dev = max(dev, cr)
+                if dev > 3.0:
+                    continue
+                if fwd_cnt < bwd_cnt:
+                    del rot[2:d]
+                else:
+                    rot = rot[1:d + 1]
+                if len(rot) < 8:
+                    return ring  # repair made it degenerate: give up
+                ring = rot
+                fixed = True
+                break
+            if fixed:
+                break
+        if not fixed:
+            break
+    # drop consecutive (and closing) duplicates left by the deletion
+    out = []
+    for p in ring:
+        if out and math.hypot(p[0] - out[-1][0], p[1] - out[-1][1]) < 0.5:
+            continue
+        out.append(p)
+    while (len(out) > 2 and
+           math.hypot(out[0][0] - out[-1][0], out[0][1] - out[-1][1]) < 0.5):
+        out.pop()
+    return out
+
+
 def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
     """Closed outline ring (list of (x, y)) of the smoothed stroke."""
     center = center_s
@@ -831,28 +964,17 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
             n = (-d[1], d[0])
             return (n[0] * side, n[1] * side)
 
+        # The centerline is Laplacian-flattened (24u drift budget), so
+        # its local tangent is clean. Offset along that tangent normal
+        # (a perfect parallel tube around the smoothed centerline)
+        # instead of following the raw edge direction: the raw
+        # per-sample direction carries the source wobble (2-5u jitter)
+        # and reads as "粗糙" even though the centerline is flat. The
+        # calligraphic width modulation survives through the smoothed
+        # width profile; the edge becomes mathematically smooth.
         out = []
         for k in range(m):
-            in_cap = ((zone_a is not None and k <= zone_a) or
-                      (zone_b is not None and k >= zone_b))
-            if in_cap:
-                out.append(axis_normal(k, side))
-                continue
-            lo = max(0, k - half, (zone_a + 1) if zone_a is not None else 0)
-            hi = min(m, k + half + 1, zone_b if zone_b is not None else m)
-            v = raw[k]
-            if v is not None:
-                pv = raw[k - 1] if k > 0 else None
-                nv = raw[k + 1] if k < m - 1 else None
-                flip = (pv is not None and
-                        v[0] * pv[0] + v[1] * pv[1] < 0) or \
-                       (nv is not None and
-                        v[0] * nv[0] + v[1] * nv[1] < 0)
-                if not flip:
-                    out.append(v)
-                    continue
-            w = win(k, lo, hi)
-            out.append(w if w is not None else axis_normal(k, side))
+            out.append(axis_normal(k, side))
         return out
 
     # 全端半圆 cut indices (before the rails are built: the rail
@@ -1129,12 +1251,25 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
         # tip = d1[0] = d2[-1]; arc in RING order: right handoff ->
         # tip -> left handoff
         arc_a = list(d2[idx_i0R:m2]) + list(d1[1:idx_i0L + 1])
-        end_a = ('blunt', end_a[1], arc_a, end_a[3], end_a[4])
+        if len(arc_a) < 3:
+            # degenerate blunt (the original tip arc is 1-2 points):
+            # rebuild the end as a flat cut (corners = arc endpoints)
+            # so the cap is a clean cut line / semicircle head.
+            ea_b = False
+            end_a = ('flat', (d1[idx_i0L][0], d1[idx_i0L][1]),
+                     (d2[idx_i0R][0], d2[idx_i0R][1]))
+        else:
+            end_a = ('blunt', end_a[1], arc_a, end_a[3], end_a[4])
     if eb_b:
         # tip = d1[-1] = d2[0]; arc in RING order: left handoff ->
         # tip -> right handoff
         arc_b = list(d1[idx_i1L:m1]) + list(d2[1:idx_i1R + 1])
-        end_b = ('blunt', end_b[1], arc_b, end_b[3], end_b[4])
+        if len(arc_b) < 3:
+            eb_b = False
+            end_b = ('flat', (d1[idx_i1L][0], d1[idx_i1L][1]),
+                     (d2[idx_i1R][0], d2[idx_i1R][1]))
+        else:
+            end_b = ('blunt', end_b[1], arc_b, end_b[3], end_b[4])
 
     # the rails were rebuilt from the smoothed centerline - one light
     # box pass (the same [1,2,1]/4 as above) removes the residual
@@ -1405,6 +1540,9 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
     # never fired at the 8u step (a 4-sample window always spans
     # > 15u); the exact test on <= ~300 points, bbox pre-filtered, is
     # fast enough to run on every reconstructed contour.
+    # undo junction hairpins before the strict self-intersection gate
+    # (a 1-2u fold that the Bezier fit would overshoot into a crossing)
+    out_ring = _unfold_hairpins(out_ring)
     if _ring_self_intersects(out_ring):
         return None
     return out_ring
