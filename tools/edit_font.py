@@ -985,7 +985,7 @@ def op_tishou_shorten(font, chars):
         r = w / 2
         top_y = max(p[1] for p in top_pts) - r
         ymin = min(p[1] for p in pts)
-        cut = max(60.0, 0.10 * gh)
+        cut = 0.0  # 竖不要缩短：保持原有落脚深度，缩小曲度直立，底部与右侧自然对齐
         bot_y = ymin + cut + r
         new_bar = build_vbar(left, right, top_y, bot_y, True, True, r, r)
         new_contours = []
@@ -1065,6 +1065,100 @@ def op_round_terminals(font, chars):
     return report
 
 
+def op_remove_hooks(font, chars=("九", "刀", "丸")):
+    """去钩平转（无挑钩）：去除九、刀、丸底部的尖硬挑钩，替换为水平延伸的标准饱满半圆胶囊头（stadium cap），
+    与手写体『儿/北』风格一致。"""
+    glyf = font["glyf"]
+    cmap = font.getBestCmap()
+    report = {}
+
+    def make_right_semicircle(top, bot, apex_x):
+        my = (top[1] + bot[1]) / 2
+        return [
+            (apex_x, round(top[1], 1), 0),
+            (apex_x, round(my, 1), 1),
+            (apex_x, round(bot[1], 1), 0),
+        ]
+
+    for ch in chars:
+        if ord(ch) not in cmap:
+            continue
+        gname = cmap[ord(ch)]
+        g = glyf[gname]
+        spans = split_contours(g)
+        if ch == '九':
+            c0 = contour_points(g, spans[0][0], spans[0][1])
+            c1 = contour_points(g, spans[1][0], spans[1][1])
+            top, bot = c1[24], c1[0]
+            r = math.hypot(top[0] - bot[0], top[1] - bot[1]) / 2
+            apex_x = round((top[0] + bot[0]) / 2 + r, 1)
+            new_c1 = c1[:25] + make_right_semicircle(top, bot, apex_x)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, [c0, new_c1])
+            report[ch] = "hook-removed"
+        elif ch == '丸':
+            c0 = contour_points(g, spans[0][0], spans[0][1])
+            c1 = contour_points(g, spans[1][0], spans[1][1])
+            c2 = contour_points(g, spans[2][0], spans[2][1])
+            top, bot = c2[24], c2[0]
+            r = math.hypot(top[0] - bot[0], top[1] - bot[1]) / 2
+            apex_x = round((top[0] + bot[0]) / 2 + r, 1)
+            new_c2 = c2[:25] + make_right_semicircle(top, bot, apex_x)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, [c0, c1, new_c2])
+            report[ch] = "hook-removed"
+        elif ch == '刀':
+            c0 = contour_points(g, spans[0][0], spans[0][1])
+            c1 = contour_points(g, spans[1][0], spans[1][1])
+            c2 = contour_points(g, spans[2][0], spans[2][1])
+            bot, top = c1[35], c1[4]
+            r = math.hypot(top[0] - bot[0], top[1] - bot[1]) / 2
+            apex_x = round((bot[0] + top[0]) / 2 - r, 1)
+            arc = [
+                (apex_x, round(bot[1], 1), 0),
+                (apex_x, round((bot[1] + top[1]) / 2, 1), 1),
+                (apex_x, round(top[1], 1), 0),
+            ]
+            new_c1 = c1[4:36] + arc
+            _drop_variations(font, gname)
+            set_glyph_contours(g, [c0, new_c1, c2])
+            report[ch] = "hook-removed"
+    return report
+
+
+def op_square_ri_ti(font, chars=("题",)):
+    """题字左上部：重构为规范、工整的 1:1 正方形日字（正方形日字）。"""
+    glyf = font["glyf"]
+    cmap = font.getBestCmap()
+    report = {}
+
+    def make_rounded_rect(x0, y0, x1, y1, r, ccw=False):
+        p = [
+            (x1 - r, y1, 1), (x1, y1, 0), (x1, y1 - r, 1),
+            (x1, y0 + r, 1), (x1, y0, 0), (x1 - r, y0, 1),
+            (x0 + r, y0, 1), (x0, y0, 0), (x0, y0 + r, 1),
+            (x0, y1 - r, 1), (x0, y1, 0), (x0 + r, y1, 1),
+        ]
+        if ccw:
+            p = list(reversed(p))
+        return p
+
+    for ch in chars:
+        if ch != '题' or ord('题') not in cmap:
+            continue
+        gname = cmap[ord('题')]
+        g = glyf[gname]
+        spans = split_contours(g)
+        c2 = make_rounded_rect(114, 476, 444, 806, 26, ccw=False)
+        c0 = make_rounded_rect(182, 534, 376, 622, 10, ccw=True)
+        c1 = make_rounded_rect(182, 668, 376, 756, 10, ccw=True)
+        other = [contour_points(g, spans[i][0], spans[i][1]) for i in range(3, len(spans))]
+        _drop_variations(font, gname)
+        set_glyph_contours(g, [c0, c1, c2] + other)
+        report[ch] = "square-ri-applied"
+    return report
+
+
 def op_smooth_strokes(font, chars):
     """Smooth wobbly curved strokes and round their terminals (收笔圆角化).
 
@@ -1077,6 +1171,9 @@ def op_smooth_strokes(font, chars):
     cmap = font.getBestCmap()
     report = {}
     for ch in chars:
+        if ch in ('卯', '员'):
+            report[ch] = "skipped: intact-round-heads"
+            continue
         gname = cmap.get(ord(ch))
         if not gname:
             report[ch] = "skipped: no glyph"
@@ -1161,6 +1258,7 @@ def main():
     parser.add_argument("--ops", nargs="*",
                         choices=["roof-dot-to-stem", "roof-bar-round",
                                  "round-terminals", "tishou-shorten",
+                                 "remove-hooks", "square-ri",
                                  "smooth-strokes"],
                         default=[])
     parser.add_argument("--all", action="store_true",
@@ -1168,6 +1266,7 @@ def main():
     parser.add_argument("--roof-chars",
                         default="宀家安宋宁宫宝寒容宏定宜宗官实宵宾审空窄突窗")
     parser.add_argument("--round-chars", default="一丨二三十王")
+    parser.add_argument("--smooth-chars", default="王天丸九刀买卖员哭题兔免提北打找指")
     parser.add_argument("--stem-width", type=int,
                         help="short-stem width in font units (default: width of 丨)")
     parser.add_argument("--report", type=Path, default=None,
@@ -1199,11 +1298,19 @@ def main():
         r = op_tishou_shorten(
             font, gb2312_chars() if args.all else ["打", "提", "找", "指"])
         report["tishou-shorten"] = _summarize(r)
+    if "remove-hooks" in args.ops:
+        r = op_remove_hooks(
+            font, ["九", "刀", "丸"])
+        report["remove-hooks"] = _summarize(r)
+    if "square-ri" in args.ops:
+        r = op_square_ri_ti(
+            font, ["题"])
+        report["square-ri"] = _summarize(r)
     if "smooth-strokes" in args.ops:
         # Runs last: round-terminals has rebuilt the straight bars into clean
         # stadia, which the smooth pass detects and leaves untouched; it only
         # touches the curved strokes (撇 捺 钩 …) and their round 收笔.
-        r = op_smooth_strokes(font, gb2312_chars() if args.all else [])
+        r = op_smooth_strokes(font, gb2312_chars() if args.all else list(args.smooth_chars))
         report["smooth-strokes"] = _summarize(r)
     font.save(args.output)
     text = json.dumps(report, indent=2, ensure_ascii=False)

@@ -375,6 +375,15 @@ def extract_stroke(ring, reason=None):
             reason.append("skip:appendage")
         return None
 
+    # Bottom dot guard: short strokes (alen < 460) with ymin < 0 are compact
+    # terminal dots (e.g. right foot of 卖, 员, 买). Re-tubing them around an
+    # axis chops their bottom curve and lifts their foot off the baseline
+    # ("主要是切短和曲度倾向直"). Preserve their natural intact rounded contour.
+    if alen < 460 and min(p[1] for p in ring) < 0:
+        if reason is not None:
+            reason.append("skip:bottom-dot")
+        return None
+
     center = center[lo:hi + 1]
     widths = widths[lo:hi + 1]
     rail_p = rail_p[lo:hi + 1]
@@ -1025,10 +1034,11 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
             out.append(axis_normal(k, side))
         return out
 
-    # 全端半圆 cut indices: where the width reaches full stroke width
-    # (>= 0.70 * med), the end is capped by a FULL semicircle head,
-    # exactly like the left and right ends of "一". No pointed tapers.
-    W_head = max(26.0, 0.70 * model["med"])
+    # 全端半圆 cut indices: where the width reaches full stroke width.
+    # Keep the full natural extension of tapered strokes (撇, 捺, 点):
+    # do NOT aggressively cut back at 0.70*med which cuts them short
+    # and lifts their feet off the baseline ("主要是切短和曲度倾向直").
+    W_head = min(22.0, 0.30 * model["med"])
     kA = 0
     for kk in range(m):
         if widths[kk] >= W_head:
