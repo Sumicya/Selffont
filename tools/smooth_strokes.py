@@ -157,8 +157,10 @@ def _dense_chain(chain):
 
 # ------------------------------------------------------------------ core --
 
-def extract_stroke(ring):
+def extract_stroke(ring, reason=None):
     """Decompose a thin-stroke outline ring into a stroke model.
+
+    When `reason` is a list, the rejecting guard's tag is appended.
 
     Returns a dict (center/widths over the FULL stroke, end styles) or None
     when the contour is not a clean thin stroke."""
@@ -172,12 +174,16 @@ def extract_stroke(ring):
     d1 = _dense_chain(chain1)
     d2 = _dense_chain(chain2)
     if d1 is None or d2 is None or len(d1) < 12 or len(d2) < 12:
+        if reason is not None:
+            reason.append("chain<12")
         return None
     # axis from tip A (d1[0]) to tip B (d1[-1])
     ax = d1[-1][0] - d1[0][0]
     ay = d1[-1][1] - d1[0][1]
     alen = math.hypot(ax, ay)
     if alen < 1:
+        if reason is not None:
+            reason.append("alen<1")
         return None
     ux, uy = ax / alen, ay / alen
 
@@ -205,21 +211,29 @@ def extract_stroke(ring):
         # run always sits at the END of exactly one chain:
         if iC2 == ihi:      # run at the end of ch1  (ch1 ends at ihi)
             if cnt > len(ch1):
+                if reason is not None:
+                    reason.append("cut:overflow")
                 return None
             ch1 = ch1[:len(ch1) - cnt + 1]
             cut_at_end = (C1, C2)
         elif iC1 == ihi:    # run at the start of ch2 (ch2 starts at ihi)
             if cnt > len(ch2):
+                if reason is not None:
+                    reason.append("cut:overflow")
                 return None
             ch2 = ch2[cnt - 1:]
             cut_at_end = (C1, C2)
         elif iC2 == ilo:    # run at the end of ch2 (ch2 ends at ilo)
             if cnt > len(ch2):
+                if reason is not None:
+                    reason.append("cut:overflow")
                 return None
             ch2 = ch2[:len(ch2) - cnt + 1]
             cut_at_start = (C1, C2)
         else:               # iC1 == ilo: run at the start of ch1
             if cnt > len(ch1):
+                if reason is not None:
+                    reason.append("cut:overflow")
                 return None
             ch1 = ch1[cnt - 1:]
             cut_at_start = (C1, C2)
@@ -227,11 +241,15 @@ def extract_stroke(ring):
         d1 = _dense_chain(ch1)
         d2 = _dense_chain(ch2)
         if d1 is None or d2 is None or len(d1) < 12 or len(d2) < 12:
+            if reason is not None:
+                reason.append("chain<12")
             return None
         ax = d1[-1][0] - d1[0][0]
         ay = d1[-1][1] - d1[0][1]
         alen = math.hypot(ax, ay)
         if alen < 1:
+            if reason is not None:
+                reason.append("alen<1")
             return None
         ux, uy = ax / alen, ay / alen
 
@@ -260,6 +278,8 @@ def extract_stroke(ring):
             if best_dd is None or dd < best_dd:
                 best, best_dd = j, dd
         if best is None:
+            if reason is not None:
+                reason.append("pairing:no-match")
             return None
         q = d2[best]
         center.append(((p[0] + q[0]) / 2, (p[1] + q[1]) / 2))
@@ -281,15 +301,21 @@ def extract_stroke(ring):
     body = widths[bs:be]
     med = sorted(body)[len(body) // 2]
     if not (24 <= med <= 150):
+        if reason is not None:
+            reason.append(f"body:med={med:.0f}")
         return None
     wmax, wmin = max(body), min(body)
     if wmax > 2.4 * med or wmin < 0.12 * med:
+        if reason is not None:
+            reason.append(f"body:ratio(max={wmax / med:.2f},min={wmin / med:.2f})")
         return None
     cb = center[bs:be + 1]
     length = sum(math.hypot(cb[k + 1][0] - cb[k][0],
                             cb[k + 1][1] - cb[k][1])
                  for k in range(len(cb) - 1))
     if length < 2.0 * med:
+        if reason is not None:
+            reason.append(f"body:short(len={length:.0f},med={med:.0f})")
         return None
     # straight + constant = clean bar (round-terminals' job) -> skip.
     # dev is measured over the central 60% only: the pairing near the tips
@@ -324,6 +350,8 @@ def extract_stroke(ring):
     ends_barlike = (end_spread(tval(d1[0])) > 0.75 * med and
                     end_spread(tval(d1[-1])) > 0.75 * med)
     if dev < 0.04 * Ll and max(body) < 1.3 * min(body) and ends_barlike:
+        if reason is not None:
+            reason.append("skip:clean-bar")
         return None
 
     # end appendage guard: a width spike near an end means the contour
@@ -331,6 +359,8 @@ def extract_stroke(ring):
     # not a plain stroke tip; leave it untouched
     e8 = max(2, n // 8)
     if max(widths[:e8]) > 1.6 * med or max(widths[-e8:]) > 1.6 * med:
+        if reason is not None:
+            reason.append("skip:appendage")
         return None
 
     center = center[lo:hi + 1]
