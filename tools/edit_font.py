@@ -1065,8 +1065,8 @@ def op_round_terminals(font, chars):
     return report
 
 
-def op_remove_hooks(font, chars=("九", "刀", "丸")):
-    """去钩平转（无挑钩）：去除九、刀、丸底部的尖硬挑钩，替换为水平延伸的标准饱满半圆胶囊头（stadium cap），
+def op_remove_hooks(font, chars=("九", "刀", "丸", "兔", "免", "北", "儿")):
+    """去钩平转（无挑钩）：去除九、刀、丸、兔、免、北、儿等底部的尖硬挑钩，替换为水平延伸的标准饱满半圆胶囊头（stadium cap），
     采用 _ellipse_arc 严格生成与『一/王』一致的 TrueType 二次贝塞尔全圆弧。"""
     glyf = font["glyf"]
     cmap = font.getBestCmap()
@@ -1081,44 +1081,118 @@ def op_remove_hooks(font, chars=("九", "刀", "丸")):
         if ch == '九':
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
-            top_y = c1[24][1]
-            bot_y = c1[0][1]
-            yc = (top_y + bot_y) / 2
-            h = top_y - bot_y
-            bulge = h / 2
-            cap = _ellipse_arc(872, yc, bulge, h / 2, 90, -90)
+            cap = _ellipse_arc(903.5, -28.5, 36.5, 36.5, 90, -90)
             new_c1 = c1[:25] + cap[1:-1]
             _drop_variations(font, gname)
             set_glyph_contours(g, [c0, new_c1])
-            report[ch] = "hook-removed"
+            report[ch] = {"status": "hook-removed"}
         elif ch == '丸':
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
             c2 = contour_points(g, spans[2][0], spans[2][1])
-            top_y = c2[24][1]
-            bot_y = c2[0][1]
-            yc = (top_y + bot_y) / 2
-            h = top_y - bot_y
-            bulge = h / 2
-            cap = _ellipse_arc(877.5, yc, bulge, h / 2, 90, -90)
+            cap = _ellipse_arc(908.0, -28.0, 37.0, 37.0, 90, -90)
             new_c2 = c2[:25] + cap[1:-1]
             _drop_variations(font, gname)
             set_glyph_contours(g, [c0, c1, new_c2])
-            report[ch] = "hook-removed"
+            report[ch] = {"status": "hook-removed"}
         elif ch == '刀':
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
             c2 = contour_points(g, spans[2][0], spans[2][1])
-            top_y = c1[4][1]
-            bot_y = c1[35][1]
-            yc = (top_y + bot_y) / 2
-            h = top_y - bot_y
-            bulge = h / 2
-            cap = _ellipse_arc(590, yc, bulge, h / 2, -90, -270)
+            cap = _ellipse_arc(569.5, -28.5, 39.5, 39.5, -90, -270)
             new_c1 = c1[4:36] + cap[1:-1]
             _drop_variations(font, gname)
             set_glyph_contours(g, [c0, new_c1, c2])
-            report[ch] = "hook-removed"
+            report[ch] = {"status": "hook-removed"}
+        elif ch == '兔':
+            cap = _ellipse_arc(911.0, -41.0, 34.0, 34.0, 90, -90)
+            new_contours = []
+            for idx, (s, e) in enumerate(spans):
+                pts = contour_points(g, s, e)
+                if idx == 5:
+                    new_contours.append(pts[:22] + cap[1:-1])
+                else:
+                    new_contours.append(pts)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, new_contours)
+            report[ch] = {"status": "hook-removed"}
+        elif ch == '免':
+            cap = _ellipse_arc(906.0, -26.0, 34.0, 34.0, 90, -90)
+            new_contours = []
+            for idx, (s, e) in enumerate(spans):
+                pts = contour_points(g, s, e)
+                if idx == 0:
+                    new_contours.append(pts[:22] + cap[1:-1])
+                else:
+                    new_contours.append(pts)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, new_contours)
+            report[ch] = {"status": "hook-removed"}
+        elif ch == '北':
+            cap = _ellipse_arc(903.5, -20.5, 36.5, 36.5, 90, -90)
+            new_contours = []
+            for idx, (s, e) in enumerate(spans):
+                pts = contour_points(g, s, e)
+                if idx == 1:
+                    new_contours.append(pts[:26] + cap[1:-1])
+                else:
+                    new_contours.append(pts)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, new_contours)
+            report[ch] = {"status": "hook-removed"}
+        elif ch == '儿':
+            cap = _ellipse_arc(904.0, -34.0, 36.0, 36.0, 90, -90)
+            new_contours = []
+            for idx, (s, e) in enumerate(spans):
+                pts = contour_points(g, s, e)
+                if idx == 1:
+                    new_contours.append(pts[:26] + cap[1:-1])
+                else:
+                    new_contours.append(pts)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, new_contours)
+            report[ch] = {"status": "hook-removed"}
+    return report
+
+
+def op_flat_na(font, chars=("题", "提")):
+    """平捺平展托举与标准半圆收头：
+    将题、提的底捺（走之底/是之底捺）水平充分平展延伸，稳定托举右侧部首（如题之页），
+    并以标准半圆胶囊头（_ellipse_arc）饱满收笔，杜绝切短悬空。"""
+    glyf = font["glyf"]
+    cmap = font.getBestCmap()
+    report = {}
+
+    for ch in chars:
+        if ord(ch) not in cmap:
+            continue
+        gname = cmap[ord(ch)]
+        g = glyf[gname]
+        spans = split_contours(g)
+        if ch == '题':
+            cap = _ellipse_arc(943.5, -26.5, 31.5, 31.5, 90, -90)
+            new_contours = []
+            for idx, (s, e) in enumerate(spans):
+                pts = contour_points(g, s, e)
+                if idx == 8:
+                    new_contours.append(pts[5:24] + cap[1:-1])
+                else:
+                    new_contours.append(pts)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, new_contours)
+            report[ch] = {"status": "flat-na-applied"}
+        elif ch == '提':
+            cap = _ellipse_arc(941.5, -31.5, 33.5, 33.5, 90, -90)
+            new_contours = []
+            for idx, (s, e) in enumerate(spans):
+                pts = contour_points(g, s, e)
+                if idx == 5:
+                    new_contours.append(pts[5:22] + cap[1:-1])
+                else:
+                    new_contours.append(pts)
+            _drop_variations(font, gname)
+            set_glyph_contours(g, new_contours)
+            report[ch] = {"status": "flat-na-applied"}
     return report
 
 
@@ -1157,7 +1231,7 @@ def op_square_ri_ti(font, chars=("题",)):
         other = [contour_points(g, spans[i][0], spans[i][1]) for i in range(3, len(spans))]
         _drop_variations(font, gname)
         set_glyph_contours(g, [c0, c1, c2] + other)
-        report[ch] = "square-ri-applied"
+        report[ch] = {"status": "square-ri-applied"}
     return report
 
 
@@ -1167,11 +1241,30 @@ def op_smooth_strokes(font, chars):
     Each contour that is a clean thin stroke (撇 捺 钩, tapered stems, dots)
     is rebuilt as smoothed centerline + original width profile, with round
     heads at visible terminals and flat ends kept flat where they hide under
-    a crossing stroke. Straight bars (already rebuilt by round-terminals)
-    and non-stroke contours (boxes, 冂, blobs) are left untouched."""
+    a crossing stroke. Straight bars and protected contours (handled by specialized
+    geometric ops) are left untouched."""
     glyf = font["glyf"]
     cmap = font.getBestCmap()
     report = {}
+
+    PROTECTED_CONTOURS = {
+        '九': {1},
+        '丸': {2},
+        '刀': {1},
+        '兔': {5},
+        '免': {0},
+        '北': {1},
+        '儿': {1},
+        '题': {0, 1, 2, 8},
+        '提': {5, 10},
+        '打': {2},
+        '找': {2},
+        '指': {7},
+        '卯': set(range(100)),
+        '员': set(range(100)),
+        '哭': set(range(100)),
+    }
+
     for ch in chars:
         if ch in ('卯', '员', '哭'):
             report[ch] = "skipped: intact-plump-feet"
@@ -1190,6 +1283,9 @@ def op_smooth_strokes(font, chars):
         touched = []
         for j, (s, e) in enumerate(spans):
             pts = contour_points(glyph, s, e)
+            if ch in PROTECTED_CONTOURS and j in PROTECTED_CONTOURS[ch]:
+                new_contours.append(pts)
+                continue
             others = [b for k, b in enumerate(bboxes) if k != j]
             other_polys = [contour_points(glyph, s2, e2)
                            for k2, (s2, e2) in enumerate(spans) if k2 != j]
@@ -1201,12 +1297,6 @@ def op_smooth_strokes(font, chars):
             touched.append({"contour": j,
                             "points_before": e - s + 1,
                             "points_after": len(new)})
-        if ch in ('题', '提'):
-            for j in range(len(new_contours)):
-                b = contour_bbox(new_contours[j])
-                if b[0] > 100 and b[1] < 0 and b[2] > 900 and b[3] < 250:
-                    new_contours[j] = round_pingna_tail(new_contours[j])
-                    touched.append({"contour": j, "type": "pingna-round"})
         if not touched:
             report[ch] = "skipped: no smoothable contours"
             continue
@@ -1260,7 +1350,7 @@ def main():
     parser.add_argument("--ops", nargs="*",
                         choices=["roof-dot-to-stem", "roof-bar-round",
                                  "round-terminals", "tishou-shorten",
-                                 "remove-hooks", "square-ri",
+                                 "remove-hooks", "square-ri", "flat-na",
                                  "smooth-strokes"],
                         default=[])
     parser.add_argument("--all", action="store_true",
@@ -1281,17 +1371,15 @@ def main():
     font = TTFont(args.input)
     report = {}
     if "roof-dot-to-stem" in args.ops:
-        # The roof op stays list-targeted: auto-detecting 宀 across a whole
-        # font is easy to get wrong (亠/冂 look-alikes); the structure guard
-        # below protects the list, and the list can be extended freely.
         r = op_roof_dot_to_stem(font, list(args.roof_chars), args.stem_width)
         report["roof-dot-to-stem"] = _summarize(r)
     if "roof-bar-round" in args.ops:
-        # 全端半圆 for the 宀/冖 bar (bar ends + drop bottoms). The analyzer
-        # is self-guarding, so it runs over the whole charset.
         r = op_roof_bar_round(font, gb2312_chars() if args.all
                               else list(args.roof_chars))
         report["roof-bar-round"] = _summarize(r)
+    if "smooth-strokes" in args.ops:
+        r = op_smooth_strokes(font, gb2312_chars() if args.all else list(args.smooth_chars))
+        report["smooth-strokes"] = _summarize(r)
     if "round-terminals" in args.ops:
         r = op_round_terminals(
             font, gb2312_chars() if args.all else list(args.round_chars))
@@ -1302,18 +1390,16 @@ def main():
         report["tishou-shorten"] = _summarize(r)
     if "remove-hooks" in args.ops:
         r = op_remove_hooks(
-            font, ["九", "刀", "丸"])
+            font, gb2312_chars() if args.all else ["九", "刀", "丸", "兔", "免", "北", "儿"])
         report["remove-hooks"] = _summarize(r)
     if "square-ri" in args.ops:
         r = op_square_ri_ti(
             font, ["题"])
         report["square-ri"] = _summarize(r)
-    if "smooth-strokes" in args.ops:
-        # Runs last: round-terminals has rebuilt the straight bars into clean
-        # stadia, which the smooth pass detects and leaves untouched; it only
-        # touches the curved strokes (撇 捺 钩 …) and their round 收笔.
-        r = op_smooth_strokes(font, gb2312_chars() if args.all else list(args.smooth_chars))
-        report["smooth-strokes"] = _summarize(r)
+    if "flat-na" in args.ops:
+        r = op_flat_na(
+            font, ["题", "提"])
+        report["flat-na"] = _summarize(r)
     font.save(args.output)
     text = json.dumps(report, indent=2, ensure_ascii=False)
     if args.report:
