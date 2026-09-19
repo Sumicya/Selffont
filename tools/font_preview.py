@@ -115,7 +115,7 @@ PAGE = """<!doctype html>
 <header>
   <b>Selffont \u9884\u89c8</b>
   <span class="meta">\u6587\u6e90\u5706\u6da6\u7b80\u4f53 VF \u00b7 \u5de6/\u4e0a \u539f\u59cb\uff0c\u53f3/\u4e0b \u5e73\u6ed1\u7248</span>
-  <input type="text" id="t" value="\u9898\u5154\u514d\u63d0\u5317\u6253\u627e\u6307\u738b\u5929\u4e38\u4e5d\u5200\u4e70\u5356\u536f\u5458\u54ed" spellcheck="false">
+  <input type="text" id="t" value="\u9898\u5154\u514d\u63d0\u5317\u6253\u627e\u6307\u738b\u5929\u4e38\u4e5d\u5200\u4e70\u5356\u536f\u5458\u54ed\u7070\u9875\u513f\u662f\u624b\u65e9\u660e\u54c1\u5927\u628a\u62d4\u6587" spellcheck="false">
   <label class="ctl">\u5927\u5c0f <input type="range" id="sz" min="28" max="220" value="84">
   <span id="szv">84</span>px</label>
 </header>
