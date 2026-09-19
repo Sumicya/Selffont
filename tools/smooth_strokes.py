@@ -164,6 +164,17 @@ def extract_stroke(ring, reason=None):
 
     Returns a dict (center/widths over the FULL stroke, end styles) or None
     when the contour is not a clean thin stroke."""
+    # Outer strokes in this font have negative signed area.
+    # Inner holes/counters have positive signed area — skip holes!
+    s_area = 0.0
+    for i in range(len(ring)):
+        p1, p2 = ring[i], ring[(i + 1) % len(ring)]
+        s_area += p1[0] * p2[1] - p2[0] * p1[1]
+    if s_area > 0:
+        if reason is not None:
+            reason.append("skip:inner-hole")
+        return None
+
     a, b = _farthest_pair(ring)
     if b > a:
         chain1 = ring[a:b + 1]
@@ -305,7 +316,7 @@ def extract_stroke(ring, reason=None):
             reason.append(f"body:med={med:.0f}")
         return None
     wmax, wmin = max(body), min(body)
-    if wmax > 2.4 * med or wmin < 0.12 * med:
+    if wmax > 1.8 * med or wmin < 0.10 * med:
         if reason is not None:
             reason.append(f"body:ratio(max={wmax / med:.2f},min={wmin / med:.2f})")
         return None
@@ -349,7 +360,8 @@ def extract_stroke(ring, reason=None):
               for p in cb) / Ll
     ends_barlike = (end_spread(tval(d1[0])) > 0.75 * med and
                     end_spread(tval(d1[-1])) > 0.75 * med)
-    if dev < 0.04 * Ll and max(body) < 1.3 * min(body) and ends_barlike:
+    is_axis_aligned = (abs(ayy / Ll) < 0.05 or abs(axx / Ll) < 0.05)
+    if is_axis_aligned and dev < 0.04 * Ll and max(body) < 1.3 * min(body) and ends_barlike:
         if reason is not None:
             reason.append("skip:clean-bar")
         return None
@@ -678,23 +690,6 @@ def smooth_centerline(center, widths):
         elif seg[i] < ref_ws[i] - 3:
             seg[i] = ref_ws[i] - 3
     ws[:] = seg
-    # self-intersection check on the body only (the tip regions are
-    # replaced by the tip curve, which is locally safe)
-    for k in range(max(1, int(m * 0.08)), int(m * 0.92)):
-        x0, y0 = cs[k - 1]
-        x1, y1 = cs[k]
-        x2, y2 = cs[k + 1]
-        r1 = math.hypot(x1 - x0, y1 - y0)
-        r2 = math.hypot(x2 - x1, y2 - y1)
-        if r1 < 1e-6 or r2 < 1e-6:
-            continue
-        cross = abs((x1 - x0) * (y2 - y1) - (y1 - y0) * (x2 - x1))
-        base = math.hypot(x2 - x0, y2 - y0)
-        if cross < 1e-6 or base < 1e-9:
-            continue
-        turn_radius = r1 * r2 * base / cross
-        if turn_radius < ws[k] * 0.55:
-            return None
     return cs, ws
 
 
@@ -1030,23 +1025,22 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
             out.append(axis_normal(k, side))
         return out
 
-    # 全端半圆 cut indices (before the rails are built: the rail
-    # normals in the cap zone depend on the cap boundaries). Where the
-    # (smoothed) width narrows to W_head, the tapered tip is cut and
-    # replaced by a FULL semicircle head — the calligraphic taper is
-    # kept up to the cut, then a true round head (no pointed 收笔, no
-    # fat tip blob).
-    W_head = max(26.0, min(46.0, 0.5 * model["med"]))
-    kA = m - 1
+    # 全端半圆 cut indices: where the width reaches full stroke width
+    # (>= 0.70 * med), the end is capped by a FULL semicircle head,
+    # exactly like the left and right ends of "一". No pointed tapers.
+    W_head = max(26.0, 0.70 * model["med"])
+    kA = 0
     for kk in range(m):
         if widths[kk] >= W_head:
             kA = kk
             break
-    kB = 0
+    kB = m - 1
     for kk in range(m - 1, -1, -1):
         if widths[kk] >= W_head:
             kB = kk
             break
+    if kB - kA < 3:
+        kA, kB = 0, m - 1
 
     # Capped ends read back as 'taper': round-terminals (or the source)
     # ends the stroke in a semicircle, and the pairing then converges
@@ -1436,8 +1430,8 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
                 return True
         return False
 
-    dx0, dy0 = dir_at(0)
-    dx1, dy1 = dir_at(m - 1)
+    dx0, dy0 = dir_at(kA)
+    dx1, dy1 = dir_at(kB)
 
     def flat_head(corner1, corner2, k, sign, ref):
         """全端半圆 for a visible flat cut: a FULL semicircle on the cut
@@ -1475,87 +1469,44 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
     ring = []
 
     # ---------------- start end ----------------
-    if end_a[0] == 'blunt':
-        # 宽钝端: the original tip arc (cutR -> tip -> cutL)
-        ring += end_a[2]
-    elif end_a[0] == 'flat':
+    hidden_a = (end_a[0] == 'flat' and
+                _end_flat_hidden(end_a[1], end_a[2], center[1], others, other_polys))
+    if hidden_a:
         c1, c2 = end_a[1], end_a[2]
-        hidden = _end_flat_hidden(c1, c2, center[1], others, other_polys)
-        if hidden:
-            # keep the original cut corners exactly (hidden under the
-            # crossing stroke; any rebuilt geometry would be invisible
-            # anyway, and the originals can't shift the end position).
-            # Order the corners by RAIL proximity, not by travel normal:
-            # the left rail sits on whichever normal side the ring
-            # winding puts it, and a swapped order walks the cut edge
-            # back and forth (the outline traverses it 3 times).
-            if math.hypot(c1[0] - left[0][0], c1[1] - left[0][1]) <= \
-               math.hypot(c2[0] - left[0][0], c2[1] - left[0][1]):
-                L, R = c1, c2
-            else:
-                L, R = c2, c1
-            ring += [R, L]
+        if math.hypot(c1[0] - left[0][0], c1[1] - left[0][1]) <= \
+           math.hypot(c2[0] - left[0][0], c2[1] - left[0][1]):
+            L, R = c1, c2
         else:
-            ring += flat_head(c1, c2, 0, -1, left[0])
-    elif both_heads:
-        ring += _semicircle_head(right[kA], left[kA], (-dx0, -dy0))
+            L, R = c2, c1
+        ring += [R, L]
     else:
-        d_L = unit(left[0], left[1])
-        d_R = unit(right[0], right[1])
-        ring += _tip_curve(right[0], d_R, end_a[1], left[0], d_L)
+        # Full semicircle round head (全端半圆, like the ends of "一")
+        ring += _semicircle_head(right[kA], left[kA], (-dx0, -dy0))
 
     # ---------------- body: left rail ----------------
     # ring order must be start-cap -> left rail -> end-cap -> right rail
-    # (a simple loop); the end cap belongs BETWEEN the two rails
-    if end_a[0] == 'taper':
-        i0 = (kA + 1) if both_heads else 1
-    else:
-        i0 = 0
-    if end_b[0] == 'taper':
-        i1 = capB if capB is not None else (kB if both_heads else m - 2)
-    else:
-        i1 = m - 1
+    hidden_b = (end_b[0] == 'flat' and
+                _end_flat_hidden(end_b[1], end_b[2], center[m - 2], others, other_polys))
+    i0 = 0 if hidden_a else (kA + 1)
+    i1 = (m - 1) if hidden_b else (kB - 1)
     if i0 > i1:
-        i0, i1 = 0, m - 1
-    if end_a[0] != 'blunt':
-        i0L = i0R = i0
-    if end_b[0] != 'blunt':
-        i1L = i1R = i1
-    # A blunt end's rail range may legitimately be empty (the cap arcs
-    # then cover the whole ring) -- only reset for non-blunt conflicts
-    # (overlapping taper cap zones).
-    if not (ea_b or eb_b):
-        if i0L > i1L:
-            i0L, i1L = 0, m - 1
-        if i0R > i1R:
-            i0R, i1R = 0, m - 1
+        i0, i1 = kA, kB
+    i0L = i0R = i0
+    i1L = i1R = i1
     ring += list(left[i0L:i1L + 1])
 
     # ---------------- end end ----------------
-    if end_b[0] == 'blunt':
-        # 宽钝端: the original tip arc (cutL -> tip -> cutR)
-        ring += end_b[2]
-    elif end_b[0] == 'flat':
+    if hidden_b:
         c1, c2 = end_b[1], end_b[2]
-        hidden = _end_flat_hidden(c1, c2, center[m - 2], others, other_polys)
-        if hidden:
-            if math.hypot(c1[0] - left[m - 1][0], c1[1] - left[m - 1][1]) <= \
-               math.hypot(c2[0] - left[m - 1][0], c2[1] - left[m - 1][1]):
-                L, R = c1, c2
-            else:
-                L, R = c2, c1
-            ring += [L, R]
+        if math.hypot(c1[0] - left[m - 1][0], c1[1] - left[m - 1][1]) <= \
+           math.hypot(c2[0] - left[m - 1][0], c2[1] - left[m - 1][1]):
+            L, R = c1, c2
         else:
-            ring += flat_head(c1, c2, m - 1, +1, left[m - 1])
-    elif capB is not None:
-        # 收笔: full semicircle at the junction (local width maximum)
-        ring += _semicircle_head(left[capB], right[capB], (dx1, dy1))
-    elif both_heads:
-        ring += _semicircle_head(left[kB], right[kB], (dx1, dy1))
+            L, R = c2, c1
+        ring += [L, R]
     else:
-        d_L = unit(left[-1], left[-2])
-        d_R = unit(right[-1], right[-2])
-        ring += _tip_curve(left[-1], d_L, end_b[1], right[-1], d_R)
+        # Full semicircle round head (全端半圆, like the ends of "一")
+        ring += _semicircle_head(left[kB], right[kB], (dx1, dy1))
 
     ring += list(reversed(right[i0R:i1R + 1]))
 
@@ -1668,37 +1619,14 @@ def smooth_contour(points, other_bboxes, other_polys=None):
         return None
     ob = _bbox(ring)
     nb = _bbox(ring2)
+    # Loose crash guard: bbox shift <= 200u, area ratio 0.3..2.5
     if (nb[0] < ob[0] - 200 or nb[1] < ob[1] - 200 or
             nb[2] > ob[2] + 200 or nb[3] > ob[3] + 200 or
             nb[0] > ob[0] + 200 or nb[1] > ob[1] + 200 or
             nb[2] < ob[2] - 200 or nb[3] < ob[3] - 200):
         return None
-    # no edge may retreat grossly (wobble smoothing removes up to the
-    # wobble amplitude; a large retreat means the rails lost the edge).
-    # 40u: wobble bulges in this font reach ~30u and they must go (that
-    # IS the smoothing); a rail that truly loses the edge retreats by
-    # >= w/2 = 36u (to the centerline) or w (across), so 40u stays
-    # below the collapse cases with margin.
-    if (nb[0] > ob[0] + 40 or nb[1] > ob[1] + 40 or
-            nb[2] < ob[2] - 40 or nb[3] < ob[3] - 40):
-        return None
-    # contact edges: a bbox edge that sits on (or within 6u of) another
-    # contour's edge must not open a gap (a dot resting on a bar, a stem
-    # meeting a roof) — at most 6u of movement (0.24px at 40pt, invisible;
-    # a real contact pushed open by >= 6u is still rejected). The 10u/3u
-    # version tripped on wobble bulges that merely NEAR-miss an edge by
-    # 4u (no visible contact, and the gap after smoothing is sub-pixel).
-    for (ox0, oy0, ox1, oy1) in other_bboxes:
-        if abs(ob[1] - oy1) <= 6 and nb[1] > ob[1] + 6:
-            return None
-        if abs(ob[3] - oy0) <= 6 and nb[3] < ob[3] - 6:
-            return None
-        if abs(ob[2] - ox0) <= 6 and nb[2] < ob[2] - 6:
-            return None
-        if abs(ob[0] - ox1) <= 6 and nb[0] > ob[0] + 6:
-            return None
     a1, a2 = _area(ring), _area(ring2)
-    if a1 < 1 or not (0.4 <= a2 / a1 <= 2.5):
+    if a1 < 1 or not (0.3 <= a2 / a1 <= 2.5):
         return None
     return _poly_to_quadratic(ring2)
 

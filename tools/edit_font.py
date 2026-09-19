@@ -880,11 +880,85 @@ def find_tishou_vertical(glyph):
     return vidx
 
 
+def round_ti_tip(pts):
+    """Full-width semicircle round head for the 提 stroke terminal."""
+    n = len(pts)
+    i_max_x = max(range(n), key=lambda i: pts[i][0])
+    i_top = i_max_x
+    while True:
+        i_top = (i_top - 1) % n
+        if pts[i_top][2]:
+            break
+    i_bot = i_max_x
+    while True:
+        i_bot = (i_bot + 1) % n
+        if pts[i_bot][2]:
+            break
+    p1 = (pts[i_top][0], pts[i_top][1])
+    p2 = (pts[i_bot][0], pts[i_bot][1])
+    w = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+    if not (40 <= w <= 110):
+        return pts
+    r = w / 2
+    mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
+    dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+    nx, ny = -dy / w, dx / w
+    if nx < 0:
+        nx, ny = -nx, -ny
+    a1 = math.atan2(p1[1] - my, p1[0] - mx)
+    a2 = math.atan2(p2[1] - my, p2[0] - mx)
+    d = (a2 - a1 + math.pi) % (2 * math.pi) - math.pi
+    if d == 0:
+        d = math.pi
+    a_out = math.atan2(ny, nx)
+    if math.cos(a1 + d / 2 - a_out) < 0:
+        d = -d
+    n_seg = 4
+    cap_pts = []
+    for i in range(n_seg):
+        ang0 = a1 + d * i / n_seg
+        ang1 = a1 + d * (i + 1) / n_seg
+        ang_mid = (ang0 + ang1) / 2
+        r_ctrl = r / math.cos(d / (2 * n_seg))
+        cx = mx + r_ctrl * math.cos(ang_mid)
+        cy = my + r_ctrl * math.sin(ang_mid)
+        px1 = mx + r * math.cos(ang1)
+        py1 = my + r * math.sin(ang1)
+        cap_pts.append((cx, cy, 0))
+        cap_pts.append((px1, py1, 1))
+    if i_top < i_bot:
+        return pts[:i_top + 1] + cap_pts + pts[i_bot + 1:]
+    else:
+        return pts[i_bot:i_top + 1] + cap_pts
+
+
+def round_pingna_tail(pts):
+    """Full-width semicircle round head for 走之底/平捺 tail in 题/提."""
+    n = len(pts)
+    top_candidates = [i for i in range(n) if pts[i][2] and pts[i][0] > 880 and pts[i][1] >= -10]
+    bot_candidates = [i for i in range(n) if pts[i][2] and pts[i][0] > 880 and pts[i][1] <= -50]
+    if not top_candidates or not bot_candidates:
+        return pts
+    i_top = max(top_candidates, key=lambda i: pts[i][0])
+    i_bot = min(bot_candidates, key=lambda i: pts[i][1])
+    top_y = pts[i_top][1]
+    bot_y = pts[i_bot][1]
+    w = top_y - bot_y
+    if not (45 <= w <= 95):
+        return pts
+    r = w / 2
+    x_cut = min(pts[i_top][0], pts[i_bot][0])
+    cap = _hbar_cap_top_to_bottom(top_y, bot_y, x_cut, r)
+    if i_bot < i_top:
+        return pts[i_bot:i_top + 1] + cap[1:]
+    else:
+        return pts[i_bot:] + pts[:i_top + 1] + cap[1:]
+
+
 def op_tishou_shorten(font, chars):
     """割短: the 扌 radical's vertical is too long in this font. Cut its
     bottom up by ~10% of the glyph height and give the new bottom a clean
     full semicircle cap (全端半圆). The 横/提 of the radical are untouched."""
-    import smooth_strokes as ss
     glyf = font["glyf"]
     cmap = font.getBestCmap()
     report = {}
@@ -901,82 +975,34 @@ def op_tishou_shorten(font, chars):
         spans = split_contours(glyph)
         gh = glyph.yMax - glyph.yMin
         s, e = spans[vidx]
-        ring = [(p[0], p[1]) for p in glyph.coordinates[s:e + 1]]
-        dense = ss.resample_ring(ring, 4.0)
-        n = len(dense)
-        ymin = min(p[1] for p in dense)
+        pts = contour_points(glyph, s, e)
+        top_pts = [p for p in pts if p[1] > glyph.yMin + 0.7 * gh]
+        if not top_pts:
+            continue
+        left = min(p[0] for p in top_pts)
+        right = max(p[0] for p in top_pts)
+        w = right - left
+        r = w / 2
+        top_y = max(p[1] for p in top_pts) - r
+        ymin = min(p[1] for p in pts)
         cut = max(60.0, 0.10 * gh)
-        y_cut = ymin + cut
-        cross = []
-        for i in range(n):
-            x0_, y0_ = dense[i]
-            x1_, y1_ = dense[(i + 1) % n]
-            if (y0_ - y_cut) * (y1_ - y_cut) < 0:
-                t = (y_cut - y0_) / (y1_ - y0_)
-                cross.append((i, (x0_ + t * (x1_ - x0_), y_cut)))
-        if len(cross) != 2:
-            continue
-        (iA, A), (iB, B) = cross
-        kmin = min(range(n), key=lambda k: dense[k][1])
-
-        def arc_pts(start, end, chain, total_n):
-            out, k = [], start
-            while k != end:
-                out.append(chain[k])
-                k = (k + 1) % total_n
-            return out
-
-        # bottom arc = the arc between A and B that contains kmin
-        bottom_is_i_to_j = kmin in arc_pts(iA, iB, dense, n)
-        L = A if A[0] < B[0] else B
-        R = B if A[0] < B[0] else A
-        cx = (L[0] + R[0]) / 2
-        r = abs(R[0] - L[0]) / 2
-        if not (18 <= r <= 90):
-            continue
-        # cap: half disk from R -> L, bulging DOWN (angle 0 -> -pi)
-        n_cap = 6
-        step = -math.pi / n_cap
-        cap = [(cx + r * math.cos(step * k), y_cut + r * math.sin(step * k))
-               for k in range(1, n_cap)]
-        new_ring = []
-        if bottom_is_i_to_j:
-            if A[0] > B[0]:
-                new_ring = [A, *cap, B, *arc_pts((iB + 1) % n, iA, dense, n)]
-            else:
-                cap_rev = [(cx + r * math.cos(-math.pi - step * k), y_cut + r * math.sin(-math.pi - step * k))
-                           for k in range(1, n_cap)]
-                new_ring = [A, *cap_rev, B, *arc_pts((iB + 1) % n, iA, dense, n)]
-        else:
-            if B[0] > A[0]:
-                new_ring = [B, *cap, A, *arc_pts((iA + 1) % n, iB, dense, n)]
-            else:
-                cap_rev = [(cx + r * math.cos(-math.pi - step * k), y_cut + r * math.sin(-math.pi - step * k))
-                           for k in range(1, n_cap)]
-                new_ring = [B, *cap_rev, A, *arc_pts((iA + 1) % n, iB, dense, n)]
-        if len(new_ring) < 12:
-            continue
-        ob = (min(p[0] for p in ring), ymin, max(p[0] for p in ring),
-              max(p[1] for p in ring))
-        nb = (min(p[0] for p in new_ring), min(p[1] for p in new_ring),
-              max(p[0] for p in new_ring), max(p[1] for p in new_ring))
-        if nb[1] < ymin + 40 or nb[1] > nb[1]:
-            continue
-        if (nb[0] < ob[0] - 3 or nb[2] > ob[2] + 3 or nb[3] > ob[3] + 3):
-            continue
-        a1s, a2s = _signed_area(ring), _signed_area(new_ring)
-        if a1s * a2s <= 0 or not (0.70 <= a2s / a1s <= 1.05):
-            continue
+        bot_y = ymin + cut + r
+        new_bar = build_vbar(left, right, top_y, bot_y, True, True, r, r)
         new_contours = []
-        for (s2, e2) in spans:
-            if (s2, e2) == (s, e):
-                new_contours.append([(x, y, 1) for (x, y) in new_ring])
+        for pi, (s2, e2) in enumerate(spans):
+            pts2 = contour_points(glyph, s2, e2)
+            if pi == vidx:
+                new_contours.append(new_bar)
             else:
-                new_contours.append(contour_points(glyph, s2, e2))
+                b = contour_bbox(pts2)
+                if b[0] < 100 and 200 <= b[1] <= 300 and 350 <= b[3] <= 450:
+                    new_contours.append(round_ti_tip(pts2))
+                else:
+                    new_contours.append(pts2)
         had_variation = _drop_variations(font, gname)
         set_glyph_contours(glyph, new_contours)
         report[ch] = {"contour": vidx, "cut": round(cut),
-                      "new_bottom": round(nb[1]),
+                      "new_bottom": round(bot_y - r),
                       "weight_variation_dropped": bool(had_variation)}
     return report
 
@@ -1076,6 +1102,12 @@ def op_smooth_strokes(font, chars):
             touched.append({"contour": j,
                             "points_before": e - s + 1,
                             "points_after": len(new)})
+        if ch in ('题', '提'):
+            for j in range(len(new_contours)):
+                b = contour_bbox(new_contours[j])
+                if b[0] > 100 and b[1] < 0 and b[2] > 900 and b[3] < 250:
+                    new_contours[j] = round_pingna_tail(new_contours[j])
+                    touched.append({"contour": j, "type": "pingna-round"})
         if not touched:
             report[ch] = "skipped: no smoothable contours"
             continue
