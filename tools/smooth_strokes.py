@@ -580,13 +580,19 @@ def smooth_centerline(center, widths):
             if d > moved:
                 moved = d
             pts[i] = (pts[i][0] + dx, pts[i][1] + dy)
+        # drift clamp: the raw centerline wobble in this font reaches
+        # ~20-25u, so the clamp must exceed it or an 8-12u S-wave
+        # survives (visible on long 撇 / 弯钩). 24u flattens the whole
+        # wobble; genuine calligraphic features (uniform arcs, the 捺
+        # shoulder) are never pulled far by the Laplacian because
+        # their neighbours sit on the same curve.
         for i in range(1, N):
             dx = pts[i][0] - raw[i][0]
             dy = pts[i][1] - raw[i][1]
             d = math.hypot(dx, dy)
-            if d > 12.0:
-                pts[i] = (raw[i][0] + dx * 12.0 / d,
-                          raw[i][1] + dy * 12.0 / d)
+            if d > 24.0:
+                pts[i] = (raw[i][0] + dx * 24.0 / d,
+                          raw[i][1] + dy * 24.0 / d)
         if moved < 0.15:
             break
     cs = _resample_open(pts, m - 1)
@@ -596,10 +602,10 @@ def smooth_centerline(center, widths):
     raw_ws = list(ws)
     _box_smooth(ws[s0:s1], max(1, m // 10), iters=6)
     for i in range(s0, s1):
-        if ws[i] > raw_ws[i] + 14:
-            ws[i] = raw_ws[i] + 14
-        elif ws[i] < raw_ws[i] - 14:
-            ws[i] = raw_ws[i] - 14
+        if ws[i] > raw_ws[i] + 20:
+            ws[i] = raw_ws[i] + 20
+        elif ws[i] < raw_ws[i] - 20:
+            ws[i] = raw_ws[i] - 20
     # self-intersection check on the body only (the tip regions are
     # replaced by the tip curve, which is locally safe)
     for k in range(max(1, int(m * 0.08)), int(m * 0.92)):
