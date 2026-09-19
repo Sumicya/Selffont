@@ -34,11 +34,14 @@ def _box_glyph(x_min, y_min, x_max, y_max):
 
 
 def primary_font(upm=1000, hhea=(1160, -288, 0), typo=(880, -120, 0),
-                 use_typo_metrics=False, digit_ink=(-10, 744), family="WenYuan Rounded SC VF"):
-    """A tiny variable font that mimics WenYuan's oversized line metrics.
+                 use_typo_metrics=False, digit_ink=(-10, 744),
+                 family="Selffont Primary Fixture VF"):
+    """A tiny variable font that mimics the oversized line metrics we correct.
 
     Digits carry visible ink at ``digit_ink`` (yMin, yMax) so the normalization
     guard has something to validate; outlines/cmap/axes must survive untouched.
+    The family default is deliberately generic: fixtures must not embed the
+    real primary font's identity (see tests/test_font_swap.py).
     """
     order = ['.notdef', 'space', *'0123456789', *'Ag']
     builder = FontBuilder(upm, isTTF=True)

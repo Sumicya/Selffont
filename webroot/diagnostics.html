@@ -2,8 +2,11 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Selffont 字体路径对照</title><link rel="stylesheet" href="styles.css">
-<style>
+<style id="probe-sheet">
 @font-face { font-family: SelffontProbe; src: url('probe.ttf') format('truetype'); }
+/* Static offline fallback for the local() probe. The module build injects
+   font.json beside this page and the script below repoints the probe at the
+   currently configured primary family; without font.json this stays as-is. */
 @font-face { font-family: WenYuanLocal; src: local('WenYuan Rounded SC VF'); }
 </style></head>
 <body><main><header><p class="eyebrow">READ-ONLY · NO ROOT BRIDGE</p><h1>字体路径对照</h1>
@@ -18,8 +21,8 @@
 <div class="sample" style="font-family:fantasy">fantasy · 你好圆体 Abc 0123</div></section>
 <section><h2>网页字体加载路径</h2><p>本项目自制测试字体把普通字符 A 画成三角形。未被覆盖时下面应为四个三角形；策略命中后应显示目标字体的四个 A。若对照组也不是三角形，不能用本项判断成功。</p>
 <div class="sample" style="font-family:SelffontProbe,sans-serif">AAAA</div>
-<p>本地文渊家族探针（缺失时会回退，不能仅靠外观确认已安装）：</p>
-<div class="sample" style="font-family:WenYuanLocal,sans-serif">文渊圆体 Abc 0123</div></section>
+<p id="primary-probe-label">本地主字体家族探针（缺失时会回退，不能仅靠外观确认已安装）：</p>
+<div class="sample" id="primary-probe" style="font-family:WenYuanLocal,sans-serif">你好圆体 Abc 0123</div></section>
 <section><h2>排版应保留</h2><div class="sample" style="font-family:cursive">
 <div>Normal: Abc Difficult waffles</div><div style="font-weight:700">Bold: Abc Difficult waffles</div>
 <div style="font-style:italic">Italic: Abc Difficult waffles</div>
@@ -31,4 +34,25 @@ const input = document.getElementById('text');
 const output = document.getElementById('codepoints');
 const render = () => { output.textContent = [...input.value].slice(0, 256).map(c => `${c}  U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join('\n'); };
 input.addEventListener('input', render); render();
+</script>
+<script type="module">
+// The module build injects webroot/font.json (the configured primary family)
+// next to this page. When present, repoint the local() probe at that family so
+// a font swap (docs/font-swap.md) updates this page without editing the HTML.
+// Without font.json (static offline copy) the WenYuanLocal fallback stays.
+try {
+    const response = await fetch('./font.json');
+    if (response.ok) {
+        const font = await response.json();
+        const probe = document.getElementById('primary-probe');
+        const label = document.getElementById('primary-probe-label');
+        const sheet = document.getElementById('probe-sheet').sheet;
+        if (font.family && probe && sheet) {
+            const safe = String(font.family).replace(/['\\]/g, '');
+            sheet.insertRule(`@font-face { font-family: SelffontPrimary; src: local('${safe}'); }`, sheet.cssRules.length);
+            probe.style.fontFamily = 'SelffontPrimary,sans-serif';
+            if (label) label.textContent = `本地 ${font.family} 家族探针（缺失时会回退，不能仅靠外观确认已安装）：`;
+        }
+    }
+} catch (error) { /* no root bridge or offline: keep the static fallback */ }
 </script></main></body></html>

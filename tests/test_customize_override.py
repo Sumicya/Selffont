@@ -1,5 +1,6 @@
 """The install-time platform gate blocks untested platforms by default, but an
 explicit user opt-in marker lets an advanced user force installation."""
+import json
 import os
 import subprocess
 import tempfile
@@ -8,6 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = json.loads((ROOT / "config/font-source.json").read_text())
 
 
 class CustomizeOverrideTests(unittest.TestCase):
@@ -21,8 +23,12 @@ class CustomizeOverrideTests(unittest.TestCase):
             (modpath / "system/fonts").mkdir(parents=True)
             binaries.mkdir()
             override_dir.mkdir()
-            # A non-empty prepared font so the later font check passes.
-            (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
+            # A non-empty prepared font so the later font check passes. The
+            # installed filename (and its on-device copy, font.conf) comes from
+            # the manifest, mirroring tools/build_module.py.
+            installed = MANIFEST["installedFile"]
+            (modpath / "system/fonts" / installed).write_bytes(b"font")
+            (modpath / "font.conf").write_text(f"SELFFONT_INSTALLED_FONT={installed}\n")
             # Stub getprop to return the requested identity.
             (binaries / "getprop").write_text(
                 "#!/bin/sh\n"

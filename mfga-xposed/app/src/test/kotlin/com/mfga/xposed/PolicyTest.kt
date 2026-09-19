@@ -114,6 +114,39 @@ class PolicyTest {
     }
 
     @Test
+    fun hookTargetCoversTheFrameworkFactorySurface() {
+        // Resource / font-XML family builders (Android 10+).
+        assertTrue(HookTarget.isWanted("Builder", "build", emptyList()))
+        assertTrue(HookTarget.isWanted("CustomFallbackBuilder", "build", emptyList()))
+        // Asset and file factories.
+        assertTrue(
+            HookTarget.isWanted(
+                "Typeface", "createFromAsset",
+                listOf("android.content.res.AssetManager", "java.lang.String")
+            )
+        )
+        assertTrue(HookTarget.isWanted("Typeface", "createFromFile", listOf("java.lang.String")))
+        // Classic static factories apps call directly (API 28+ overload included).
+        assertTrue(
+            HookTarget.isWanted(
+                "Typeface", "create",
+                listOf("android.graphics.Typeface", "int", "boolean")
+            )
+        )
+        assertTrue(
+            HookTarget.isWanted(
+                "Typeface", "create",
+                listOf("android.graphics.Typeface", "int")
+            )
+        )
+        // Name-based create(String, int) stays with framework/familyset resolution.
+        assertFalse(HookTarget.isWanted("Typeface", "create", listOf("java.lang.String", "int")))
+        assertFalse(HookTarget.isWanted("Typeface", "setFamily", listOf("java.lang.String")))
+        assertFalse(HookTarget.isWanted("Builder", "build", listOf("java.lang.String")))
+        assertFalse(HookTarget.isWanted("Unrelated", "build", emptyList()))
+    }
+
+    @Test
     fun badgeSamplePolicySamplesFixedTextAndEnforcesBudget() {
         assertEquals("7", BadgeSamplePolicy.sample("7", 0, 1))
         assertEquals("10", BadgeSamplePolicy.sample(charArrayOf('x', '1', '0', 'y'), 1, 3))

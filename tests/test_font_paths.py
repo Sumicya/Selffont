@@ -1,11 +1,12 @@
-"""Bind every hardcoded font-path call site to its single source of truth.
+"""Bind every font-path call site to its single source of truth.
 
-The installed WenYuan filename lives in config/font-source.json (installedFile)
-and the metrics carrier in tools/font_config.py (METRIC_CARRIER). On-device shell
-scripts and the Kotlin runtime cannot parse those at runtime, so they inline the
-names -- exactly like the platform-support gates. These tests fail if any inlined
-copy drifts from the source, so renaming the installed font is a single edit
-enforced across languages instead of a silent mismatch.
+The installed primary filename lives in config/font-source.json (installedFile)
+and the metrics carrier in tools/font_config.py (METRIC_CARRIER). On-device
+shell scripts and the Kotlin runtime cannot parse those at runtime: the module
+therefore carries a generated font.conf (SELFFONT_INSTALLED_FONT) written by
+tools/build_module.py, the scripts read from it, and FontIdentity.kt mirrors
+the manifest. These tests fail if any binding drifts, so renaming the installed
+font is a config edit enforced across languages instead of a silent mismatch.
 """
 import json
 import sys
@@ -34,14 +35,18 @@ class InstalledFontNameTests(unittest.TestCase):
         self.assertIn(f'"/system/fonts/{INSTALLED}"', IDENTITY)
         self.assertIn(f'"/system/fonts/{METRIC_CARRIER}"', IDENTITY)
 
-    def test_installer_checks_the_prepared_font(self):
-        self.assertIn(f"system/fonts/{INSTALLED}", CUSTOMIZE)
+    def test_installer_reads_font_conf(self):
+        self.assertIn('font.conf', CUSTOMIZE)
+        self.assertIn('system/fonts/$SELFFONT_INSTALLED_FONT', CUSTOMIZE)
 
-    def test_diagnose_probes_the_installed_font(self):
-        self.assertIn(f"/system/fonts/{INSTALLED}", DIAGNOSE)
+    def test_diagnose_reads_font_conf(self):
+        self.assertIn('font.conf', DIAGNOSE)
+        self.assertIn('/system/fonts/${SELFFONT_INSTALLED_FONT', DIAGNOSE)
 
-    def test_device_state_reads_both_font_names(self):
-        self.assertIn(INSTALLED, DEVICE_STATE)
+    def test_device_state_reads_font_conf_and_carrier(self):
+        self.assertIn('font.conf', DEVICE_STATE)
+        self.assertIn('SELFFONT_INSTALLED_FONT', DEVICE_STATE)
+        # The metrics carrier stays the fixed Roboto face even across swaps.
         self.assertIn(METRIC_CARRIER, DEVICE_STATE)
 
 

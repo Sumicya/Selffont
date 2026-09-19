@@ -49,7 +49,7 @@ def configure_fonts(source, filename):
     glyph_family = ET.Element("family")
     primary_fonts(glyph_family, filename)
     # This is the first actual glyph fallback after the empty named default.
-    # Visible glyphs remain WenYuan; fixed Android widgets retain Roboto metrics.
+    # Visible glyphs remain the primary font; fixed Android widgets retain Roboto metrics.
     root.insert(list(root).index(default) + 1, glyph_family)
     ET.indent(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)

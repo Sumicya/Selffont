@@ -81,11 +81,12 @@ def build(base, font, output, revision=None):
             if METRIC_CARRIER not in names:
                 raise ValueError("Missing inherited Roboto metrics carrier")
             carrier = verify_metric_carrier(source.read("system/fonts/" + METRIC_CARRIER))
-            # Normalise WenYuan's own line metrics to the carrier's nominal metrics so
-            # measure-with-nominal / draw-with-fallback slots (notification counts,
-            # red-dot badges, clock, chips) stop pushing the baseline down and clipping
-            # ink. Outlines, cmap, family and axes are untouched; a build-time guard
-            # refuses to ship a font whose new line box would clip the digit ink.
+            # Normalise the primary font's own line metrics to the carrier's nominal
+            # metrics so measure-with-nominal / draw-with-fallback slots (notification
+            # counts, red-dot badges, clock, chips) stop pushing the baseline down and
+            # clipping ink. Outlines, cmap, family and axes are untouched; a
+            # build-time guard refuses to ship a font whose new line box would clip
+            # the digit ink.
             original_font = Path(font).read_bytes()
             if hashlib.sha256(original_font).hexdigest() != report["sha256"]:
                 raise ValueError("Primary font changed after verification")
@@ -114,6 +115,7 @@ def build(base, font, output, revision=None):
                              - {PurePosixPath(e.filename).name for e in bundled})
             module_report = {
                 "sourceRevision": revision or "UNSPECIFIED",
+                "installedFile": MANIFEST["installedFile"],
                 "primaryFont": report,
                 "metricNormalization": metric_report,
                 "dynamicWeightAxes": font_axis_ranges,
@@ -131,12 +133,25 @@ def build(base, font, output, revision=None):
             dest.writestr("system/fonts/" + MANIFEST["installedFile"], normalized_font)
             dest.writestr("fonts.xml", xml)
             dest.writestr("module.prop", render_module_prop())
+            # On-device single source of truth for the installed primary font.
+            # customize.sh / diagnose.sh / device_state.sh source this instead of
+            # hardcoding the filename, so a font swap (docs/font-swap.md) never
+            # touches shell code.
+            dest.writestr("font.conf",
+                          "SELFFONT_INSTALLED_FONT=" + MANIFEST["installedFile"] + "\n")
             for name in RUNTIME_FILES:
                 dest.write(ROOT / "script" / name, name)
             for directory in ("lang", "webroot", "licenses"):
                 for path in sorted((ROOT / directory).rglob("*")):
                     if path.is_file():
                         dest.write(path, path.relative_to(ROOT).as_posix())
+            # Generated web-side identity: diagnostics.html reads the family name
+            # from here for its local() probe, so a font swap updates the page
+            # without editing HTML. A static offline fallback stays in the HTML.
+            dest.writestr("webroot/font.json",
+                          json.dumps({"family": MANIFEST["family"],
+                                      "installedFile": MANIFEST["installedFile"]},
+                                     indent=2) + "\n")
             for name in ("fonts_list.yaml", "LICENSES.md"):
                 dest.write(ROOT / name, name)
             for path in (ROOT / "fonts").glob("LICENSE-*"):
@@ -155,7 +170,7 @@ def build(base, font, output, revision=None):
                 print("::notice title=Android font metrics::Verified no-visible-glyph carrier; "
                       f"UPM={metrics['unitsPerEm']}; hhea={metrics['hhea']}; "
                       f"SHA256={carrier['sha256']}")
-                print("::notice title=WenYuan metric normalization::"
+                print("::notice title=Primary font metric normalization::"
                       f"hhea {metric_report['original']['hhea']} -> {metric_report['normalized']['hhea']}; "
                       f"digitInkY={metric_report['digitInkY']}; "
                       f"win={metric_report['normalized']['win']}; "

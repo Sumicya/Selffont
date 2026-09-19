@@ -43,7 +43,7 @@ def digit_bounds(font):
 
 
 def verify_metric_carrier(data):
-    """Reject a full Roboto: it would steal visible glyphs from WenYuan."""
+    """Reject a full Roboto: it would steal visible glyphs from the primary font."""
     with TTFont(io.BytesIO(data)) as font:
         cmap = font.getBestCmap() or {}
         visible = [cp for cp, glyph in cmap.items()
@@ -80,7 +80,8 @@ def verify_font(path, manifest=None):
         if axes.get("wght") != (100, 400, 900) or axes.get("ital") != (0, 0, 1):
             raise ValueError("Expected wght=100..900 and ital=0..1")
         cmap = font.getBestCmap()
-        missing = [c for c in "你好中国圆体Abc0123456789" if ord(c) not in cmap]
+        baseline = manifest["baselineCharacters"]
+        missing = [c for c in baseline if ord(c) not in cmap]
         if missing:
             raise ValueError(f"Missing baseline characters: {missing}")
         return {"sha256": digest, "family": manifest["family"], "axes": axes,
@@ -124,7 +125,10 @@ def main():
             download(staged)
         report = verify_font(staged)
         staged.replace(args.output / MANIFEST["file"])
-    shutil.copyfile(ROOT / "licenses/WenYuan-OFL.txt", args.output / "OFL.txt")
+    license_source = ROOT / "licenses" / MANIFEST["licenseFile"]
+    if not license_source.is_file():
+        raise ValueError(f"License file {MANIFEST['licenseFile']} missing from licenses/")
+    shutil.copyfile(license_source, args.output / MANIFEST["licenseFile"])
     (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 

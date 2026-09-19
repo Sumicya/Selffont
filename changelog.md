@@ -1,5 +1,15 @@
 # 更新日志
 
+## v1.4.1（2026-09-17）
+
+继续三化重构与主字体更换准备。字体资源不变：文渊原版与其 SHA-256 同 v1.4.0 逐字节一致；变更在打包、契约测试与文档。
+
+- 现代化：新增 `Typeface.create(Typeface,int,boolean)`（API 28+）与 `Typeface.create(Typeface,int)` 两个静态入口 Hook，对齐 MFGA 上游 2026-09-15 `fix: some basics`（`32c0ed6`），补齐直调路径；重入由既有 `ReplacementGuard` 保护，`create(String,int)` 刻意不 Hook（名字解析留给框架/familyset）。Hook 面提取为纯谓词 `HookTarget`，PolicyTest 增加主机侧覆盖断言。上游同批的 compileSdk/targetSdk 37 与静态字重分档不采用：目标设备在 API 36 验证，字重分档与 `wght` 100–900 可变字体策略冲突。
+- 自由化：模块新增生成的 `font.conf`（`SELFFONT_INSTALLED_FONT`），`customize.sh`／`diagnose.sh`／`device_state.sh` 不再硬编码安装文件名；`prepare_font.py` 从 `font-source.json` 读许可文件与基线字符（新增 `licenseFile`／`baselineCharacters`）；打包器另生成 `webroot/font.json`，诊断页 local() 探针读取其中家族名（离线保留静态回退）；代码注释不再硬编码字体名；新增契约测试 `tests/test_font_swap.py`——家族名/安装文件名/许可证名只允许出现在配置、FontIdentity、许可证与文档，代码出现即 CI 失败。
+- 原生化：策略不变（仅原生平台 API，不强塞 JNI）；新增 Hook 同为框架原生入口。
+- CI 修复：`android-actions/setup-android@v4` 默认仍请求 Google 已于 2026-09-15 停服的 `tools` 包，导致该步骤自当日起全部失败（上游 android-actions/setup-android#537）；显式指定 `packages: platform-tools`（与 MFGA `32c0ed6` 同改）。
+- 字体更换准备：新增 `docs/font-swap.md`（候选字体要求、变更清单、校验与真机验收路径）；README 中/英精简，细节移入 docs/；模块版本 v1.4.1。
+
 ## v1.4.0（2026-09-12）
 
 面向 Android 16 / Oplus(oplus/oppo/oneplus/realme) / KernelSU 的文渊圆体系统字体模块 + 只读诊断 APK。真机安装、完整字体模块与网页覆盖标注为待验证（见 docs/validation.md）。

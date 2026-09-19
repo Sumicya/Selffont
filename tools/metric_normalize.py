@@ -3,13 +3,13 @@
 
 Root cause of low/clipped compact digits (notification group counts, red-dot
 badges, clock, chips): a control MEASURES its fixed slot with the nominal Roboto
-metrics carrier, but DRAWS the number with the WenYuan fallback, whose real hhea
-ascent/descent are larger. Skia derives Paint FontMetrics from hhea (or typo when
-USE_TYPO_METRICS is set), so the baseline is pushed down by the larger fallback
-ascent and the glyph ink overshoots the slot.
+metrics carrier, but DRAWS the number with the primary-font fallback, whose real
+hhea ascent/descent are larger. Skia derives Paint FontMetrics from hhea (or typo
+when USE_TYPO_METRICS is set), so the baseline is pushed down by the larger
+fallback ascent and the glyph ink overshoots the slot.
 
-The fix normalises WenYuan's OWN hhea/typo line metrics to the carrier's nominal
-metrics (scaled to WenYuan's units-per-em). Then measure-with-nominal and
+The fix normalises the primary font's OWN hhea/typo line metrics to the carrier's
+nominal metrics (scaled to its units-per-em). Then measure-with-nominal and
 draw-with-fallback agree, so the baseline lands where the slot expects it. Glyph
 outlines, cmap, family name and fvar axes are never touched, so bold, italic,
 small-caps, language shaping and original codepoints are all preserved. The

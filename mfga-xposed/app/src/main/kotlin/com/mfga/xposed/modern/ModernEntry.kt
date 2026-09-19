@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import com.mfga.xposed.FontForceCore
 import com.mfga.xposed.GeckoFontPolicy
+import com.mfga.xposed.HookTarget
 import com.mfga.xposed.ReplacementGuard
 import com.mfga.xposed.TargetPlatform
 import com.mfga.xposed.diagnostics.BadgeDrawObserver
@@ -54,12 +55,12 @@ class ModernEntry : XposedModule() {
             Typeface.Builder::class.java, Typeface.CustomFallbackBuilder::class.java, Typeface::class.java
         )) {
             for (method in cls.declaredMethods) {
-                val name = method.name
-                val wanted = if (cls == Typeface::class.java) {
-                    name == "createFromAsset" || name == "createFromFile"
-                } else {
-                    name == "build" && method.parameterCount == 0
-                }
+                // Pure signature predicate (host-tested in PolicyTest): builder
+                // #build(), asset/file factories and the classic
+                // create(Typeface, int[, boolean]) static factories.
+                val wanted = HookTarget.isWanted(
+                    cls.simpleName, method.name, method.parameterTypes.map { it.name }
+                )
                 if (!wanted || method.returnType != Typeface::class.java) continue
                 val firstHit = AtomicBoolean()
                 val firstFailure = AtomicBoolean()

@@ -1,4 +1,5 @@
 {
+  "_comment": "Single source of truth for the installed primary font. Every host tool, the Kotlin FontIdentity contract test and the on-device font.conf derive from these fields. Swapping the primary font means editing this file (plus FontIdentity.kt, licenses/ and config/module.json) - see docs/font-swap.md.",
   "project": "takushun-wu/WenYuanFonts",
   "version": "v1.010",
   "family": "WenYuan Rounded SC VF",
@@ -8,5 +9,7 @@
   "sha256": "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122",
   "url": "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf",
   "apiUrl": "https://api.github.com/repos/takushun-wu/WenYuanFonts/contents/vf/WenYuanRoundedSCVF.ttf?ref=v1.010",
-  "licenseUrl": "https://github.com/takushun-wu/WenYuanFonts/blob/v1.010/LICENSE.md"
+  "licenseFile": "WenYuan-OFL.txt",
+  "licenseUrl": "https://github.com/takushun-wu/WenYuanFonts/blob/v1.010/LICENSE.md",
+  "baselineCharacters": "你好中国圆体Abc0123456789"
 }

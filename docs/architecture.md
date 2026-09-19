@@ -15,10 +15,10 @@
 |---|---|---|
 | 字体来源 `config/font-source.json` | 版本、哈希、家族名、安装文件名、许可 | 下载后擅自换源或改字形 |
 | 主机工具 `prepare_font.py` / `font_config.py` / `build_module.py` | 校验字体、生成字体族配置、从显式基础 ZIP 取补充字体 | 执行基础包脚本、操作设备 |
-| KSU 安装 | 环境门槛、整份配置挂载准备 | 开机改权限、自动停应用、自动清理缓存 |
+| KSU 安装 | 环境门槛、整份配置挂载准备、携带打包期生成的 `font.conf`（安装文件名，shell 侧单一真源） | 开机改权限、自动停应用、自动清理缓存 |
 | `FontForceCore` | 在 Android `Typeface` 工厂（framework Java API）结果层替换家族、保留 weight/italic | 覆盖所有原生引擎、替换原方法异常或 null |
 | `GeckoFontPolicy` | 构造新的默认首选项 Map，保留原 Map 及无关设置 | 改浏览器 profile、CSS、原始文本 |
-| `ModernEntry` | 作用域内安装 Hook、探测 Gecko 接口与字体可见性、分阶段日志 | 第二套应用名单、把安装成功当作渲染成功 |
+| `ModernEntry` | 作用域内安装 Hook（Hook 面由纯谓词 `HookTarget` 决定并有主机测试）、探测 Gecko 接口与字体可见性、分阶段日志 | 第二套应用名单、把安装成功当作渲染成功 |
 | 手动 Shell / WebUI | 明确副作用与退出码、记录与恢复本版本修改的权限 | 从翻译字符串猜成功、开机自动干预 |
 
 只为当前明确的两种加载路径建立接口，不预先创建覆盖所有 ROM 或所有渲染器的插件框架。Gecko 只依赖运行时类探测，不捆绑 GeckoView AAR。

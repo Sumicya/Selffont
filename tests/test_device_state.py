@@ -1,5 +1,6 @@
 """Privacy and path-boundary checks for the read-only Android state report."""
 import hashlib
+import json
 import os
 import subprocess
 import tempfile
@@ -7,11 +8,12 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FONT = 'Selffont-WenYuanRoundedSCVF.ttf'
+MANIFEST = json.loads((ROOT / "config/font-source.json").read_text())
+FONT = MANIFEST['installedFile']
 
 
 class DeviceStateTests(unittest.TestCase):
-    def report(self, running=False):
+    def report(self, running=False, font_conf=True):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             mod, system, proc, binaries = (root/name for name in ('mod', 'system', 'proc', 'bin'))
@@ -19,6 +21,8 @@ class DeviceStateTests(unittest.TestCase):
                 directory.mkdir(parents=True)
             for path in (mod/'system/fonts'/FONT, system/'fonts'/FONT):
                 path.write_bytes(b'public fixture font')
+            if font_conf:
+                (mod/'font.conf').write_text(f"SELFFONT_INSTALLED_FONT={FONT}\n")
             (mod/'module.prop').write_text('id=MFGA\nversion=test\nprivate_key=not-for-report\n')
             (mod/'fonts.xml').write_text('<familyset/>')
             (system/'etc/fonts.xml').write_text('<familyset/>')
@@ -53,3 +57,15 @@ class DeviceStateTests(unittest.TestCase):
         self.assertIn('not proof of app-UID access', result)
         self.assertIn(hashlib.sha256(b'different namespace font').hexdigest(), result)
         self.assertIn(hashlib.sha256(b'public fixture font').hexdigest(), result)
+
+    def test_pre_font_conf_module_degrades_without_crashing(self):
+        result = self.report(running=True, font_conf=False)
+        self.assertIn('[font-conf-missing]', result)
+        # The report still completes; the per-process primary-font view is
+        # skipped rather than guessed when the module ships no font.conf.
+        self.assertIn('main_pid=123', result)
+        self.assertNotIn(hashlib.sha256(b'different namespace font').hexdigest(), result)
+
+
+if __name__ == '__main__':
+    unittest.main()

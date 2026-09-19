@@ -24,6 +24,10 @@ jobs:
         with:
           gradle-version: '9.5.0'
       - uses: android-actions/setup-android@v4
+        with:
+          # The action's default still requests the deprecated 'tools'
+          # package, which Google stopped serving on 2026-09-15.
+          packages: platform-tools
       - name: Install Android 16 SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Test policies and build diagnostic APK

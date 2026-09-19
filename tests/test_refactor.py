@@ -149,11 +149,20 @@ class PackagingTests(unittest.TestCase):
                 self.assertNotIn('updateJson', z.read('module.prop').decode())
                 self.assertEqual(z.read('service.sh'), (ROOT/'script/service.sh').read_bytes())
                 self.assertIn('licenses/MFGA-base-LICENSES.md', z.namelist())
-                self.assertIn('licenses/WenYuan-OFL.txt', z.namelist())
+                self.assertIn('licenses/' + MANIFEST['licenseFile'], z.namelist())
                 self.assertIn('collect_logs.sh', z.namelist())
                 self.assertIn('filter_logs.awk', z.namelist())
                 self.assertIn('module-report.json', z.namelist())
+                # On-device identity of the installed primary font is generated,
+                # never hardcoded in shell (font swap: docs/font-swap.md).
+                self.assertEqual(
+                    z.read('font.conf'),
+                    f"SELFFONT_INSTALLED_FONT={MANIFEST['installedFile']}\n".encode())
+                web_font = json.loads(z.read('webroot/font.json'))
+                self.assertEqual(web_font['family'], MANIFEST['family'])
+                self.assertEqual(web_font['installedFile'], MANIFEST['installedFile'])
                 report = json.loads(z.read('module-report.json'))
+                self.assertEqual(report['installedFile'], MANIFEST['installedFile'])
                 self.assertEqual(report['androidMetricsCarrier']['visibleCodepoints'], 0)
                 # The dynamic-weight ladder was validated against the packaged font.
                 self.assertEqual(report['dynamicWeightAxes'],
@@ -343,6 +352,7 @@ class InstallerTests(unittest.TestCase):
             for src, dst in [('script/search_dirs.sh','search_dirs.sh'), ('fonts_list.yaml','fonts_list.yaml')]:
                 shutil.copyfile(ROOT/src, mod/dst)
             (mod/'fonts.xml').write_text('<familyset/>')
+            (mod/'font.conf').write_text(f"SELFFONT_INSTALLED_FONT={MANIFEST['installedFile']}\n")
             (system/'etc/font_fallback.xml').write_text('<old/>')
             (system/'etc/fonts_customization.xml').write_text('<fonts-modification/>')
             (bin_dir/'getprop').write_text(f'#!/bin/sh\ncase "$1" in *brand) echo "{brand}";; *manufacturer) echo "{manufacturer}";; *) echo zh-CN;; esac\n')
