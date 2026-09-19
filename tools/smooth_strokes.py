@@ -1077,26 +1077,24 @@ def rebuild_stroke(model, center_s, widths_s, others, other_polys=None):
     # modulation (low frequency) while killing the hand-drawn jitter
     # (high frequency); the result is by definition no rougher than
     # the source, and rail and tip arcs are the same material (no
-    # welded seam). 15-sample box x 4 passes (sigma ~69u) at 8u
-    # spacing: kills the 100-300u S-waves of the source edge (the
-    # "波浪" the source carries on long 撇 / 弯钩) while keeping the
-    # long calligraphic bow (600u+, ~60-70% preserved); a single
-    # flipped pairing outlier is diluted ~15x per pass.
-    def _lowpass(rail, half, iters):
+    # welded seam). 7-sample box x 3 passes (sigma ~26u) at 8u
+    # spacing; a single flipped pairing outlier is diluted ~7x per
+    # pass, so three passes erase it.
+    def _lowpass(rail):
         pts = [tuple(p) for p in rail]
-        for _ in range(iters):
+        for _ in range(3):
             new = [pts[0]]
             for i in range(1, m - 1):
-                lo = max(0, i - half)
-                hi = min(m, i + half + 1)
+                lo = max(0, i - 3)
+                hi = min(m, i + 4)
                 c = hi - lo
                 new.append((sum(pts[j][0] for j in range(lo, hi)) / c,
                             sum(pts[j][1] for j in range(lo, hi)) / c))
             new.append(pts[-1])
             pts = new
         return pts
-    left = _lowpass(rail_p, 7, 4)
-    right = _lowpass(rail_q, 7, 4)
+    left = _lowpass(rail_p)
+    right = _lowpass(rail_q)
 
     # rails must keep exactly m points so the 全端半圆 cut indices
     # (kA/kB, defined on the centerline) index the rails correctly
