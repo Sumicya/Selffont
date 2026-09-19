@@ -918,33 +918,41 @@ def op_tishou_shorten(font, chars):
         (iA, A), (iB, B) = cross
         kmin = min(range(n), key=lambda k: dense[k][1])
 
-        def arc_pts(start, end):
+        def arc_pts(start, end, chain, total_n):
             out, k = [], start
             while k != end:
-                out.append(dense[k])
-                k = (k + 1) % n
+                out.append(chain[k])
+                k = (k + 1) % total_n
             return out
 
         # bottom arc = the arc between A and B that contains kmin
-        bottom_is_i_to_j = kmin in arc_pts(iA, iB)
-        # cap: half disk with chord AB (horizontal, both on y_cut), bulging down
-        cx = (A[0] + B[0]) / 2
-        r = abs(A[0] - B[0]) / 2
+        bottom_is_i_to_j = kmin in arc_pts(iA, iB, dense, n)
+        L = A if A[0] < B[0] else B
+        R = B if A[0] < B[0] else A
+        cx = (L[0] + R[0]) / 2
+        r = abs(R[0] - L[0]) / 2
         if not (18 <= r <= 90):
             continue
-        p_from = B if A[0] < B[0] else A  # cap traversed ring-direction
-        p_to = A if A[0] < B[0] else B
-        a0 = 0.0 if p_from[0] > cx else math.pi
-        a1 = math.pi if p_from[0] > cx else 0.0
-        step = (a1 - a0) / 6
-        cap = [(cx + r * math.cos(a0 + step * k), y_cut + r * math.sin(a0 + step * k))
-               for k in range(1, 7)]
+        # cap: half disk from R -> L, bulging DOWN (angle 0 -> -pi)
+        n_cap = 6
+        step = -math.pi / n_cap
+        cap = [(cx + r * math.cos(step * k), y_cut + r * math.sin(step * k))
+               for k in range(1, n_cap)]
         new_ring = []
         if bottom_is_i_to_j:
-            # original direction: A -> bottom -> B; replace with A -> cap -> B
-            new_ring = [A] + cap + arc_pts((iB + 1) % n, iA)
+            if A[0] > B[0]:
+                new_ring = [A, *cap, B, *arc_pts((iB + 1) % n, iA, dense, n)]
+            else:
+                cap_rev = [(cx + r * math.cos(-math.pi - step * k), y_cut + r * math.sin(-math.pi - step * k))
+                           for k in range(1, n_cap)]
+                new_ring = [A, *cap_rev, B, *arc_pts((iB + 1) % n, iA, dense, n)]
         else:
-            new_ring = [B] + cap + arc_pts((iA + 1) % n, iB)
+            if B[0] > A[0]:
+                new_ring = [B, *cap, A, *arc_pts((iA + 1) % n, iB, dense, n)]
+            else:
+                cap_rev = [(cx + r * math.cos(-math.pi - step * k), y_cut + r * math.sin(-math.pi - step * k))
+                           for k in range(1, n_cap)]
+                new_ring = [B, *cap_rev, A, *arc_pts((iA + 1) % n, iB, dense, n)]
         if len(new_ring) < 12:
             continue
         ob = (min(p[0] for p in ring), ymin, max(p[0] for p in ring),
@@ -956,7 +964,7 @@ def op_tishou_shorten(font, chars):
         if (nb[0] < ob[0] - 3 or nb[2] > ob[2] + 3 or nb[3] > ob[3] + 3):
             continue
         a1s, a2s = _signed_area(ring), _signed_area(new_ring)
-        if a1s * a2s <= 0 or not (0.8 <= a2s / a1s <= 1.05):
+        if a1s * a2s <= 0 or not (0.70 <= a2s / a1s <= 1.05):
             continue
         new_contours = []
         for (s2, e2) in spans:
@@ -1119,7 +1127,7 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "build/font-edited.ttf")
     parser.add_argument("--ops", nargs="*",
                         choices=["roof-dot-to-stem", "roof-bar-round",
-                                 "round-terminals",
+                                 "round-terminals", "tishou-shorten",
                                  "smooth-strokes"],
                         default=[])
     parser.add_argument("--all", action="store_true",
@@ -1154,6 +1162,10 @@ def main():
         r = op_round_terminals(
             font, gb2312_chars() if args.all else list(args.round_chars))
         report["round-terminals"] = _summarize(r)
+    if "tishou-shorten" in args.ops:
+        r = op_tishou_shorten(
+            font, gb2312_chars() if args.all else ["打", "提", "找", "指"])
+        report["tishou-shorten"] = _summarize(r)
     if "smooth-strokes" in args.ops:
         # Runs last: round-terminals has rebuilt the straight bars into clean
         # stadia, which the smooth pass detects and leaves untouched; it only

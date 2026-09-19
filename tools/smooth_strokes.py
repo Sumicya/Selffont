@@ -485,9 +485,13 @@ def extract_stroke(ring, reason=None):
         return idx
 
     D = min(0.4 * med, 45.0)
-    # end_a's tip is ring[min(a,b)] (d1[0]), end_b's is ring[max(a,b)]
-    blunt_a = (not cut_at_start and v_opening(min(a, b)) > 0.55 * med)
-    blunt_b = (not cut_at_end and v_opening(max(a, b)) > 0.55 * med)
+    # Blunt splicing retired: splicing raw un-smoothed source arcs back
+    # preserves the source's wobbles, bumps, and un-round teardrop ends,
+    # and leaves a tangent kink with the low-passed rails. Instead, let
+    # end_model classify as taper/flat so rebuild_stroke builds
+    # mathematically smooth rails and full round heads (semicircle heads).
+    blunt_a = False
+    blunt_b = False
 
     def blunt_end(tip, at_start):
         """('blunt', tip, arc, c1, c2). arc = original dense ring points
