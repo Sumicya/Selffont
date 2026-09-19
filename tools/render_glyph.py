@@ -13,13 +13,17 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import sys
 
 from PIL import Image, ImageDraw, ImageFont
 from fontTools.ttLib import TTFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from font_config import SOURCE_FONT_PATH
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_FONTS = [
-    ('src', str(REPO / 'build/font/WenYuanRoundedSCVF.ttf')),
+    ('src', str(SOURCE_FONT_PATH)),
     ('edit', str(REPO / 'build/font-edited.ttf')),
 ]
 

@@ -24,7 +24,11 @@ def sample_quad(p0, c, p1, steps=10):
     return out
 
 
+from font_config import SOURCE_FONT_PATH
+
+
 def expand(pts):
+
     """[(x, y, on)] closed ring -> dense polyline sampling the quads."""
     n = len(pts)
     on_idx = [i for i in range(n) if pts[i][2]]
@@ -87,7 +91,7 @@ def main():
     out = args[0]
     text = args[1]
     size = 500
-    fo = "build/font/WenYuanRoundedSCVF.ttf"
+    fo = str(SOURCE_FONT_PATH)
     fe = "build/font-edited.ttf"
     crop = None
     i = 2

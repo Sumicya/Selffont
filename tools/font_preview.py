@@ -21,12 +21,14 @@ import json
 import os
 import sys
 
+from font_config import SOURCE_FONT_PATH
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONT_DIR = os.path.join(ROOT, "build")
 
 # (url, path, mime)
 FILES = {
-    "/font/orig.ttf": (os.path.join(FONT_DIR, "font", "WenYuanRoundedSCVF.ttf"), "font/ttf"),
+    "/font/orig.ttf": (str(SOURCE_FONT_PATH), "font/ttf"),
     "/font/edit.ttf": (os.path.join(FONT_DIR, "font-edited.ttf"), "font/ttf"),
 }
 

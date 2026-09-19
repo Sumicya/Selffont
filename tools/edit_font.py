@@ -30,6 +30,7 @@ import fontTools.ttLib.tables.ttProgram as ttProgram
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
 
+from font_config import SOURCE_FONT_PATH
 import smooth_strokes
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1123,7 +1124,7 @@ def gb2312_chars():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path,
-                        default=ROOT / "build/font/WenYuanRoundedSCVF.ttf")
+                        default=SOURCE_FONT_PATH)
     parser.add_argument("--output", type=Path, default=ROOT / "build/font-edited.ttf")
     parser.add_argument("--ops", nargs="*",
                         choices=["roof-dot-to-stem", "roof-bar-round",

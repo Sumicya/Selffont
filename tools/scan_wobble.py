@@ -111,7 +111,7 @@ def main():
             i += 2
             continue
         i += 1
-    fo = TTFont("build/font/WenYuanRoundedSCVF.ttf")
+    fo = TTFont(str(ov.SOURCE_FONT_PATH))
     fe = TTFont("build/font-edited.ttf")
     for ch in text:
         ro = [resample(ov.expand(r)) for r in ov.rings(fo, ch)]

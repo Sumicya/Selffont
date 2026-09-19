@@ -18,10 +18,12 @@ from pathlib import Path
 
 from fontTools.subset import Subsetter, Options
 
+from font_config import SOURCE_FONT_PATH
+
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "build" / "preview"
 
-ORIG = REPO / "build" / "font" / "WenYuanRoundedSCVF.ttf"
+ORIG = SOURCE_FONT_PATH
 EDITED = REPO / "build" / "font-edited.ttf"
 PAGE = REPO / "tools" / "font-preview.html"
 

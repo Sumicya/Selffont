@@ -9,6 +9,7 @@ Usage: .venv/bin/python tools/probe_strokes.py '题兔免提北打找指'
 import sys
 
 sys.path.insert(0, "tools")
+from font_config import SOURCE_FONT_PATH  # noqa: E402
 from fontTools.ttLib import TTFont  # noqa: E402
 
 import edit_font as E  # noqa: E402
@@ -60,7 +61,7 @@ def diagnose(pts, others, other_polys):
 
 
 def main():
-    font = TTFont("build/font/WenYuanRoundedSCVF.ttf")
+    font = TTFont(str(SOURCE_FONT_PATH))
     E.op_round_terminals(font, CHARS)  # production order: round first
     glyf = font["glyf"]
     cmap = font.getBestCmap()

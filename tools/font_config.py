@@ -1,7 +1,14 @@
 """Build the Android-16 font-family policy without editing any font binary."""
+import json
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from fontTools.ttLib import TTFont
+
+ROOT = Path(__file__).resolve().parents[1]
+_SOURCE_MANIFEST = json.loads((ROOT / "config/font-source.json").read_text())
+SOURCE_FONT_FILENAME = _SOURCE_MANIFEST["installedFile"]
+SOURCE_FONT_PATH = ROOT / "build/font" / SOURCE_FONT_FILENAME
 
 METRIC_CARRIER = "Roboto-Regular.ttf"
 
