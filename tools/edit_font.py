@@ -1110,8 +1110,10 @@ def op_remove_hooks(font, chars=("九", "刀", "丸", "兔", "免", "北", "儿"
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
             c2 = contour_points(g, spans[2][0], spans[2][1])
-            cap = _ellipse_arc(569.5, -28.5, 33.0, 33.0, -90, -270)
-            new_c1 = c1[4:36] + cap[1:-1]
+            p_inner = c1[11][:2]
+            p_outer = c1[28][:2]
+            cap = make_semicircle_cap(p_outer, p_inner, (0, -1), target_w=66.0)
+            new_c1 = c1[11:29] + cap[1:-1]
             _drop_variations(font, gname)
             set_glyph_contours(g, [c0, new_c1, c2])
             report[ch] = {"status": "hook-removed"}
@@ -1158,18 +1160,6 @@ def op_remove_hooks(font, chars=("九", "刀", "丸", "兔", "免", "北", "儿"
                 pts = contour_points(g, s, e)
                 if idx == 1:
                     new_contours.append(pts[:26] + cap[1:-1])
-                else:
-                    new_contours.append(pts)
-            _drop_variations(font, gname)
-            set_glyph_contours(g, new_contours)
-            report[ch] = {"status": "hook-removed"}
-        elif ch == '手':
-            cap = _ellipse_arc(500.0, -40.0, 33.0, 33.0, 90, -90)
-            new_contours = []
-            for idx, (s, e) in enumerate(spans):
-                pts = contour_points(g, s, e)
-                if idx == 3:
-                    new_contours.append(pts[:24] + cap[1:-1])
                 else:
                     new_contours.append(pts)
             _drop_variations(font, gname)
@@ -1284,9 +1274,9 @@ def make_true_rounded_rect(x0, y0, x1, y1, r, ccw=False):
     return pts
 
 
-def op_dots_to_circles(font, chars=("丸", "买", "卖", "兔", "哭", "灰", "太", "犬", "术")):
-    """点变圆：将所有零散的“点”（如丸的内点、买卖的下两点、兔的肚内点、哭的大上点、灰中两点等）
-    重塑为规则的标准正圆（8点二次贝塞尔真圆），直径严格统一为 66u（半径 33u），消除任何不规则多边形或生硬折角。"""
+def op_dots_to_circles(font, chars=("买", "卖", "兔", "哭", "太", "犬", "术")):
+    """点变圆：将所有独立浮空的“点”（如买卖的下两点、兔的肚内点、哭的大上点等）
+    重塑为规则的标准正圆（8点二次贝塞尔真圆），直径严格统一为 72u（半径 36u），消除任何不规则多边形或生硬折角。"""
     glyf = font["glyf"]
     cmap = font.getBestCmap()
     report = {}
@@ -1299,35 +1289,28 @@ def op_dots_to_circles(font, chars=("丸", "买", "卖", "兔", "哭", "灰", "�
         spans = split_contours(g)
         new_contours = [contour_points(g, s, e) for s, e in spans]
 
-        if ch == '丸' and len(new_contours) > 1:
-            new_contours[1] = make_circle(347.5, 277.0, 33)
-            report[ch] = {"status": "dot-to-circle"}
-        elif ch == '买' and len(new_contours) > 4:
-            new_contours[3] = make_circle(339.0, 564.5, 33)
-            new_contours[4] = make_circle(228.0, 421.0, 33)
+        if ch == '买' and len(new_contours) > 4:
+            new_contours[3] = make_circle(339.0, 564.5, 36)
+            new_contours[4] = make_circle(228.0, 421.0, 36)
             report[ch] = {"status": "dots-to-circles"}
         elif ch == '卖' and len(new_contours) > 4:
-            new_contours[3] = make_circle(348.5, 424.5, 33)
-            new_contours[4] = make_circle(246.0, 331.5, 33)
+            new_contours[3] = make_circle(348.5, 424.5, 36)
+            new_contours[4] = make_circle(246.0, 331.5, 36)
             report[ch] = {"status": "dots-to-circles"}
         elif ch == '兔' and len(new_contours) > 2:
-            new_contours[2] = make_circle(753.5, 145.0, 33)
+            new_contours[2] = make_circle(740.0, 215.0, 36)
             report[ch] = {"status": "dot-to-circle"}
         elif ch == '哭' and len(new_contours) > 7:
-            new_contours[7] = make_circle(749.5, 408.5, 33)
+            new_contours[7] = make_circle(749.5, 408.5, 36)
             report[ch] = {"status": "dot-to-circle"}
-        elif ch == '灰' and len(new_contours) > 4:
-            new_contours[3] = make_circle(415.5, 359.5, 33)
-            new_contours[4] = make_circle(789.5, 374.5, 33)
-            report[ch] = {"status": "dots-to-circles"}
         elif ch == '太' and len(new_contours) > 1:
-            new_contours[1] = make_circle(500.0, 75.0, 33)
+            new_contours[1] = make_circle(500.0, 75.0, 36)
             report[ch] = {"status": "dot-to-circle"}
         elif ch == '犬' and len(new_contours) > 3:
-            new_contours[3] = make_circle(710.0, 700.0, 33)
+            new_contours[3] = make_circle(710.0, 700.0, 36)
             report[ch] = {"status": "dot-to-circle"}
         elif ch == '术' and len(new_contours) > 4:
-            new_contours[4] = make_circle(730.0, 680.0, 33)
+            new_contours[4] = make_circle(730.0, 680.0, 36)
             report[ch] = {"status": "dot-to-circle"}
 
         _drop_variations(font, gname)
@@ -1366,9 +1349,9 @@ def op_square_boxes(font, chars=("题", "提", "指", "员", "哭", "是", "早"
             set_glyph_contours(g, [c_bot, c_top, c_out] + other)
             report[ch] = {"status": "square-ri-applied"}
         elif ch == '指':
-            c_out = make_true_rounded_rect(480, -20, 810, 310, 24, ccw=False)
-            c_bot = make_true_rounded_rect(546, 46, 744, 112, 10, ccw=True)
-            c_top = make_true_rounded_rect(546, 178, 744, 244, 10, ccw=True)
+            c_out = make_true_rounded_rect(460, -40, 910, 360, 24, ccw=False)
+            c_bot = make_true_rounded_rect(526, 26, 844, 127, 10, ccw=True)
+            c_top = make_true_rounded_rect(526, 193, 844, 294, 10, ccw=True)
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
             c5 = contour_points(g, spans[5][0], spans[5][1])
@@ -1466,11 +1449,33 @@ def op_round_pie_na(font, chars=("天", "丸", "九", "刀", "买", "卖", "哭"
                 new_contours[0] = [pts[0]] + cap[1:-1] + pts[8:]
                 report[ch] = {"status": "pie-na-rounded"}
         elif ch == '丸':
-            pts = new_contours[0]
-            if len(pts) > 8:
-                cap = make_semicircle_cap(pts[0][:2], pts[8][:2], (-1, -1))
-                new_contours[0] = [pts[0]] + cap[1:-1] + pts[8:]
-                report[ch] = {"status": "pie-na-rounded"}
+            pts_p = new_contours[0]
+            if len(pts_p) > 8:
+                cap_p = make_semicircle_cap(pts_p[0][:2], pts_p[8][:2], (-1, -1))
+                new_contours[0] = [pts_p[0]] + cap_p[1:-1] + pts_p[8:]
+
+            c1 = new_contours[1]
+            if len(c1) > 23:
+                p_tl_1 = c1[10][:2]
+                p_tl_2 = c1[17][:2]
+                cap_tl = make_semicircle_cap(p_tl_1, p_tl_2, (-1, 1), target_w=66.0)
+                p_br_1 = c1[23][:2]
+                p_br_2 = c1[4][:2]
+                cap_br = make_semicircle_cap(p_br_1, p_br_2, (1, -1), target_w=66.0)
+                new_contours[1] = c1[4:11] + cap_tl[1:-1] + c1[17:24] + cap_br[1:-1]
+            report[ch] = {"status": "pie-na-rounded"}
+        elif ch == '兔':
+            pts_p = new_contours[0]
+            if len(pts_p) > 7:
+                cap_p = make_semicircle_cap(pts_p[0][:2], pts_p[7][:2], (-1, -1))
+                new_contours[0] = [pts_p[0]] + cap_p[1:-1] + pts_p[7:]
+            report[ch] = {"status": "pie-na-rounded"}
+        elif ch == '免':
+            pts_p = new_contours[3]
+            if len(pts_p) > 7:
+                cap_p = make_semicircle_cap(pts_p[0][:2], pts_p[7][:2], (-1, -1))
+                new_contours[3] = [pts_p[0]] + cap_p[1:-1] + pts_p[7:]
+            report[ch] = {"status": "pie-na-rounded"}
         elif ch == '刀':
             pts = new_contours[2]
             if len(pts) > 8:
@@ -1560,11 +1565,6 @@ def op_round_pie_na(font, chars=("天", "丸", "九", "刀", "买", "卖", "哭"
             if len(pts_p) > 7:
                 cap_p = make_semicircle_cap(pts_p[0][:2], pts_p[7][:2], (-1, -1))
                 new_contours[11] = [pts_p[0]] + cap_p[1:-1] + pts_p[7:]
-
-            pts_n = new_contours[12]
-            if len(pts_n) > 4:
-                cap_n = make_semicircle_cap(pts_n[0][:2], pts_n[4][:2], (1, -1))
-                new_contours[12] = [pts_n[0]] + cap_n[1:-1] + pts_n[4:]
             report[ch] = {"status": "pie-na-rounded"}
         elif ch == '页':
             pts_p = new_contours[2]
@@ -1576,22 +1576,6 @@ def op_round_pie_na(font, chars=("天", "丸", "九", "刀", "买", "卖", "哭"
             if len(pts_n) > 5:
                 cap_n = make_semicircle_cap(pts_n[0][:2], pts_n[5][:2], (1, -1))
                 new_contours[3] = [pts_n[0]] + cap_n[1:-1] + pts_n[5:]
-            report[ch] = {"status": "pie-na-rounded"}
-        elif ch == '灰':
-            pts_p1 = new_contours[1]
-            if len(pts_p1) > 6:
-                cap_p1 = make_semicircle_cap(pts_p1[0][:2], pts_p1[6][:2], (-1, -1))
-                new_contours[1] = [pts_p1[0]] + cap_p1[1:-1] + pts_p1[6:]
-
-            pts_n = new_contours[2]
-            if len(pts_n) > 4:
-                cap_n = make_semicircle_cap(pts_n[0][:2], pts_n[4][:2], (1, -1))
-                new_contours[2] = [pts_n[0]] + cap_n[1:-1] + pts_n[4:]
-
-            pts_p5 = new_contours[5]
-            if len(pts_p5) > 6:
-                cap_p5 = make_semicircle_cap(pts_p5[0][:2], pts_p5[6][:2], (-1, -1))
-                new_contours[5] = [pts_p5[0]] + cap_p5[1:-1] + pts_p5[6:]
             report[ch] = {"status": "pie-na-rounded"}
         elif ch == '儿':
             pts_p = new_contours[0]
@@ -1689,8 +1673,8 @@ def op_smooth_strokes(font, chars):
     }
 
     for ch in chars:
-        if ch in ('卯', '员', '哭', '灰', '页', '是', '手', '大', '文', '品'):
-            report[ch] = "skipped: intact-plump-feet"
+        if ch in ('卯', '员', '哭', '灰', '页', '是', '手', '大', '文', '品', '九', '丸', '刀', '兔', '免', '北', '儿', '题', '提', '打', '找', '指', '天', '买', '卖', '早', '明', '把', '拔'):
+            report[ch] = "skipped: intact-geometric"
             continue
         gname = cmap.get(ord(ch))
         if not gname:
@@ -1814,7 +1798,7 @@ def main():
         report["tishou-shorten"] = _summarize(r)
     if "remove-hooks" in args.ops:
         r = op_remove_hooks(
-            font, gb2312_chars() if args.all else ["九", "刀", "丸", "兔", "免", "北", "儿", "手"])
+            font, gb2312_chars() if args.all else ["九", "刀", "丸", "兔", "免", "北", "儿"])
         report["remove-hooks"] = _summarize(r)
     if "flat-na" in args.ops:
         r = op_flat_na(
@@ -1822,7 +1806,7 @@ def main():
         report["flat-na"] = _summarize(r)
     if "dots-to-circles" in args.ops:
         r = op_dots_to_circles(
-            font, gb2312_chars() if args.all else ["丸", "买", "卖", "兔", "哭", "灰", "太", "犬", "术"])
+            font, gb2312_chars() if args.all else ["买", "卖", "兔", "哭", "太", "犬", "术"])
         report["dots-to-circles"] = _summarize(r)
     if "square-boxes" in args.ops or "square-ri" in args.ops:
         r = op_square_boxes(
@@ -1830,7 +1814,7 @@ def main():
         report["square-boxes"] = _summarize(r)
     if "round-pie-na" in args.ops:
         r = op_round_pie_na(
-            font, gb2312_chars() if args.all else ["天", "丸", "九", "刀", "买", "卖", "哭", "员", "卯", "北", "找", "题", "灰", "页", "儿", "是", "手", "大", "文"])
+            font, gb2312_chars() if args.all else ["天", "丸", "九", "刀", "买", "卖", "哭", "员", "卯", "北", "找", "题", "页", "儿", "是", "手", "大", "文"])
         report["round-pie-na"] = _summarize(r)
     font.save(args.output)
     text = json.dumps(report, indent=2, ensure_ascii=False)
