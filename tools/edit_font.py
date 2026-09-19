@@ -1067,18 +1067,10 @@ def op_round_terminals(font, chars):
 
 def op_remove_hooks(font, chars=("九", "刀", "丸")):
     """去钩平转（无挑钩）：去除九、刀、丸底部的尖硬挑钩，替换为水平延伸的标准饱满半圆胶囊头（stadium cap），
-    与手写体『儿/北』风格一致。"""
+    采用 _ellipse_arc 严格生成与『一/王』一致的 TrueType 二次贝塞尔全圆弧。"""
     glyf = font["glyf"]
     cmap = font.getBestCmap()
     report = {}
-
-    def make_right_semicircle(top, bot, apex_x):
-        my = (top[1] + bot[1]) / 2
-        return [
-            (apex_x, round(top[1], 1), 0),
-            (apex_x, round(my, 1), 1),
-            (apex_x, round(bot[1], 1), 0),
-        ]
 
     for ch in chars:
         if ord(ch) not in cmap:
@@ -1089,10 +1081,13 @@ def op_remove_hooks(font, chars=("九", "刀", "丸")):
         if ch == '九':
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
-            top, bot = c1[24], c1[0]
-            r = math.hypot(top[0] - bot[0], top[1] - bot[1]) / 2
-            apex_x = round((top[0] + bot[0]) / 2 + r, 1)
-            new_c1 = c1[:25] + make_right_semicircle(top, bot, apex_x)
+            top_y = c1[24][1]
+            bot_y = c1[0][1]
+            yc = (top_y + bot_y) / 2
+            h = top_y - bot_y
+            bulge = h / 2
+            cap = _ellipse_arc(872, yc, bulge, h / 2, 90, -90)
+            new_c1 = c1[:25] + cap[1:-1]
             _drop_variations(font, gname)
             set_glyph_contours(g, [c0, new_c1])
             report[ch] = "hook-removed"
@@ -1100,10 +1095,13 @@ def op_remove_hooks(font, chars=("九", "刀", "丸")):
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
             c2 = contour_points(g, spans[2][0], spans[2][1])
-            top, bot = c2[24], c2[0]
-            r = math.hypot(top[0] - bot[0], top[1] - bot[1]) / 2
-            apex_x = round((top[0] + bot[0]) / 2 + r, 1)
-            new_c2 = c2[:25] + make_right_semicircle(top, bot, apex_x)
+            top_y = c2[24][1]
+            bot_y = c2[0][1]
+            yc = (top_y + bot_y) / 2
+            h = top_y - bot_y
+            bulge = h / 2
+            cap = _ellipse_arc(877.5, yc, bulge, h / 2, 90, -90)
+            new_c2 = c2[:25] + cap[1:-1]
             _drop_variations(font, gname)
             set_glyph_contours(g, [c0, c1, new_c2])
             report[ch] = "hook-removed"
@@ -1111,15 +1109,13 @@ def op_remove_hooks(font, chars=("九", "刀", "丸")):
             c0 = contour_points(g, spans[0][0], spans[0][1])
             c1 = contour_points(g, spans[1][0], spans[1][1])
             c2 = contour_points(g, spans[2][0], spans[2][1])
-            bot, top = c1[35], c1[4]
-            r = math.hypot(top[0] - bot[0], top[1] - bot[1]) / 2
-            apex_x = round((bot[0] + top[0]) / 2 - r, 1)
-            arc = [
-                (apex_x, round(bot[1], 1), 0),
-                (apex_x, round((bot[1] + top[1]) / 2, 1), 1),
-                (apex_x, round(top[1], 1), 0),
-            ]
-            new_c1 = c1[4:36] + arc
+            top_y = c1[4][1]
+            bot_y = c1[35][1]
+            yc = (top_y + bot_y) / 2
+            h = top_y - bot_y
+            bulge = h / 2
+            cap = _ellipse_arc(590, yc, bulge, h / 2, -90, -270)
+            new_c1 = c1[4:36] + cap[1:-1]
             _drop_variations(font, gname)
             set_glyph_contours(g, [c0, new_c1, c2])
             report[ch] = "hook-removed"
@@ -1127,21 +1123,23 @@ def op_remove_hooks(font, chars=("九", "刀", "丸")):
 
 
 def op_square_ri_ti(font, chars=("题",)):
-    """题字左上部：重构为规范、工整的 1:1 正方形日字（正方形日字）。"""
+    """题字左上部：重构为规范、工整的 1:1 正方形日字（正方形日字），
+    且五条笔画（左右竖、顶中底三横）统一保持严格的 66u 粗细，彻底消除粗细不均。"""
     glyf = font["glyf"]
     cmap = font.getBestCmap()
     report = {}
 
-    def make_rounded_rect(x0, y0, x1, y1, r, ccw=False):
-        p = [
-            (x1 - r, y1, 1), (x1, y1, 0), (x1, y1 - r, 1),
-            (x1, y0 + r, 1), (x1, y0, 0), (x1 - r, y0, 1),
-            (x0 + r, y0, 1), (x0, y0, 0), (x0, y0 + r, 1),
-            (x0, y1 - r, 1), (x0, y1, 0), (x0 + r, y1, 1),
-        ]
+    def make_true_rounded_rect(x0, y0, x1, y1, r, ccw=False):
+        c_tr = _ellipse_arc(x1 - r, y1 - r, r, r, 90, 0)
+        c_br = _ellipse_arc(x1 - r, y0 + r, r, r, 0, -90)
+        c_bl = _ellipse_arc(x0 + r, y0 + r, r, r, -90, -180)
+        c_tl = _ellipse_arc(x0 + r, y1 - r, r, r, 180, 90)
+        pts = c_tr + c_br[1:] + c_bl[1:] + c_tl[1:]
+        if pts[-1][:2] == pts[0][:2]:
+            pts.pop()
         if ccw:
-            p = list(reversed(p))
-        return p
+            pts = list(reversed(pts))
+        return pts
 
     for ch in chars:
         if ch != '题' or ord('题') not in cmap:
@@ -1149,9 +1147,13 @@ def op_square_ri_ti(font, chars=("题",)):
         gname = cmap[ord('题')]
         g = glyf[gname]
         spans = split_contours(g)
-        c2 = make_rounded_rect(114, 476, 444, 806, 26, ccw=False)
-        c0 = make_rounded_rect(182, 534, 376, 622, 10, ccw=True)
-        c1 = make_rounded_rect(182, 668, 376, 756, 10, ccw=True)
+        # 外框 330x330, 边宽统一 66u:
+        # 左竖 [114, 180], 右竖 [378, 444] (宽 66u)
+        # 底横 [476, 542], 中横 [608, 674], 顶横 [740, 806] (高 66u)
+        # 上下内腔均为 198u x 66u
+        c2 = make_true_rounded_rect(114, 476, 444, 806, 24, ccw=False)
+        c0 = make_true_rounded_rect(180, 542, 378, 608, 10, ccw=True)
+        c1 = make_true_rounded_rect(180, 674, 378, 740, 10, ccw=True)
         other = [contour_points(g, spans[i][0], spans[i][1]) for i in range(3, len(spans))]
         _drop_variations(font, gname)
         set_glyph_contours(g, [c0, c1, c2] + other)
@@ -1171,8 +1173,8 @@ def op_smooth_strokes(font, chars):
     cmap = font.getBestCmap()
     report = {}
     for ch in chars:
-        if ch in ('卯', '员'):
-            report[ch] = "skipped: intact-round-heads"
+        if ch in ('卯', '员', '哭'):
+            report[ch] = "skipped: intact-plump-feet"
             continue
         gname = cmap.get(ord(ch))
         if not gname:
