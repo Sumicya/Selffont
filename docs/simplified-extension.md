@@ -14,6 +14,8 @@ recipe("马", ("馬", all_contours, body_only), ("一", all_contours, bar_over_f
 - **造形器**把选中的轮廓变换成新字的轮廓：`translate`/`fit`/`mirror_left`/`without_feet`/`simplified_box`/`bar_over_feet`。
 - 造形可以读上下文（`context["built"]`、`context["notes"]`），所以"马"的底横能放进"去掉的脚所占据的那条带子"里，而不是靠硬编码坐标。
 
+![五个字重的派生简体](images/simplified-extension.png)
+
 ## 这一批做了什么
 
 | 字 | 来源 | 手法 |
