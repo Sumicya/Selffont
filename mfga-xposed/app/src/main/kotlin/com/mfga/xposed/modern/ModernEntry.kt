@@ -5,9 +5,9 @@ import android.os.Build
 import android.util.Log
 import com.mfga.xposed.FontForceCore
 import com.mfga.xposed.GeckoFontPolicy
+import com.mfga.xposed.HookTarget
 import com.mfga.xposed.ReplacementGuard
 import com.mfga.xposed.TargetPlatform
-import com.mfga.xposed.diagnostics.BadgeDrawObserver
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
@@ -18,7 +18,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Scope is owned exclusively by LSPosed. No package-name allowlist. */
 class ModernEntry : XposedModule() {
     private val installed = HashSet<Method>()
-    private val badges = BadgeDrawObserver { priority, message -> log(priority, TAG, message) }
 
     override fun onPackageReady(param: PackageReadyParam) {
         val nativelySupported =
@@ -40,9 +39,7 @@ class ModernEntry : XposedModule() {
         log(Log.INFO, TAG, "[attach] phase1 modern-api102 package=" + param.packageName)
         if ("com.android.systemui" == param.packageName) {
             // Manager scope is still required. Never opt SystemUI in automatically.
-            // Diagnostic mode must not change the Typeface we are trying to observe.
-            log(Log.INFO, TAG, "[badge-diagnostic-only] SystemUI drawing is observed, not replaced")
-            badges.install(this::install)
+            log(Log.INFO, TAG, "[scope-skip] SystemUI is not a target; scope the app itself")
             return
         }
         installTypefaceHooks()
@@ -54,12 +51,12 @@ class ModernEntry : XposedModule() {
             Typeface.Builder::class.java, Typeface.CustomFallbackBuilder::class.java, Typeface::class.java
         )) {
             for (method in cls.declaredMethods) {
-                val name = method.name
-                val wanted = if (cls == Typeface::class.java) {
-                    name == "createFromAsset" || name == "createFromFile"
-                } else {
-                    name == "build" && method.parameterCount == 0
-                }
+                // Pure signature predicate (host-tested in PolicyTest): builder
+                // #build(), asset/file factories and the classic
+                // create(Typeface, int[, boolean]) static factories.
+                val wanted = HookTarget.isWanted(
+                    cls.simpleName, method.name, method.parameterTypes.map { it.name }
+                )
                 if (!wanted || method.returnType != Typeface::class.java) continue
                 val firstHit = AtomicBoolean()
                 val firstFailure = AtomicBoolean()

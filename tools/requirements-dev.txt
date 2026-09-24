@@ -1,2 +1,6 @@
 -r requirements.txt
 ruff==0.16.7
+fonttools==4.65.0
+# tools/preview.py --render only (host review sheet; never used by the build)
+freetype-py==2.5.1
+pillow==11.3.0

@@ -1,40 +1,15 @@
-Copyright (c) 2024-2026, Takushun Wu (https://github.com/takushun-wu/),
-with Reserved Font Name 'WenYuan Sans', '<span lang="zh-Hans">文渊黑体</span>', 'WenYuan Serif', '<span lang="zh-Hans">文渊宋体</span>', 'WenYuan Rounded', '<span lang="zh-Hans">文渊圆体</span>'.
-
-Copyright 2010-2025 Adobe (http://www.adobe.com/), with Reserved Font
-Name 'Source'. All Rights Reserved. Source is a trademark of Adobe in the United States
-and/or other countries.
-
-Copyright 2021-2025 Tamcy (https://github.com/chiron-fonts/chiron-sung-hk).
-
-Copyright 2022-2025 Shanggu Fonts (https://github.com/GuiWonder/Shanggu).
-
-© 2007–2024 Adobe, But Ko, CMEX, Creative Commons Corporation, GlyphWiki & Night Koo.
-
-Copyright 2022 The Noto Project Authors (https://github.com/notofonts/). Noto is a trademark of Google Inc.
-
-Saudi Riyal Font © Emran Alhaddad - Used under SIL Open Font License 1.1
-
-Copyright 2024 The SN Pro Project Authors (https://github.com/supernotes/sn-pro)
-&nbsp;
-
+Copyright 2021 The Zen Maru Gothic Project Authors (https://github.com/googlefonts/zen-marugothic)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
-https\://openfontlicense.org
-&nbsp;
+http://scripts.sil.org/OFL
 
-\----------------------------------------------------------------------
 
-#### SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
-
-\----------------------------------------------------------------------
-
-&nbsp;
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
 
 PREAMBLE
------------
-
 The goals of the Open Font License (OFL) are to stimulate worldwide
 development of collaborative font projects, to support the font creation
 efforts of academic and linguistic communities, and to provide a free and
@@ -43,7 +18,7 @@ with others.
 
 The OFL allows the licensed fonts to be used, studied, modified and
 redistributed freely as long as they are not sold by themselves. The
-fonts, including any derivative works, can be bundled, embedded,
+fonts, including any derivative works, can be bundled, embedded, 
 redistributed and/or sold with any software provided that any reserved
 names are not used by derivative works. The fonts and derivatives,
 however, cannot be released under any other type of license. The
@@ -51,8 +26,6 @@ requirement for fonts to remain under this license does not apply
 to any document created using the fonts or their derivatives.
 
 DEFINITIONS
------------
-
 "Font Software" refers to the set of files released by the Copyright
 Holder(s) under this license and clearly marked as such. This may
 include source files, build scripts and documentation.
@@ -72,8 +45,6 @@ new environment.
 writer or other person who contributed to the Font Software.
 
 PERMISSION & CONDITIONS
------------
-
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of the Font Software, to use, study, copy, merge, embed, modify,
 redistribute, and sell modified and unmodified copies of the Font
@@ -107,14 +78,10 @@ remain under this license does not apply to any document created
 using the Font Software.
 
 TERMINATION
------------
-
 This license becomes null and void if any of the above conditions are
 not met.
 
 DISCLAIMER
------------
-
 THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT

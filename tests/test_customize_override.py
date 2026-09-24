@@ -1,5 +1,6 @@
 """The install-time platform gate blocks untested platforms by default, but an
 explicit user opt-in marker lets an advanced user force installation."""
+import json
 import os
 import subprocess
 import tempfile
@@ -8,10 +9,15 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = json.loads((ROOT / "config/font-source.json").read_text())
+FACES = [face["installedFile"] for face in MANIFEST["faces"]]
+CONF = "".join(
+    f"SELFFONT_INSTALLED_{face['style'].upper()}={face['installedFile']}\n" for face in MANIFEST["faces"]
+) + f"SELFFONT_VISIBILITY_FILE={MANIFEST['visibilityFile']}\n"
 
 
 class CustomizeOverrideTests(unittest.TestCase):
-    def run_customize(self, *, api, ksu, brand, manufacturer, override):
+    def run_customize(self, *, api, ksu, brand, manufacturer, override, with_conf=True):
         """Source customize.sh with KernelSU helpers stubbed; return (rc, output)."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -21,8 +27,12 @@ class CustomizeOverrideTests(unittest.TestCase):
             (modpath / "system/fonts").mkdir(parents=True)
             binaries.mkdir()
             override_dir.mkdir()
-            # A non-empty prepared font so the later font check passes.
-            (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
+            # The generated identity file plus every prepared face, so the
+            # post-gate install checks pass exactly as they do on a device.
+            if with_conf:
+                (modpath / "font.conf").write_text(CONF)
+            for face in FACES:
+                (modpath / "system/fonts" / face).write_bytes(b"font")
             # Stub getprop to return the requested identity.
             (binaries / "getprop").write_text(
                 "#!/bin/sh\n"
@@ -73,6 +83,12 @@ class CustomizeOverrideTests(unittest.TestCase):
                                      manufacturer="google", override=False)
         self.assertNotEqual(rc, 0)
         self.assertIn("Oplus", out)
+
+    def test_missing_font_conf_aborts(self):
+        rc, out = self.run_customize(api=36, ksu="true", brand="OnePlus",
+                                     manufacturer="OPLUS", override=False, with_conf=False)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("font.conf", out)
 
     def test_override_bypasses_all_gates(self):
         rc, out = self.run_customize(api=35, ksu="false", brand="google",

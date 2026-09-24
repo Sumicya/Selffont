@@ -1,7 +1,7 @@
 {
   "INTRO": "One font family. Preserve bold, italic, small caps and original text.",
   "BASELINE": "Validation baseline",
-  "BASELINE_DESC": "WenYuan Rounded v1.010 · Firefox 155.0.1 adapter needs device testing. Command success does not prove the rendered font.",
+  "BASELINE_DESC": "Zen Maru Gothic v1.010 · Selffont Maru static faces; Firefox 155.0.1 adapter needs device testing. Command success does not prove the rendered font.",
   "DIAGNOSE": "Read-only diagnostics",
   "TEST_PAGE": "Font comparison",
   "MANUAL": "Manual fallbacks",

@@ -1,7 +1,7 @@
 {
   "INTRO": "统一字体家族，保留粗体、斜体、小型大写和原始文本。",
   "BASELINE": "验证基线",
-  "BASELINE_DESC": "文渊圆体 v1.010 · Firefox 155.0.1 专项适配待真机验证。命令成功不等于网页已使用目标字体。",
+  "BASELINE_DESC": "Selffont Maru（Zen Maru Gothic v1.010 派生）· Firefox 155.0.1 专项适配待真机验证。命令执行成功不等于网页已使用目标字体。",
   "DIAGNOSE": "只读诊断",
   "TEST_PAGE": "字体对照页",
   "MANUAL": "手动兜底",

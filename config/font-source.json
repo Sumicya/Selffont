@@ -1,12 +1,54 @@
 {
-  "project": "takushun-wu/WenYuanFonts",
-  "version": "v1.010",
-  "family": "WenYuan Rounded SC VF",
-  "file": "WenYuanRoundedSCVF.ttf",
-  "installedFile": "Selffont-WenYuanRoundedSCVF.ttf",
-  "bytes": 48755224,
-  "sha256": "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122",
-  "url": "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf",
-  "apiUrl": "https://api.github.com/repos/takushun-wu/WenYuanFonts/contents/vf/WenYuanRoundedSCVF.ttf?ref=v1.010",
-  "licenseUrl": "https://github.com/takushun-wu/WenYuanFonts/blob/v1.010/LICENSE.md"
+  "_comment": "Single source of truth for the font route. Host tools, the Kotlin FontIdentity contract test and the generated on-device font.conf all derive from here. The upstream faces are unmodified OFL sources; the only derivative step is the family rename in tools/prepare_font.py, plus any explicitly authored point patches in config/glyph-patches/.",
+  "project": "googlefonts/zen-marugothic",
+  "version": "main@553c872b216d1290e2902a466edcdc9682f0df6a",
+  "sourceFamily": "Zen Maru Gothic",
+  "family": "Selffont Maru",
+  "license": "OFL-1.1",
+  "licenseFile": "ZenMaru-OFL.txt",
+  "sourceUrl": "https://github.com/googlefonts/zen-marugothic/tree/553c872b216d1290e2902a466edcdc9682f0df6a",
+  "visibilityFile": "SelffontMaru-Regular.ttf",
+  "baselineCharacters": "好中国体Abc0123456789",
+  "faces": [
+    {
+      "weight": 300,
+      "style": "Light",
+      "file": "ZenMaruGothic-Light.ttf",
+      "installedFile": "SelffontMaru-Light.ttf",
+      "bytes": 3723392,
+      "sha256": "c4e6fa10ff517df37cb0c13038fe2813f3c47afe6577fa4a5573200e4508b2c1"
+    },
+    {
+      "weight": 400,
+      "style": "Regular",
+      "file": "ZenMaruGothic-Regular.ttf",
+      "installedFile": "SelffontMaru-Regular.ttf",
+      "bytes": 3832756,
+      "sha256": "a0c0b53543e0993ae2225e629c833f3d51495ad31720694ff112ce4ce11111ef"
+    },
+    {
+      "weight": 500,
+      "style": "Medium",
+      "file": "ZenMaruGothic-Medium.ttf",
+      "installedFile": "SelffontMaru-Medium.ttf",
+      "bytes": 3810988,
+      "sha256": "3cfdb98a13571ede17fcc769f5093a97c38b80a7b9b2ab754a26b4d822092b3b"
+    },
+    {
+      "weight": 700,
+      "style": "Bold",
+      "file": "ZenMaruGothic-Bold.ttf",
+      "installedFile": "SelffontMaru-Bold.ttf",
+      "bytes": 3779008,
+      "sha256": "fe24426b9c8b5523a0146a8235c8674eccf0493af354a53ec895c3596d9eb745"
+    },
+    {
+      "weight": 900,
+      "style": "Black",
+      "file": "ZenMaruGothic-Black.ttf",
+      "installedFile": "SelffontMaru-Black.ttf",
+      "bytes": 3710324,
+      "sha256": "6bd74fe76cd39ee0ec18775c3661d845343fb3f6f8fa09a3076638417baf741f"
+    }
+  ]
 }

@@ -20,7 +20,7 @@ import kotlin.system.exitProcess
  * Uses fixed sample text and stdout only. It never edits files, settings or other processes.
  */
 object FontMetricsProbe {
-    private val WENYUAN = FontIdentity.FONT_PATH
+    private val PRIMARY = FontIdentity.FONT_PATH
     private val CARRIER = FontIdentity.CARRIER_PATH
 
     @JvmStatic
@@ -28,7 +28,7 @@ object FontMetricsProbe {
         println("[probe] selffont-font-metrics-v1")
         println("[context] standalone process; fresh preinstalled font map, not the live SystemUI Paint/cache")
         println("[platform] api=" + Build.VERSION.SDK_INT + " brand=" + Build.BRAND)
-        println("[font-readable] wenyuan=" + File(WENYUAN).canRead() + " carrier=" + File(CARRIER).canRead())
+        println("[font-readable] selffont-maru=" + File(PRIMARY).canRead() + " carrier=" + File(CARRIER).canRead())
         if (Build.VERSION.SDK_INT != 36) {
             println("[probe-error] This probe targets Android 16 / API 36.")
             exitProcess(2)
@@ -54,8 +54,8 @@ object FontMetricsProbe {
             cases[family] = Typeface.create(family, Typeface.NORMAL)
         }
         try {
-            cases["explicit-carrier-wenyuan-500"] = explicit(true, 500)
-            cases["direct-wenyuan-500"] = explicit(false, 500)
+            cases["explicit-carrier-selffont-maru-500"] = explicit(true, 500)
+            cases["direct-selffont-maru-500"] = explicit(false, 500)
         } catch (error: Throwable) {
             if (error !is Exception && error !is LinkageError) throw error
             println("[probe-explicit-font-error] $error")
@@ -83,16 +83,14 @@ object FontMetricsProbe {
     }
 
     private fun explicit(withCarrier: Boolean, weight: Int): Typeface {
-        val glyphFont = Font.Builder(File(WENYUAN))
-            .setWeight(weight).setSlant(FontStyle.FONT_SLANT_UPRIGHT)
-            .setFontVariationSettings("'wght' $weight, 'ital' 0")
+        val glyphFont = Font.Builder(File(FontIdentity.facePathForWeight(weight)))
+            .setSlant(FontStyle.FONT_SLANT_UPRIGHT)
             .build()
         val glyphFamily = FontFamily.Builder(glyphFont).build()
         val builder: Typeface.CustomFallbackBuilder
         if (withCarrier) {
             val metricFont = Font.Builder(File(CARRIER))
                 .setWeight(weight).setSlant(FontStyle.FONT_SLANT_UPRIGHT)
-                .setFontVariationSettings("'wght' $weight, 'wdth' 100")
                 .build()
             builder = Typeface.CustomFallbackBuilder(FontFamily.Builder(metricFont).build())
                 .addCustomFallback(glyphFamily)

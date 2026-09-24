@@ -5,11 +5,15 @@ printf 'Android API: '; getprop ro.build.version.sdk
 printf 'Brand: '; getprop ro.product.brand
 printf 'Manufacturer: '; getprop ro.product.manufacturer
 printf 'Module: '; sed -n 's/^version=/ /p' "$MODPATH/module.prop"
-FONT=/system/fonts/Selffont-WenYuanRoundedSCVF.ttf
-if [ -r "$FONT" ]; then
-    echo '[shell-font-visible] WenYuan target is readable in this shell namespace.'
+# Installed face filenames come from the generated font.conf (single source of truth).
+[ -r "$MODPATH/font.conf" ] && . "$MODPATH/font.conf"
+FONT=/system/fonts/${SELFFONT_VISIBILITY_FILE:-}
+if [ -z "${SELFFONT_VISIBILITY_FILE:-}" ]; then
+    echo '[shell-font-missing] No font.conf in module; check the faces under /system/fonts manually.'
+elif [ -r "$FONT" ]; then
+    echo "[shell-font-visible] $SELFFONT_VISIBILITY_FILE is readable in this shell namespace."
 else
-    echo '[shell-font-missing] Check installation, reboot and KSU mounting.'
+    echo "[shell-font-missing] $SELFFONT_VISIBILITY_FILE is not readable; check installation, reboot and KSU mounting."
 fi
 if command -v dumpsys >/dev/null 2>&1; then
     dumpsys package org.mozilla.firefox 2>/dev/null | grep -E 'versionName=|versionCode=' | head -n 2

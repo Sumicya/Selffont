@@ -1,24 +1,28 @@
-# 第一阶段：行为契约与证据
+# 行为契约、职责与证据
 
 ## 已确认的边界
 
-1. 只支持 Android 16（API 36）、Oplus 系、KSU、LSPosed 2.2.0（7854）；框架接口要求现代 API 102。
+1. 只支持 Android 16（API 36）、Oplus 系、KSU、LSPosed；框架接口要求现代 API 102。
 2. 统一字体家族，不抹平粗体、斜体、小型大写，也不改写 Unicode、DOM 或用户输入。
-3. 文渊圆体为首选候选，资源圆体次选；SELFUSE 的 FZYJHK 是用户提供的外观参考，不作为可自由分发的字体来源推断。
-4. 删除上色及整字体／区间屏蔽。其他进程数据的干预必须是手动兜底。
-5. LSPosed 作用域唯一，不在模块里再加包名名单。
+3. 基准字体是 OFL-1.1 的 Zen Maru Gothic 固定提交；派生家族名 `Selffont Maru`。不引入任何商业字体，也不把上游面原样当作自有字体发布。
+4. 手写字形改动只能通过显式点 patch；没有整字库批量改写、上色或区间屏蔽。其他进程数据的干预只能是手动兜底。
+5. LSPosed 作用域唯一，模块里不再加包名名单。
 6. 未匹配系统 `font*.xml` 默认整体替换，保留明确的不同-schema 例外 `fonts_customization.xml`。这是一项用户选择的偏激进策略，不等于已验证所有配置路径。
 
 ## 职责划分
 
 | 层 | 负责 | 不负责 |
 |---|---|---|
-| 字体来源 `config/font-source.json` | 版本、哈希、家族名、安装文件名、许可 | 下载后擅自换源或改字形 |
-| 主机工具 `prepare_font.py` / `font_config.py` / `build_module.py` | 校验字体、生成字体族配置、从显式基础 ZIP 取补充字体 | 执行基础包脚本、操作设备 |
-| KSU 安装 | 环境门槛、整份配置挂载准备 | 开机改权限、自动停应用、自动清理缓存 |
-| `FontForceCore` | 在 Android `Typeface` 工厂（framework Java API）结果层替换家族、保留 weight/italic | 覆盖所有原生引擎、替换原方法异常或 null |
-| `GeckoFontPolicy` | 构造新的默认首选项 Map，保留原 Map 及无关设置 | 改浏览器 profile、CSS、原始文本 |
-| `ModernEntry` | 作用域内安装 Hook、探测 Gecko 接口与字体可见性、分阶段日志 | 第二套应用名单、把安装成功当作渲染成功 |
+| 字体真源 `config/font-source.json` | 项目/版本/五个面的哈希与安装名、许可、可见性文件 | 下载后擅自换源；改面内容 |
+| `tools/prepare_font.py` | 校验上游面（大小/SHA/家族/字重），改名为派生家族，断言轮廓/cmap 逐字节不变 | 改字形、写设备 |
+| `tools/edit_font.py` | 只应用显式点 patch，拒复合/hinting/越界/空改动，发布前断言"只有被点名的字形变了" | 扫字符集、猜笔画、平滑、删 gvar/hinting |
+| `tools/font_config.py` | 生成 Android `fonts.xml`：五静态面 + 就近字重映射 + 保留 Roboto 度量家族 | 编造可变轴 |
+| `tools/metric_normalize.py` | 只改安装副本的竖直行度量到载体名义度量，带防切保护 | 改轮廓/cmap/家族/字重 |
+| `tools/build_module.py` | 从显式 base ZIP 取补充字体、生成 `fonts.xml`/`font.conf`/`module.prop`、打包与自校验 | 执行 base 里的脚本、操作设备 |
+| KSU 安装 | 环境门槛、配置挂载准备、校验 `font.conf` 里的每个面存在 | 开机改权限、自动停应用、自动清缓存 |
+| `FontForceCore` | 在 Android `Typeface` 工厂结果层替换家族、保留 weight/italic | 覆盖所有原生引擎、替换异常或 null |
+| `GeckoFontPolicy` | 复制首选项 Map 并注入默认字体（主字体前置、保留原回退链） | 改 profile、CSS、原始文本、emoji 首选项 |
+| `ModernEntry` / `HookTarget` | 作用域内按纯签名谓词安装 Hook、探测 Gecko 接口与字体可见性、分阶段日志 | 第二套应用名单、把安装成功当作渲染成功 |
 | 手动 Shell / WebUI | 明确副作用与退出码、记录与恢复本版本修改的权限 | 从翻译字符串猜成功、开机自动干预 |
 
 只为当前明确的两种加载路径建立接口，不预先创建覆盖所有 ROM 或所有渲染器的插件框架。Gecko 只依赖运行时类探测，不捆绑 GeckoView AAR。
@@ -27,56 +31,49 @@
 
 ### 字体
 
-- 上游：<https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010>
-- 原版文件 SHA-256：`e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122`
-- 已读取实物：family `WenYuan Rounded SC VF`；PostScript `WenYuanRoundedSCVF`；`wght` 100/400/900，`ital` 0/0/1；best cmap 33,029 个映射。
-- 不以单个主字体的映射数量宣称 Unicode 全覆盖。缺字继续依赖补充字体和引擎回退。
-- 不含 `smcp` 不代表应取消小型大写：浏览器可以合成。字体名匹配、CSS 特性和字符码点属于不同层。
-- 原版字体保持字节不变；安装文件改名只是路径选择。附带完整 OFL/RFN 声明，不把衍生字体假冒为文渊原版。
+- 上游：<https://github.com/googlefonts/zen-marugothic>，固定提交 `553c872b216d1290e2902a466edcdc9682f0df6a`，OFL-1.1（版权行无 Reserved Font Name 声明；派生仍改名以避免与上游混淆）。
+- 五个静态面的大小/SHA-256 记在 `config/font-source.json`；本地实拉校验通过，改名后断言 glyphOrder、逐字形字节与 cmap 相同。
+- 面里没有 `fvar`：**不伪造可变字体**。Android 的 100–900 用就近静态面覆盖（600→700、800→900，平局取粗）。
+- Zen Maru 是日文字体：简体专用形（马/鸟/页/贝/进/迁/赵…）在面里不存在。`tools/glyph_audit.py` 把这类目标标为 `needs-new-glyph`，点 patch 不做、也不假装能做。
+- 缺字继续依赖补充字体与引擎回退；不以单个字体的映射数量宣称 Unicode 全覆盖。
+
+### Android 布局度量与实际字形分开（v1.4 的真机教训，仍然有效）
+
+第一版把默认家族直接改成目标字体，并删掉了原配置里明确用于防偏移的 Roboto 度量载体；用户随后报告通知栏角标数字贴下沿、部分切底。根因是**测量用载体名义度量、绘制用回退字体更大的真实度量**，baseline 被顶低。
+
+修订方案：`sans-serif` / `sans-serif-condensed` 保留无可见字形的 Roboto 度量家族，可见字形放在紧随其后的匿名回退家族；打包期把安装副本的行度量归一到载体名义度量（`tools/metric_normalize.py`），并断言数字墨迹不被新行盒切掉。字形、cmap、家族名、字重逐字节不变。**该修复在文渊时代经用户真机确认；换成 Zen Maru 后需要重新验收。**
 
 ### Firefox / GeckoView
 
-用户报告：155.0.1 (Build #2016182535)，`5fdfd0092780e85643e2cddc0e1b590c8b9ef860`，GV 155.0.1-20260903215306，AS 155.0，Android 16。
+用户报告基线：Firefox 155.0.1 (Build #2016182535)，GV 155.0.1-20260903215306，AS 155.0，Android 16。检查的是发布标签 `FIREFOX_155_0_1_RELEASE`（提交 `fb95137a04eb8fe1196cb12f26b100c1e060295c`）：
 
-用户报告的 revision 未作为 GitHub Git SHA 解析成功，因此没有把它直接等同于已检查的代码提交。检查的是官方发布标签 `FIREFOX_155_0_1_RELEASE`，GitHub 提交 `fb95137a04eb8fe1196cb12f26b100c1e060295c`：
+- `mobile/android/geckoview/.../RuntimeSettings.java`：`getPrefsMap()` 返回只读映射；`GeckoRuntime.java` 启动时取它并交给 `GeckoThread.InitInfo`。
+- `GeckoRuntimeSettings.java`：`webFontsEnabled` 对应 `browser.display.use_document_fonts`。
+- `GeckoLoader.java`：启动 Map 序列化为 `MOZ_DEFAULT_PREFS`，不改 profile 文件。
+- `gfx/thebes/gfxFT2FontList.cpp` 有独立的系统/文件/内存字体路径——**Java Typeface 工厂不是网页渲染的充分入口**。
 
-- `mobile/android/geckoview/src/main/java/org/mozilla/geckoview/RuntimeSettings.java`：`getPrefsMap()` 返回只读映射。
-- 同目录 `GeckoRuntime.java`：启动时调用 `settings.getPrefsMap()`，将结果传入 `GeckoThread.InitInfo`。
-- 同目录 `GeckoRuntimeSettings.java`：`webFontsEnabled` 对应整数首选项 `browser.display.use_document_fonts`。
-- Gecko 的 `gfx/thebes/gfxFT2FontList.cpp` 有独立的系统／文件／内存字体路径，不能用几个 Java Typeface 工厂当作网页渲染的充分入口。
+因此适配只在启动入口复制 Map 并注入默认字体首选项；目标文件不可读时不注入。已有 profile 用户首选项可能胜出，必须真机验证。
 
-源码链接基址：<https://github.com/mozilla-firefox/firefox/tree/FIREFOX_155_0_1_RELEASE>
-
-本阶段的适配是在这个启动入口**复制** Map，再加入默认字体首选项。对照组不可见目标文件则原样返回。已进一步核对同标签下 `org/mozilla/gecko/mozglue/GeckoLoader.java`：启动 Map 序列化为 `MOZ_DEFAULT_PREFS` 环境变量，而非由本适配器写入 profile。没有锁定或重写已有 profile 用户首选项，已有覆盖值可能胜出，必须真机验证；若这一点阻止预期效果，需要进一步定位正确的运行时首选项接口，不能偷偷改 profile 文件。
+已知结论（文渊时代经 A/B 证明，与具体字体无关）：Gecko 对 Unicode 15.1/16 新增 emoji 显示豆腐块属其自有字体后端限制；`font.name-list` 前置保留不会掐断回退链。
 
 ### Xposed
 
-使用 `io.github.libxposed:api:102.0.0`，对应上游标签：<https://github.com/libxposed/api/tree/102.0.0>。最低 API 也设为 102，不再声明能在 API 100 上运行 API 102 入口。
+`io.github.libxposed:api:102.0.0`（<https://github.com/libxposed/api/tree/102.0.0>）。最低 API 也是 102，不声明能在 API 100 上跑 API 102 入口。Hook 面由 `HookTarget` 的纯签名谓词决定，并有主机单元测试锁住覆盖集合（Builder/CustomFallbackBuilder#build、createFromAsset/File、create(Typeface,int[,boolean])；按名取家族的 `create(String,int)` 故意不 hook）。
 
 ## 不变量与失败行为
 
 - 原方法抛出的异常传播；原方法返回 null 仍为 null。
-- 只有替换操作自身失败才回到原 Typeface；线程重入保护在异常时也释放，不跨线程串扰。
-- `deoptimize` 失败不会阻止继续尝试安装 Hook；每个入口安装结果独立记录。
+- 只有替换操作自身失败才回到原 Typeface；重入保护在异常时也释放，不跨线程串扰。
+- `deoptimize` 失败不阻止继续尝试安装 Hook；每个入口独立记录结果。
 - 字体不可读不修改 Gecko 首选项；接口不存在只记录不支持，不扫描任意原生地址。
 - 不记录页面文字、浏览记录或完整用户 profile。
-- 权限先记账再修改，记录跨模块更新保存。只恢复对应文件身份且仍为 000 的文件；后续用户／应用更改、替换的文件不强行还原。
-- `errno` 是当前 KernelSU bridge 的返回契约；非零不因输出含“成功”而变成零。
-
-主要家族也包括 `monospace`。当前选择是将它统一为同一比例圆体，不能同时保证原来的代码列对齐／等宽度量；这是强制家族统一的明确代价，不属于保留粗斜体和小型大写的承诺。
-
-## Android 布局度量与实际字形分开
-
-第一版将默认家族直接改成文渊，并删除了原配置明确用于防偏移的 Roboto 度量载体。用户随后报告通知栏角标数字贴下沿及部分截底。这一改动不能当作纯粹删除无用绕路，属于尚未保持的布局兼容契约。
-
-修订方案只恢复原先 Android `sans-serif` / `sans-serif-condensed` 的度量家族；把旧数字主字体对应的匿名回退替换为完整的文渊 weight/italic 家族，并放在第一个字形回退位置。Roboto 不提供可见文字，文渊仍提供实际字形。Gecko 继续使用原来的文渊家族首选项，不借此恢复网页装饰字体。
-
-打包时验证继承的 Roboto 没有可见字符覆盖；若不是度量用空壳，则拒绝生成包，避免无意间把文字退回 Roboto。原版文渊字节、字形、cmap 和名称保持不变。不全局修改控件的 translationY、裁剪范围或字体 padding。
+- 权限先记账再修改，记录跨模块更新保存；只恢复身份匹配且仍为 000 的文件，后续用户/应用更改不强行还原。
+- `errno` 是当前 KernelSU bridge 的返回契约；非零不因输出含"成功"而变成零。
+- 主要家族包含 `monospace`，统一为同一比例圆体，不能同时保证原有代码列对齐——这是强制家族统一的明确代价。
 
 ## 尚不能承诺
 
-- 完整字体模块安装、Oplus 的实际字体路径与 KSU 在 Firefox 进程中的字体挂载可见性。新 APK 加载已确认。
-- 当前设备上的 Firefox 已保留并调用该方法，且进入了本适配器的可读性检查；这不外推其他发布版本、入口或后续偏好覆盖行为。
-- Firefox 用户首选项、字体隐藏／指纹防护、缓存和原生内容进程是否影响选择。
-- 网页专用图标字体或图形内容是否仍正确。强制族名可能让字体图标缺失。
-- 完整真实基础包的端到端装机结果，以及未来 Firefox/LSPosed 版本的接口兼容性。
+- 完整模块在真机上的安装、Oplus 实际字体路径、KSU 在 Firefox 进程中的挂载可见性。
+- Firefox 用户首选项、字体隐藏/指纹防护、缓存和内容进程是否影响字体选择。
+- 网页专用图标字体或图形内容是否仍正确（强制族名可能让图标字体缺失）。
+- 真实 154 MB 基础包的端到端装机结果，以及未来 Firefox/LSPosed 版本的接口兼容性。

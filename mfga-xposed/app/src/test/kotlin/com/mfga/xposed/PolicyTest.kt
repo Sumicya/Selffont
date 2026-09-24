@@ -1,6 +1,5 @@
 package com.mfga.xposed
 
-import com.mfga.xposed.diagnostics.BadgeSamplePolicy
 import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,21 +32,21 @@ class PolicyTest {
         assertEquals(1, original["browser.display.use_document_fonts"])
         assertEquals(19, changed["font.size.variable.x-western"])
         assertEquals("retained", changed["unrelated"])
-        // font.name (preferred) is WenYuan for every generic/language.
+        // font.name (preferred) is the project family for every generic/language.
         assertEquals(GeckoFontPolicy.FAMILY, changed["font.name.cursive.zh-CN"])
         assertEquals(GeckoFontPolicy.FAMILY, changed["font.name.serif.x-western"])
-        // font.name-list keeps the ORIGINAL fallback chain, with WenYuan prepended,
-        // so glyphs WenYuan lacks (rare codepoints, colour emoji) still resolve.
+        // font.name-list keeps the ORIGINAL fallback chain, with the project family
+        // prepended, so glyphs it lacks (rare codepoints, colour emoji) still resolve.
         assertEquals(
             GeckoFontPolicy.FAMILY + ", Roboto, Noto Sans, Noto Color Emoji",
             changed["font.name-list.sans-serif.x-western"]
         )
-        // Already led by WenYuan: left unchanged, no duplication.
+        // Already led by the project family: left unchanged, no duplication.
         assertEquals(
             GeckoFontPolicy.FAMILY + ", Noto Serif CJK SC",
             changed["font.name-list.serif.zh-CN"]
         )
-        // Where Gecko exposes no list, we must NOT invent a WenYuan-only list.
+        // Where Gecko exposes no list, we must NOT invent a single-family list.
         assertNull(changed["font.name-list.monospace.ja"])
         // Emoji preferences are untouched so system colour emoji fallback still applies.
         assertTrue(changed.keys.none { it.startsWith("font.name.emoji") || it.startsWith("font.name-list.emoji") })
@@ -114,20 +113,30 @@ class PolicyTest {
     }
 
     @Test
-    fun badgeSamplePolicySamplesFixedTextAndEnforcesBudget() {
-        assertEquals("7", BadgeSamplePolicy.sample("7", 0, 1))
-        assertEquals("10", BadgeSamplePolicy.sample(charArrayOf('x', '1', '0', 'y'), 1, 3))
-        assertNull(BadgeSamplePolicy.sample("notification content", 0, 20))
-        assertNull(BadgeSamplePolicy.sample("99", 0, 2))
-        assertNull(BadgeSamplePolicy.sample(null, 0, 1))
-        assertNull(BadgeSamplePolicy.sample("10", -1, 1))
-        assertNull(BadgeSamplePolicy.sample("10", 0, 3))
-        assertNull(BadgeSamplePolicy.sample("", 0, 0))
-        val budget = BadgeSamplePolicy(2)
-        assertTrue(budget.claim("one"))
-        assertFalse(budget.claim("one"))
-        assertTrue(budget.claim("two"))
-        assertTrue(budget.full())
-        assertFalse(budget.claim("three"))
+    fun hookTargetCoversTheFrameworkFactorySurface() {
+        // Resource / font-XML family builders (Android 10+).
+        assertTrue(HookTarget.isWanted("Builder", "build", emptyList()))
+        assertTrue(HookTarget.isWanted("CustomFallbackBuilder", "build", emptyList()))
+        // Asset and file factories.
+        assertTrue(
+            HookTarget.isWanted(
+                "Typeface", "createFromAsset",
+                listOf("android.content.res.AssetManager", "java.lang.String")
+            )
+        )
+        assertTrue(HookTarget.isWanted("Typeface", "createFromFile", listOf("java.lang.String")))
+        // Classic static factories apps call directly (API 28+ overload included).
+        assertTrue(
+            HookTarget.isWanted(
+                "Typeface", "create",
+                listOf("android.graphics.Typeface", "int", "boolean")
+            )
+        )
+        assertTrue(HookTarget.isWanted("Typeface", "create", listOf("android.graphics.Typeface", "int")))
+        // Name-based create(String, int) stays with framework/familyset resolution.
+        assertFalse(HookTarget.isWanted("Typeface", "create", listOf("java.lang.String", "int")))
+        assertFalse(HookTarget.isWanted("Typeface", "setFamily", listOf("java.lang.String")))
+        assertFalse(HookTarget.isWanted("Builder", "build", listOf("java.lang.String")))
+        assertFalse(HookTarget.isWanted("Unrelated", "build", emptyList()))
     }
 }

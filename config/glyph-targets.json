@@ -1,0 +1,18 @@
+{
+  "_comment": "Characters the handwritten reference sheets practise. Two kinds of entry, kept apart on purpose: textCharacters can be reworked with point patches because the face already draws them; radicalStudies are stroke studies (participate in 你/我/这/阳 ...), not text, so they are never counted as text coverage. tools/glyph_audit.py checks this list against the prepared faces and tools/preview.py renders it.",
+  "textCharacters": [
+    "制", "陈", "印", "部", "隹", "金", "召", "港", "巷", "器", "保", "香", "采",
+    "马", "乌", "鸟", "岛", "乃", "及", "飞", "片", "更", "建", "延", "走",
+    "舟", "般", "船", "役", "页", "员", "贝", "只", "歹", "力",
+    "通", "用", "维", "护", "找", "我", "进", "迁", "赵"
+  ],
+  "radicalStudies": ["亻", "彳", "阝", "卩", "钅", "戶", "户", "扌", "辶", "氵"],
+  "strokeRules": [
+    "去钩：竖/竖弯/弯钩不做出钩，收笔走直线",
+    "平辶：走之底写成一横加短尾，不做顿折",
+    "圆头：可见端头收成半圆，被交叉笔画盖住的端头保持平切",
+    "点成圆：独立点写作小圆点，不用尖角",
+    "方日：日/口/白类内框写成方形，四角不做圆弧外扩",
+    "等粗：同一字内笔画粗细一致，不做书法提按"
+  ]
+}

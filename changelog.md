@@ -1,65 +1,42 @@
 # 更新日志
 
-## v1.4.0（2026-09-12）
+## v2.0.0（2026-09-24）
 
-面向 Android 16 / Oplus(oplus/oppo/oneplus/realme) / KernelSU 的文渊圆体系统字体模块 + 只读诊断 APK。真机安装、完整字体模块与网页覆盖标注为待验证（见 docs/validation.md）。
+**激进重写：换基准字体、删掉上一轮的批量字形改写、把单一真源补齐。**
 
-- 主字体为文渊圆体可变字体（WenYuan Rounded SC VF，`wght` 100–900 + `ital` 0–1）；`fonts.xml` 为每个字重生成 `<axis>` 指向同一 VF 文件，构建期用真实字体 `fvar` 校验轴值不越界（`dynamicWeightAxes`）。
-- 模块减重：仅打包 `fonts.xml` 实际引用的补充字体，未引用者作为死重丢弃并记入 `module-report.json`（`unreferencedFontsDropped`）。
-- 三化重构（现代化/自由化/原生化）：
-  - 现代化：CI 与构建统一到 node24 + JDK 21（当前 LTS）；`mfga-xposed` 全量迁移到 Kotlin（10/10 类，移除 `src/main/java`），升级 AGP 9.3.0 / Gradle 9.5.0 并改用 AGP 9 内置 Kotlin（无需单独 Kotlin 插件）；策略断言从 `run_java.sh` 迁入 Gradle 单元测试 `PolicyTest.kt`。逻辑不变。
-  - 自由化：新增 `FontIdentity` 作为字体家族名/路径的单一真源（消除 `GeckoFontPolicy`、`FontMetricsProbe` 的重复硬编码）；平台闸门新增用户自选放行标记 `/data/adb/selffont_allow_unsupported`，默认严格不变、仅额外开放"自担风险"的绕过口(安装期 `customize.sh` 与运行期 `TargetPlatform.allowed` 同步支持,含测试)。
-  - 原生化：确认现状已达标（`FontForceCore` 用原生 `Typeface.create`、Hook 仅用平台 API），不强塞 JNI。
-- Gecko `font.name-list` 前置保留（1.4-gecko-fallback）：由"覆盖成只有文渊"改为"前置保留原回退链"，不再对无 list 项造窄列表，不触碰 emoji 首选项。注：设备 prefsMap 无 `font.name-list`/emoji 键，故此改动对火狐缺字为空操作；火狐 Unicode 15.1/16 新 emoji 豆腐块经 A/B 证明属 Gecko 后端限制，非本模块可修（见 docs/validation.md）。
-- 打包期度量归一（1.4-phase2-metrics）：将安装副本文渊的竖直行度量对齐 Roboto 载体名义度量，根治通知计数/红点角标/时钟等紧凑槽的数字偏低与切下沿；只改行度量，字形/cmap/family/轴与原版 SHA-256 不变，带构建期防切保护。
-- 文渊圆体固定资源与配置生成、KSU/Oplus/Android 16 支持边界。
-- 删除上色及字体屏蔽；额外干预仅手动。
-- 现代 API 102 单入口；Gecko 155.0.1 启动字体首选项适配及分层诊断。
-- 主机契约检查（Python + node + Kotlin `gradle test`）及诊断 APK 构建已由 CI 通过；真机安装、完整字体模块与网页覆盖仍待验证，参见 docs/validation.md。
+- **字体路线**：文渊圆体（可变）→ **Zen Maru Gothic**（固定提交 `553c872`，OFL-1.1）五个静态面，构建期改名为派生家族 `Selffont Maru`（`SelffontMaru-{Light,Regular,Medium,Bold,Black}.ttf`）。Android 100–900 就近映射（600→700、800→900，平局取粗），斜体由平台合成，不伪造 `fvar`。
+- **手写笔画回到"显式点 patch"**：删除整字库几何改写及其全部工具（`tools/smooth_strokes.py`、批量模式、GB2312 扫描、照片描摹）。`tools/edit_font.py` 只接受逐字、逐点的 patch，拒绝复合字形、带 hinting 的字形、越界/重复/空改动，并在发布前断言**只有被点名的字形变了**。契约测试锁住 CLI 面（只允许 `--prepared/--patches/--output/--report`）。
+- **缺字如实标注**：新增 `tools/glyph_audit.py` + `config/glyph-targets.json`（作者手写练习字表）。对 44 个文本目标的审计：**30 可改 / 14 缺字**（简体专用形，日文基准字体没有）。缺字不再被混进"改笔画"里假装完成。
+- **审阅页**：新增 `tools/preview.py`，用真实 TTF 渲染五个面与目标字表，可在浏览器直接看改动（`--serve`），也可出 PNG（`--render`）；有 patch 报告时页面额外显示**改前/改后**对照（未改动的基础面从 `/baseline/` 提供）。
+- **首个真实 patch（样例）**：`config/glyph-patches/Regular.json` 按"去钩 + 圆头"改 `力`，由 `tools/edit_font.py` 校验并通过"只有被点名的字形变了"。其余 29 个可改字与其余四个面仍未改——样例存在是为了让作者照着改，不是为了假装笔画已写完。
+- **组件借用者可见**：patch 改到的字形若被其他字形当组件引用，`edit_font.py` 会在 stderr 与报告 `componentUsers` 里点名（不静默连带改动）。
+- **单一真源**：模块内生成 `font.conf`（五个面名 + 可见性文件），`customize.sh`/`diagnose.sh`/`device_state.sh` 只读它，不再硬编码字体名；`config/font-source.json` 与 `FontIdentity.kt` 由契约测试对齐。
+- **删死重**：`tools/otfccbuild`、`tools/otfccdump`、`tools/merge-otd`（约 2.6 MB 预编译二进制）、`NotoSansPro` 合并工作流 `build.yml`、`tools/fontslist/`、`script/remove_emoji_overlap.py`、休眠的 `BadgeDrawObserver`/`BadgeSamplePolicy`/`GlyphCoverageProbe` 及其测试。
+- **现代化**：Python 3.11 + fontTools 4.65 + ruff 全绿；JDK 21 / Gradle 9.5.0 / AGP 9.3.0 / SDK 36 / 全 Kotlin；node 24。
+- **原生化**：只用 framework `Typeface` 工厂与 `fonts.xml`；Hook 面由纯签名谓词 `HookTarget` 决定并有单元测试。
+- **文档**：631 行逐日流水账的 `docs/validation.md` 压缩成验收清单（历史证据留在 Git 历史）；新增 `docs/font-editing.md`；重写 README/架构/换字体文档。LICENSES 换成 Zen Maru OFL 归属。
+- **验证**：100 项 Python 契约测试 + 3 项 node 测试 + ruff 全绿；真实五面完成"下载→校验→改名→度量归一→打包"演练（合成 base ZIP）。**真机安装、网页绘制、紧凑槽位均为 `NOT_TESTED`。**
+
+## v1.4.0（2026-09-12，历史路线）
+
+面向 Android 16 / Oplus / KernelSU 的**文渊圆体**系统字体模块 + 只读诊断 APK；度量归一修复通知角标数字偏低/切底（经用户真机确认）；Gecko 启动首选项注入使 Firefox 正文统一为文渊（用户确认）；火狐 Unicode 15.1/16 新 emoji 豆腐块经 A/B 证明属 Gecko 后端限制。该路线的字形、哈希与设备证据见 Git 历史。
 
 ---
 
-以下是上游历史记录，不是当前功能清单。
+以下是上游 MFGA 的历史记录，不是当前功能清单。
 
 CN
- 
+
 17.0.1.08-31-alpha2(1717180003)
  - 1.适配HyperOS4
  - 2.同步/新增部分字体，调整部分私用区符号颜色
  - 3*.新增Xposed版本MFGA覆盖一些内置了字体的应用
  - 4.增加了对部分Unicode18彩色Emoji的初步支持(早期预览版)
-```
-🛙🪋🪌🪍🫌🫝🫫🫹🫺
-```
- 
+
 17.0.0.06-27-alpha(1717180001)
  - 1.同步Roboto到3.0.16(SU)
  - 2.WebUI新增主字体上色，需支持COLRv0，Android10及以上
  - 3.调整主字体中部分组合类符号，修复缺失、在高安卓版本显示异常的情况
- 
 
--------
-EN
- 
-17.0.1.08-31-alpha2(1717180003)
- - 1.Added support for HyperOS 4
- - 2.Synced/Added some fonts and adjusted the colors of some Private Use Area symbols
- - 3*.Added an Xposed version of MFGA to override fonts in some apps with built-in fonts
- - 4.Added preliminary support for some Unicode 18 colored emoji (early preview)
-```
-🛙🪋🪌🪍🫌🫝🫫🫹🫺
-```
- 
-17.0.0.06-27-alpha(1717180001)
- - 1.Synchronized Roboto font to version 3.0.16(SU).
- - 2.Added main font colorization in WebUI; requires COLRv0 support, Android 10 and above.
- - 3.Adjusted some composite symbols in the main font, fixing missing glyphs and display issues on higher Android versions.
- 
-
-Telegram channel:
-
-https://t.me/AndroidCoreLayer
-
-Power by:
-
-Yiyunlengyu(酷安@Numbersf)
+Telegram channel: https://t.me/AndroidCoreLayer
+Power by: Yiyunlengyu(酷安@Numbersf)

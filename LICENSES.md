@@ -18,7 +18,7 @@
  
 无特殊说明则默认其为 OFL-1.1 许可
  
-主字体调用与MFGA模块无关
+当前主字体为下方说明的 Selffont Maru（Zen Maru Gothic 派生）；基础包中的补充字体仍按各自许可处理
 
 ## EN
 
@@ -38,11 +38,12 @@ The fonts included in this module and their licenses are as follows:
  
 Unless otherwise specified, all fonts are licensed under OFL-1.1 by default.
  
-Primary font usage is unrelated to the MFGA module.
-## Selffont 第一阶段新增资源
+The current primary font is the Selffont Maru derivative documented below; supplemental fonts from the base archive keep their own licenses.
+## Selffont Maru v2.0.0 新增资源
 
-- 主字体候选：[WenYuan Rounded SC VF v1.010](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)，固定校验信息见 `config/font-source.json`，完整版权及 OFL/RFN 声明见 `licenses/WenYuan-OFL.txt`。
-- 主字体作为外部构建输入，不提交大二进制文件。本阶段保持原版字体字节、字形、cmap 与内部名称不变，不以文渊的保留名称发布改造字体。
-- SELFUSE 的 FZYJHK 仅作为用户提供的外观参考，不在新构建中继承数字主字体文件，也不推断其再分发许可。
+- **Zen Maru Gothic**：固定提交 [`553c872`](https://github.com/googlefonts/zen-marugothic/tree/553c872b216d1290e2902a466edcdc9682f0df6a)，五个静态 TTF 源面，许可 [SIL Open Font License 1.1](https://scripts.sil.org/OFL)，完整文本随包保存在 `licenses/ZenMaru-OFL.txt`。
+- 构建期把五个源面改名为派生家族 `Selffont Maru`，安装名 `SelffontMaru-{Light,Regular,Medium,Bold,Black}.ttf`；没有把静态面伪装成可变字体。
+- 改名为 OFL 允许的派生操作（上游版权行未声明 Reserved Font Name）；改名步骤断言轮廓、cmap 与逐字形字节不变。
+- 手写字形改动只通过 `config/glyph-patches/<Style>.json` 的显式点 patch 进行，产出的仍是 OFL 派生字体，不复制其他字体（含商业字体）的轮廓。
 - `webroot/probe.ttf` 为本项目生成的诊断几何图形字体；见 `licenses/Web-Probe.txt`（CC0 1.0）。
 - 构建器显式输入的 MFGA 基础包只提供补充字体；各资源仍须遵循其自己的许可，基础包归属说明随包保留。现有上游字体说明不构成对任意输入包的许可保证。

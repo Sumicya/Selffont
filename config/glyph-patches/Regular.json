@@ -1,0 +1,45 @@
+{
+  "_comment": "Worked example by the tooling, meant to be reviewed and edited: 力 去钩 + 圆头. The bent tail at the lower right is replaced by a straight run into a semicircular terminal (stroke rules '去钩' and '圆头'). Delete this file to ship the unmodified face; extend the same recipe to more characters only after looking at tools/preview.py.",
+  "faceSha256": "a0c0b53543e0993ae2225e629c833f3d51495ad31720694ff112ce4ce11111ef",
+  "glyphs": {
+    "力": {
+      "points": [
+        {
+          "index": 0,
+          "x": 648,
+          "y": -58
+        },
+        {
+          "index": 1,
+          "x": 635,
+          "y": -53
+        },
+        {
+          "index": 2,
+          "x": 625,
+          "y": -44
+        },
+        {
+          "index": 3,
+          "x": 619,
+          "y": -31
+        },
+        {
+          "index": 4,
+          "x": 618,
+          "y": -17
+        },
+        {
+          "index": 5,
+          "x": 623,
+          "y": -4
+        },
+        {
+          "index": 6,
+          "x": 632,
+          "y": 6
+        }
+      ]
+    }
+  }
+}

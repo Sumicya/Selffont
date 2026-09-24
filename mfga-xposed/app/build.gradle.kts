@@ -9,8 +9,8 @@ android {
         applicationId = "com.mfga.xposed"
         minSdk = 36
         targetSdk = 36
-        versionCode = 23
-        versionName = "1.4.0"
+        versionCode = 30
+        versionName = "2.0.0"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {

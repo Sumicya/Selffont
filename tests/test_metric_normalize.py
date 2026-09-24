@@ -1,4 +1,4 @@
-"""Aggressive fix: normalise WenYuan line metrics to the Android carrier.
+"""Aggressive fix: normalise the shipped face line metrics to the Android carrier.
 
 These tests prove the packaged font stops pushing compact digits down (the badge
 bug) WITHOUT editing outlines, cmap, family or axes, and that a font whose ink
@@ -39,7 +39,7 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(report['original']['hhea'], [1160, -288, 0])
 
     def test_scales_when_units_per_em_differ(self):
-        # WenYuan-like 2048 UPM against a 1000 UPM carrier scales proportionally.
+        # A 2048 UPM CJK face against a 1000 UPM carrier scales proportionally.
         font = primary_font(upm=2048, hhea=(2400, -600, 0), typo=(1800, -400, 0),
                             digit_ink=(-20, 1500))
         norm, _ = normalize_metrics(font, self.carrier)

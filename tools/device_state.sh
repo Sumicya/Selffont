@@ -3,7 +3,14 @@
 MOD=${SELFFONT_MODULE_ROOT:-/data/adb/modules/MFGA}
 SYS=${SELFFONT_SYSTEM_ROOT:-/system}
 PROC=${SELFFONT_PROC_ROOT:-/proc}
-TARGET=Selffont-WenYuanRoundedSCVF.ttf
+# Installed face filenames come from the module's generated font.conf (single
+# source of truth, see tools/build_module.py); never hardcode them here.
+FACES=
+if [ -r "$MOD/font.conf" ]; then
+    . "$MOD/font.conf"
+    FACES="$SELFFONT_INSTALLED_LIGHT $SELFFONT_INSTALLED_REGULAR $SELFFONT_INSTALLED_MEDIUM $SELFFONT_INSTALLED_BOLD $SELFFONT_INSTALLED_BLACK"
+fi
+VISIBILITY=${SELFFONT_VISIBILITY_FILE:-}
 
 file_info() {
     if [ -r "$1" ]; then
@@ -40,26 +47,38 @@ else
 fi
 
 echo '=== Font bytes: module storage versus root shell view ==='
-for name in "$TARGET" Roboto-Regular.ttf; do
-    file_info "$MOD/system/fonts/$name"
-    file_info "$SYS/fonts/$name"
-done
+if [ -n "$FACES" ]; then
+    for name in $FACES Roboto-Regular.ttf; do
+        file_info "$MOD/system/fonts/$name"
+        file_info "$SYS/fonts/$name"
+    done
+else
+    echo '[font-conf-missing] No font.conf in module; listing module fonts instead.'
+    [ -d "$MOD/system/fonts" ] && ls "$MOD/system/fonts"
+fi
 echo '=== Firefox filesystem view (read as root, not proof of app-UID access) ==='
 for pid in $pids; do
     case "$pid" in ''|*[!0-9]*) continue ;; esac
-    file_info "$PROC/$pid/root/system/fonts/$TARGET"
+    [ -n "$VISIBILITY" ] || continue
+    file_info "$PROC/$pid/root/system/fonts/$VISIBILITY"
 done
 
 echo '=== Generated configuration ==='
 file_info "$MOD/fonts.xml"
 echo '=== Active system font configurations ==='
+target_pattern=
+if [ -n "$VISIBILITY" ]; then
+    target_pattern=$(printf '%s' "$VISIBILITY" | sed 's/\./\\./g')
+fi
 for dir in "$SYS/etc" "$SYS/product/etc" "$SYS/system_ext/etc"; do
     for file in "$dir"/font*.xml; do
         [ -f "$file" ] && [ -r "$file" ] || continue
         case "${file##*/}" in fonts_customization.xml) continue ;; esac
         file_info "$file"
         # Public font names / ordering only, not application or framework databases.
-        grep -n -m 24 -E '<family|Roboto-Regular[.]ttf|Selffont-WenYuanRoundedSCVF[.]ttf' "$file"
+        pattern='<family|Roboto-Regular[.]ttf'
+        [ -n "$target_pattern" ] && pattern="$pattern|$target_pattern"
+        grep -n -m 24 -E "$pattern" "$file"
     done
 done
 

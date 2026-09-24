@@ -1,5 +1,6 @@
 import fcntl
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -13,35 +14,37 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from fontTools.ttLib import TTFont
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
+sys.path.insert(0, str(ROOT / 'tests'))
+import build_module
 from build_module import build, font_members
 from font_config import (
     METRIC_CARRIER,
     METRIC_FAMILIES,
     PRIMARY_NAMES,
-    assert_axes_within_font,
     configure_fonts,
-    font_axis_ranges,
+    weight_mapping,
 )
-from font_fixtures import metrics_carrier, primary_font
-from prepare_font import MANIFEST, verify_font
+from font_fixtures import metrics_carrier, static_font
+from prepare_font import FACES, MANIFEST, verify_prepared_face, verify_source_bytes
 
 
 class FontConfigurationTests(unittest.TestCase):
-    def test_primary_families_and_axes(self):
-        root = ET.fromstring(configure_fonts((ROOT / 'fonts.xml').read_bytes(), MANIFEST['installedFile']))
+    def test_primary_families_and_static_weights(self):
+        root = ET.fromstring(configure_fonts((ROOT / 'fonts.xml').read_bytes(), FACES))
+        installed = {face['installedFile'] for face in FACES}
         for name in PRIMARY_NAMES - METRIC_FAMILIES:
             family = root.find(f"family[@name='{name}']")
             self.assertIsNotNone(family, name)
             fonts = family.findall('font')
-            self.assertEqual(len(fonts), 18)
-            for font in fonts:
-                self.assertEqual(font.text.strip(), MANIFEST['installedFile'])
-                axes = {axis.get('tag'): axis.get('stylevalue') for axis in font}
-                self.assertEqual(axes['wght'], font.get('weight'))
-                self.assertEqual(axes['ital'], '1' if font.get('style') == 'italic' else '0')
-                self.assertEqual(set(axes), {'wght', 'ital'})
+            self.assertEqual(len(fonts), 9)
+            self.assertEqual({font.get('style') for font in fonts}, {'normal'})
+            self.assertTrue(all(not list(font) for font in fonts))
+            self.assertEqual({(int(font.get('weight')), font.text.strip()) for font in fonts},
+                             set(weight_mapping(FACES).items()))
         # Preserve Android layout metrics separately from the glyph source.
         source = ET.fromstring((ROOT / 'fonts.xml').read_bytes())
         for name in METRIC_FAMILIES:
@@ -56,58 +59,55 @@ class FontConfigurationTests(unittest.TestCase):
         families = root.findall('family')
         self.assertEqual(families[0].get('name'), 'sans-serif')
         self.assertIsNone(families[1].get('name'))
-        self.assertEqual(len(families[1].findall('font')), 18)
-        self.assertEqual({f.text.strip() for f in families[1]}, {MANIFEST['installedFile']})
+        self.assertEqual(len(families[1].findall('font')), 9)
+        self.assertEqual({f.text.strip() for f in families[1]}, installed)
         self.assertEqual({f.text.strip() for f in families[0]}, {METRIC_CARRIER})
-        # Supplemental coverage and style aliases still remain.
         self.assertTrue(any((f.text or '').strip() == 'NotoSansPro.otf' for f in root.iter('font')))
         self.assertIsNotNone(root.find("alias[@name='sans-serif-semibold']"))
         self.assertFalse(any((f.text or '').strip() == '400.ttf' for f in root.iter('font')))
 
-    def test_dynamic_weight_axes_stay_within_font(self):
-        # Every wght/ital value the config selects must exist in the font's fvar
-        # and sit inside its range, so no dynamic weight is silently clamped.
-        font = primary_font()
-        xml = configure_fonts((ROOT / 'fonts.xml').read_bytes(), MANIFEST['installedFile'])
-        ranges = assert_axes_within_font(xml, MANIFEST['installedFile'], font)
-        self.assertEqual(ranges, {'wght': [100.0, 900.0], 'ital': [0.0, 1.0]})
-        self.assertEqual(set(font_axis_ranges(font)), {'wght', 'ital'})
-
-    def test_axis_guard_rejects_out_of_range_and_missing_axis(self):
-        xml = configure_fonts((ROOT / 'fonts.xml').read_bytes(), MANIFEST['installedFile'])
-        # A font whose weight axis stops at 800 must fail the 900 the config asks for.
-        import io
-
-        from fontTools.ttLib import TTFont
-        tt = TTFont(io.BytesIO(primary_font()))
-        tt['fvar'].axes[0].maxValue = 800
-        out = io.BytesIO()
-        tt.save(out)
-        with self.assertRaisesRegex(ValueError, 'outside font range'):
-            assert_axes_within_font(xml, MANIFEST['installedFile'], out.getvalue())
-        # A non-variable font cannot back dynamic weights at all.
-        with self.assertRaisesRegex(ValueError, 'not a variable font'):
-            assert_axes_within_font(xml, MANIFEST['installedFile'], metrics_carrier())
+    def test_weight_mapping_prefers_heavier_face_on_ties(self):
+        self.assertEqual(weight_mapping(FACES)[100], 'SelffontMaru-Light.ttf')
+        self.assertEqual(weight_mapping(FACES)[600], 'SelffontMaru-Bold.ttf')
+        self.assertEqual(weight_mapping(FACES)[800], 'SelffontMaru-Black.ttf')
+        self.assertEqual(weight_mapping(FACES)[900], 'SelffontMaru-Black.ttf')
 
     def test_reject_wrong_schema_and_path(self):
-        for xml, filename in [(b'<fonts-modification/>', 'a.ttf'), (b'<familyset/>', '../a.ttf')]:
+        for xml in (b'<fonts-modification/>', b'<familyset/>'):
             with self.assertRaises(ValueError):
-                configure_fonts(xml, filename)
+                configure_fonts(xml, FACES)
 
     def test_hash_failure_precedes_font_parsing(self):
+        spec = dict(FACES[0], bytes=3, sha256='0' * 64)
+        with self.assertRaisesRegex(ValueError, 'SHA-256'):
+            verify_source_bytes(b'bad', spec)
+
+    def test_derived_face_uses_new_family_name(self):
+        # The real prepare step renames the OFL source; this contract protects the
+        # public derivative from silently continuing to identify as the upstream face.
+        from prepare_font import derive_face
+        source_spec = dict(FACES[0], file='fixture.ttf', installedFile='SelffontMaru-Light.ttf',
+                           bytes=len(static_font(family='Zen Maru Gothic', weight=300)))
+        source = static_font(family='Zen Maru Gothic', weight=300)
+        source_spec['sha256'] = hashlib.sha256(source).hexdigest()
+        manifest = dict(MANIFEST, sourceFamily='Zen Maru Gothic', family='Selffont Maru',
+                        faces=[source_spec])
+        derived, report = derive_face(source, source_spec, manifest)
+        self.assertEqual(report['family'], 'Selffont Maru')
+        self.assertEqual(report['weight'], 300)
+        with TTFont(io.BytesIO(derived)) as font:
+            self.assertNotIn('fvar', font)
+            self.assertEqual(font['OS/2'].usWeightClass, 300)
         with tempfile.TemporaryDirectory() as temp:
-            file = Path(temp) / 'font.ttf'
-            file.write_bytes(b'bad')
-            manifest = dict(MANIFEST, bytes=3)
-            with self.assertRaisesRegex(ValueError, 'SHA-256'):
-                verify_font(file, manifest)
+            path = Path(temp) / source_spec['installedFile']
+            path.write_bytes(derived)
+            self.assertEqual(verify_prepared_face(path, source_spec, manifest)['family'],
+                             'Selffont Maru')
 
     def test_java_contract_matches_manifest(self):
-        # FontIdentity is the single source of truth for the installed font's
-        # family/path; other Java classes reference it instead of re-hardcoding.
         source = (ROOT / 'mfga-xposed/app/src/main/kotlin/com/mfga/xposed/FontIdentity.kt').read_text()
         self.assertIn('"' + MANIFEST['family'] + '"', source)
-        self.assertIn('"/system/fonts/' + MANIFEST['installedFile'] + '"', source)
+        self.assertIn('"/system/fonts/' + MANIFEST['visibilityFile'] + '"', source)
 
     def test_probe_is_original_ascii_control(self):
         from fontTools.ttLib import TTFont
@@ -117,74 +117,86 @@ class FontConfigurationTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def fixture_manifest(self):
+        faces = []
+        for weight, label in ((300, 'Light'), (400, 'Regular'), (500, 'Medium'),
+                              (700, 'Bold'), (900, 'Black')):
+            faces.append({'weight': weight, 'style': label,
+                          'file': f'source-{weight}.ttf',
+                          'installedFile': f'SelffontMaru-{label}.ttf',
+                          'bytes': 1, 'sha256': '0' * 64})
+        return dict(MANIFEST, family='Selffont Maru', sourceFamily='Selffont Maru',
+                    visibilityFile='SelffontMaru-Regular.ttf', faces=faces)
+
     def test_base_code_never_inherited(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
-            base, font, output = temp/'base.zip', temp/'font.ttf', temp/'module.zip'
-            font.write_bytes(primary_font())
+            base, font_dir, output = temp/'base.zip', temp/'fonts', temp/'module.zip'
+            font_dir.mkdir()
+            manifest = self.fixture_manifest()
+            for face in manifest['faces']:
+                (font_dir / face['installedFile']).write_bytes(
+                    static_font(family='Selffont Maru', weight=face['weight']))
             with zipfile.ZipFile(base, 'w') as z:
                 z.writestr('system/fonts/NotoSansPro.otf', b'fallback fixture')
                 z.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
                 z.writestr('system/fonts/400.ttf', b'old primary')
-                # Referenced by the real fonts.xml -> kept; never referenced -> dropped.
                 z.writestr('system/fonts/NotoNaskhArabic-Regular.ttf', b'referenced fixture')
                 z.writestr('system/fonts/SelffontUnusedFace.ttf', b'unreferenced dead weight')
                 z.writestr('service.sh', 'dangerous old boot hook')
                 z.writestr('bin/old_tool', 'old tool')
                 z.writestr('module.prop', 'updateJson=https://upstream.example/update')
                 z.writestr('LICENSES.md', 'base attribution')
-            with patch('build_module.verify_font', return_value={'sha256': hashlib.sha256(font.read_bytes()).hexdigest(), 'deviceRendering': 'NOT_TESTED'}) as verify:
-                build(base, font, output)
-                verify.assert_called_once_with(font)
+            with patch.object(build_module, 'MANIFEST', manifest), \
+                    patch.object(build_module, 'FACES', manifest['faces']):
+                build(base, font_dir, output)
             with zipfile.ZipFile(output) as z:
-                self.assertIn('system/fonts/' + MANIFEST['installedFile'], z.namelist())
+                self.assertIn('system/fonts/SelffontMaru-Regular.ttf', z.namelist())
+                self.assertIn('system/fonts/SelffontMaru-Black.ttf', z.namelist())
                 self.assertNotIn('system/fonts/400.ttf', z.namelist())
-                # A supplemental face fonts.xml references is bundled; a face nothing
-                # references is dropped as dead weight (it could never be loaded).
                 self.assertIn('system/fonts/NotoNaskhArabic-Regular.ttf', z.namelist())
                 self.assertNotIn('system/fonts/SelffontUnusedFace.ttf', z.namelist())
-                self.assertIn('SelffontUnusedFace.ttf',
-                              json.loads(z.read('module-report.json'))['unreferencedFontsDropped'])
+                report = json.loads(z.read('module-report.json'))
+                self.assertIn('SelffontUnusedFace.ttf', report['unreferencedFontsDropped'])
+                self.assertEqual(report['androidMetricsCarrier']['visibleCodepoints'], 0)
+                self.assertEqual(report['staticWeightMapping']['600'], 'SelffontMaru-Bold.ttf')
+                self.assertEqual(set(report['metricNormalization']), {'300', '400', '500', '700', '900'})
+                for filename in ('SelffontMaru-Light.ttf', 'SelffontMaru-Regular.ttf',
+                                 'SelffontMaru-Medium.ttf', 'SelffontMaru-Bold.ttf',
+                                 'SelffontMaru-Black.ttf'):
+                    self.assertNotEqual(
+                        report['metricNormalization'][next(face['weight'] for face in manifest['faces']
+                                                          if face['installedFile'] == filename).__str__()]
+                        ['originalSha256'],
+                        report['metricNormalization'][next(face['weight'] for face in manifest['faces']
+                                                           if face['installedFile'] == filename).__str__()]
+                        ['normalizedSha256'])
+                self.assertIn('licenses/ZenMaru-OFL.txt', z.namelist())
+                self.assertIn('licenses/MFGA-base-LICENSES.md', z.namelist())
                 self.assertNotIn('bin/old_tool', z.namelist())
                 self.assertNotIn('updateJson', z.read('module.prop').decode())
                 self.assertEqual(z.read('service.sh'), (ROOT/'script/service.sh').read_bytes())
-                self.assertIn('licenses/MFGA-base-LICENSES.md', z.namelist())
-                self.assertIn('licenses/WenYuan-OFL.txt', z.namelist())
-                self.assertIn('collect_logs.sh', z.namelist())
-                self.assertIn('filter_logs.awk', z.namelist())
-                self.assertIn('module-report.json', z.namelist())
-                report = json.loads(z.read('module-report.json'))
-                self.assertEqual(report['androidMetricsCarrier']['visibleCodepoints'], 0)
-                # The dynamic-weight ladder was validated against the packaged font.
-                self.assertEqual(report['dynamicWeightAxes'],
-                                 {'wght': [100.0, 900.0], 'ital': [0.0, 1.0]})
-                # Line metrics were normalised to the carrier; outlines were not.
-                metric = report['metricNormalization']
-                self.assertEqual(metric['normalized']['hhea'], metric['normalized']['typo'])
-                self.assertNotEqual(metric['original']['hhea'], metric['normalized']['hhea'])
-                # The packaged font differs from the untouched original (metrics only)...
-                self.assertNotEqual(metric['originalSha256'], metric['normalizedSha256'])
-                packaged = z.read('system/fonts/' + MANIFEST['installedFile'])
-                self.assertEqual(hashlib.sha256(packaged).hexdigest(), metric['normalizedSha256'])
-                # ...but its glyph outlines, cmap and axes are byte-identical.
-                from metric_normalize import assert_glyphs_preserved
-                assert_glyphs_preserved(font.read_bytes(), packaged)
                 self.assertIn('versionCode=', z.read('module.prop').decode())
-                self.assertEqual(stat.S_IMODE(z.getinfo('system/fonts/' + MANIFEST['installedFile']).external_attr >> 16), 0o644)
                 self.assertEqual(stat.S_IMODE(z.getinfo('action.sh').external_attr >> 16), 0o755)
 
     def test_changed_primary_does_not_publish_an_output(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)
-            base, font, output = temp/'base.zip', temp/'font.ttf', temp/'module.zip'
-            font.write_bytes(b'changed after verification')
+            base, font_dir, output = temp/'base.zip', temp/'fonts', temp/'module.zip'
+            font_dir.mkdir()
+            manifest = self.fixture_manifest()
+            for face in manifest['faces']:
+                (font_dir / face['installedFile']).write_bytes(
+                    static_font(family='Selffont Maru', weight=face['weight']))
             output.write_bytes(b'previous output')
             with zipfile.ZipFile(base, 'w') as archive:
                 archive.writestr('system/fonts/NotoSansPro.otf', b'fixture')
                 archive.writestr('system/fonts/' + METRIC_CARRIER, metrics_carrier())
-            with patch('build_module.verify_font', return_value={'sha256': '0' * 64}), \
+            with patch.object(build_module, 'MANIFEST', manifest), \
+                    patch.object(build_module, 'FACES', manifest['faces']), \
+                    patch('build_module.verify_prepared_face', return_value={'sha256': '0' * 64}), \
                     self.assertRaisesRegex(ValueError, 'changed after verification'):
-                build(base, font, output)
+                build(base, font_dir, output)
             self.assertEqual(output.read_bytes(), b'previous output')
 
     def test_malformed_archive_is_rejected(self):
@@ -338,7 +350,12 @@ class InstallerTests(unittest.TestCase):
             bin_dir.mkdir()
             (system/'etc').mkdir(parents=True)
             (mod/'system/fonts').mkdir(parents=True)
-            (mod/'system/fonts'/MANIFEST['installedFile']).write_text('prepared fixture')
+            # The generated identity file and every prepared face, exactly as the
+            # module build lays them out.
+            from build_module import render_font_conf
+            (mod/'font.conf').write_text(render_font_conf())
+            for face in MANIFEST['faces']:
+                (mod/'system/fonts'/face['installedFile']).write_text('prepared fixture')
             shutil.copytree(ROOT/'lang', mod/'lang')
             for src, dst in [('script/search_dirs.sh','search_dirs.sh'), ('fonts_list.yaml','fonts_list.yaml')]:
                 shutil.copyfile(ROOT/src, mod/dst)

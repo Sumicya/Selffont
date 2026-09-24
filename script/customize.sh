@@ -19,7 +19,15 @@ else
     done
     [ "$oplus" = 1 ] || abort "Selffont supports Oplus devices only. Create $OVERRIDE to force-install at your own risk."
 fi
-[ -s "$MODPATH/system/fonts/Selffont-WenYuanRoundedSCVF.ttf" ] || abort "Missing prepared WenYuan font. Use tools/build_module.py."
+# The installed face filenames come from the generated font.conf (single source of
+# truth, see tools/build_module.py and docs/font-swap.md); never hardcode them here.
+[ -r "$MODPATH/font.conf" ] || abort "Missing font.conf. Rebuild the module with tools/build_module.py."
+. "$MODPATH/font.conf"
+for face in "$SELFFONT_INSTALLED_LIGHT" "$SELFFONT_INSTALLED_REGULAR" \
+            "$SELFFONT_INSTALLED_MEDIUM" "$SELFFONT_INSTALLED_BOLD" "$SELFFONT_INSTALLED_BLACK"; do
+    [ -n "$face" ] || abort "font.conf is incomplete. Rebuild the module."
+    [ -s "$MODPATH/system/fonts/$face" ] || abort "Missing prepared face $face. Run tools/prepare_font.py and tools/build_module.py."
+done
 # The only supported Android version uses the main Emoji font.
 rm -f "$MODPATH/system/fonts/NotoColorEmoji-fallback.ttf"
 . "$MODPATH/search_dirs.sh" || abort "Font XML installation failed."

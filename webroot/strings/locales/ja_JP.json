@@ -1,7 +1,7 @@
 {
   "INTRO": "フォントファミリーを統一し、太字・斜体・スモールキャップと元の文字を保持します。",
   "BASELINE": "検証基準",
-  "BASELINE_DESC": "文渊圆体 v1.010 · Firefox 155.0.1 は実機検証が必要です。コマンド成功は描画の成功を意味しません。",
+  "BASELINE_DESC": "Selffont Maru（Zen Maru Gothic v1.010 派生）· Firefox 155.0.1 は実機検証が必要です。コマンド成功は描画の成功を意味しません。",
   "DIAGNOSE": "読み取り専用の診断",
   "TEST_PAGE": "フォント比較",
   "MANUAL": "手動の代替処理",

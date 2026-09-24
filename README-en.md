@@ -1,43 +1,49 @@
-# Selffont — phase one
+# Selffont · Maru
 
-A personal font-family replacement setup targeting **Android 16 / Oplus / KernelSU / LSPosed 2.2.0 (7854)**, derived from MFGA. This is not a general Android compatibility claim.
+A personal font-family replacement setup targeting **Android 16 (API 36) / Oplus / KernelSU / LSPosed**, derived from MFGA.
 
-The primary candidate is the unmodified **WenYuan Rounded SC VF v1.010**, pinned by SHA-256 in `config/font-source.json`. Preserve weight, italic, small caps and Unicode text. Whole-font/range blocking and recoloring have been removed, including their tools and workflows.
+**Font route:** five static weights of [Zen Maru Gothic](https://github.com/googlefonts/zen-marugothic) (OFL-1.1, pinned commit), renamed at build time to the derivative family **`Selffont Maru`** and installed as `SelffontMaru-{Light,Regular,Medium,Bold,Black}.ttf`. Android's 100–900 requests map to the nearest face (600→700, 800→900, ties go heavier); italics are synthesised by the platform. No `fvar` is fabricated.
 
-- Modern Xposed API 102 only. LSPosed owns scope; there is no internal package allowlist.
-- A Gecko startup-preference adapter targets Firefox 155.0.1. The adapter and an Android `Typeface` factory (the framework Java API) have now been hit on the target device. Gecko preferences were deliberately left unchanged because the target font was unreadable; **webpage rendering is not yet verified**.
-- No browser extensions, profile edits or native-address hooks. If the target font is not visible in Firefox's process, no Gecko preferences are injected.
-- GMS and reader-app permission interventions require explicit manual confirmation. No boot-time application-data changes.
+**Handwriting-led glyph work** happens only through **explicit per-character point patches** (`config/glyph-patches/<Style>.json`). There is no charset-wide rewriting, no tracing from photos and no "smoothing/rounding" operator. The editor refuses composite glyphs, hinted glyphs, out-of-range indices and no-op edits.
+
+> **Status (honest)**
+> - Host side: 100 Python contract tests + 3 node tests + ruff are green, and the full chain (download → verify → rename → metric-normalise → package) has been rehearsed locally against the real Zen Maru faces with a synthetic base ZIP.
+> - Device: **NOT TESTED**. Module install, webpage rendering and compact slots must be re-verified per `docs/validation.md`.
+> - Known limit: Zen Maru is a *Japanese* face, so simplified-Chinese-only characters are largely absent. Auditing the author's handwriting list gives **30 editable / 14 not drawn** out of 44 text targets (`python3 tools/glyph_audit.py`). Those 14 need new outlines; they are never faked by a point patch.
+
+## What changed in this rewrite
+
+| | |
+|---|---|
+| Font | WenYuan Rounded (variable) → Zen Maru Gothic, five static faces, derivative name `Selffont Maru` |
+| Glyph editing | Charset-wide geometric rewriting deleted with its tools; only the explicit point-patch editor plus its contract tests remain |
+| Dead weight | `tools/otfcc*`, `tools/merge-otd`, the NotoSansPro merge workflow, the emoji-overlap script and the dormant badge/glyph probe classes are gone (~2.6 MB of binaries, two legacy workflows) |
+| Single source of truth | The module ships a generated `font.conf` (face names + visibility file); shell scripts no longer hardcode font names, and `config/font-source.json` ↔ `FontIdentity.kt` drift is test-enforced |
+| Modernisation | Python 3.11 + fontTools 4.65; JDK 21 / Gradle 9.5.0 / AGP 9.3.0 / SDK 36 / all-Kotlin; node 24 + ruff gate |
+| Nativisation | Only framework `Typeface` factories and `fonts.xml`; no JNI, no private-address scanning |
 
 ## Build
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install -r tools/requirements.txt
-.venv/bin/python tools/prepare_font.py
-# Or verify an existing original release file:
-.venv/bin/python tools/prepare_font.py --font /path/to/WenYuanRoundedSCVF.ttf
+.venv/bin/pip install -r tools/requirements-dev.txt
+
+.venv/bin/python tools/prepare_font.py                 # or --font-dir /path/to/zen-maru/ttf
+.venv/bin/python tools/edit_font.py                    # optional point patches
+.venv/bin/python tools/glyph_audit.py                  # editable vs not-drawn targets
+.venv/bin/python tools/preview.py --serve              # browser review page
 .venv/bin/python tools/prepare_base.py
 .venv/bin/python tools/build_module.py --base build/base/MFGA-base.zip
 ```
 
-A complete MFGA base ZIP is an explicit supplemental-font input, pinned by size and SHA-256 in `config/base-source.json` when using `prepare_base.py`. The separate font-module build passed for commit `10f9eef`; it does not rebuild the APK. Device installation and rendering are still unverified. The CI artifact contains the installable `Selffont-phase1.zip`, its checksum, and its build report. The assembler does **not** inherit its scripts, native tools, Zygisk, updater or numeric primary fonts. Do not install a ZIP of this checkout. Module ID remains `MFGA` to avoid competing mounts. Large inputs and outputs stay out of Git.
+The artifact is `build/Selffont-Maru.zip`; the KSU module id stays `MFGA` to avoid competing mounts. Fonts, the base ZIP, APKs and build output never enter Git.
 
-`mfga-xposed` is an all-Kotlin project (`src/main/kotlin`, no `src/main/java`; AGP 9 ships built-in Kotlin, so no separate Kotlin plugin is needed). For an installable development APK, use JDK 21, Gradle 9.5.0, Android SDK 36 and AGP 9.3.0:
+## Boundaries
 
-```sh
-cd mfga-xposed
-gradle --no-daemon assembleDebug
-```
+- The platform gate installs/hooks only on Android 16 + Oplus + KernelSU by default; `touch /data/adb/selffont_allow_unsupported` opts into untested platforms at your own risk, deleting it restores the strict gate.
+- Firefox is adapted through in-memory default-font preferences at Gecko startup (family preferred, existing fallback chain prepended, emoji preferences untouched); no extensions, no profile edits, no native-address hooks. Whether a page truly uses the face still needs the diagnostics page and the log chain.
+- Metric normalisation (`tools/metric_normalize.py`) scales only the install copy's `hhea`/`OS/2` line metrics to the Roboto carrier's nominal metrics to fix low/clipped badge digits; outlines, cmap, family name and weight stay byte-identical, with an anti-clip guard.
+- GMS and reader-app font permissions remain manual fallbacks (explicit `--confirm`); install, boot and the WebUI never run them.
+- Not adapted to other Android versions, ROMs or root managers; device results do not generalise.
 
-The host-contract checks (including the Kotlin policy unit tests run via `gradle test`) and diagnostic APK build passed CI for commit `16457fb`. See `docs/validation.md` for the run links and remaining device checks. The CI workflow builds a diagnostic APK, not a stable production-signed release. A signature change requires uninstalling the previous APK and selecting scope again. No APK build or device success should be inferred from host-side tests.
-
-## Validation and recovery
-
-Open `webroot/diagnostics.html` with `probe.ttf` beside it in the target Firefox. Compare after cold starts with the module scope disabled/enabled. The original test font renders ASCII A as a triangle; small caps and italic should remain after the family changes. Logs distinguish attachment, hook installation, actual hit and missing-font/unsupported-interface cases.
-
-Reader-app permissions are journaled before modification and restored by identity and recorded mode, not guessed as 600. Uninstall attempts that restoration. Old unrecorded changes cannot be reconstructed. GMS cache deletion is irreversible and disabled GMS components remain disabled after uninstall.
-
-Full scope, evidence, limitations and device test procedure: [Chinese README](README.md), [architecture](docs/architecture.md), [validation](docs/validation.md).
-
-The baseline compatibility revision retains the inherited no-visible-glyph Roboto metrics carrier for Android native default/condensed families, with WenYuan as the first glyph fallback. It does not edit WenYuan outlines, character mappings or names. The initial direct-primary configuration is no longer the recommended layout policy; badge alignment still needs device confirmation.
+Contracts and evidence: [`docs/architecture.md`](docs/architecture.md). Acceptance: [`docs/validation.md`](docs/validation.md). Glyph editing: [`docs/font-editing.md`](docs/font-editing.md). Swapping the font: [`docs/font-swap.md`](docs/font-swap.md).
