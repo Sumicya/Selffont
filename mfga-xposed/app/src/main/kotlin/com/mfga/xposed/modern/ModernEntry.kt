@@ -36,7 +36,7 @@ class ModernEntry : XposedModule() {
                     TargetPlatform.OVERRIDE_MARKER + "; behaviour is unverified here"
             )
         }
-        log(Log.INFO, TAG, "[attach] phase1 modern-api102 package=" + param.packageName)
+        log(Log.INFO, TAG, "[attach] maru-v2 modern-api102 package=" + param.packageName)
         if ("com.android.systemui" == param.packageName) {
             // Manager scope is still required. Never opt SystemUI in automatically.
             log(Log.INFO, TAG, "[scope-skip] SystemUI is not a target; scope the app itself")

@@ -35,7 +35,7 @@ for attempt in 1 2; do
     dir="$work/download-$attempt"
     mkdir "$dir"
     if gh run download 34006028276 -R Sumicya/Selffont \
-        -n selffont-phase1-debug-apk -D "$dir"; then
+        -n selffont-maru-debug-apk -D "$dir"; then
         artifact="$dir/app-debug.apk"
         [ -s "$artifact" ] && break
         artifact=

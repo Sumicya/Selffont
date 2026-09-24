@@ -80,7 +80,7 @@ class MetricCarrierTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('busybox'), 'requires the target BusyBox shell model')
 class LogFilterTests(unittest.TestCase):
-    def line(self, origin='com.mfga.xposed,Selffont', message='[attach] phase1', process='org.mozilla.firefox'):
+    def line(self, origin='com.mfga.xposed,Selffont', message='[attach] maru-v2', process='org.mozilla.firefox'):
         return f'[ 2026-01-01T00:00:00 I/LSPosedLogDaemon ] ({process})[{origin},test,0,1] {message}'
 
     def filter(self, text):
