@@ -9,6 +9,7 @@
 - **缺字如实标注**：新增 `tools/glyph_audit.py` + `config/glyph-targets.json`（作者手写练习字表）。对 44 个文本目标的审计：**30 可改 / 14 缺字**（简体专用形，日文基准字体没有）。缺字不再被混进"改笔画"里假装完成。
 - **审阅页**：新增 `tools/preview.py`，用真实 TTF 渲染五个面与目标字表，可在浏览器直接看改动（`--serve`），也可出 PNG（`--render`）；有 patch 报告时页面额外显示**改前/改后**对照（未改动的基础面从 `/baseline/` 提供）。
 - **首个真实 patch（样例）**：`config/glyph-patches/Regular.json` 按"去钩 + 圆头"改 `力`，由 `tools/edit_font.py` 校验并通过"只有被点名的字形变了"。其余 29 个可改字与其余四个面仍未改——样例存在是为了让作者照着改，不是为了假装笔画已写完。
+- **简体扩展（自己做）**：新增 `tools/extend_font.py`，用 Zen Maru 自己的轮廓派生简体字（贝 页 马 鸟 乌 岛 门 陈 护 进 迁 赵 飞），规则按角色而不是轮廓序号书写，所以五个字重通用；保存前断言原有字形逐字节不变、cmap 只增派生码点；拼不出来的字重（Bold/Black 的 飞）与合框无法表达的（见）明示跳过。新增 14 项契约测试。
 - **组件借用者可见**：patch 改到的字形若被其他字形当组件引用，`edit_font.py` 会在 stderr 与报告 `componentUsers` 里点名（不静默连带改动）。
 - **单一真源**：模块内生成 `font.conf`（五个面名 + 可见性文件），`customize.sh`/`diagnose.sh`/`device_state.sh` 只读它，不再硬编码字体名；`config/font-source.json` 与 `FontIdentity.kt` 由契约测试对齐。
 - **删死重**：`tools/otfccbuild`、`tools/otfccdump`、`tools/merge-otd`（约 2.6 MB 预编译二进制）、`NotoSansPro` 合并工作流 `build.yml`、`tools/fontslist/`、`script/remove_emoji_overlap.py`、休眠的 `BadgeDrawObserver`/`BadgeSamplePolicy`/`GlyphCoverageProbe` 及其测试。

@@ -4,12 +4,14 @@
 
 **字体路线：** [Zen Maru Gothic](https://github.com/googlefonts/zen-marugothic)（OFL-1.1，固定提交）五个静态字重，构建期改名为派生家族 **`Selffont Maru`**，装成 `SelffontMaru-{Light,Regular,Medium,Bold,Black}.ttf`。Android 的 100–900 请求按就近映射到这五个面（600→700、800→900，平局取粗），斜体由平台合成，**不伪造 `fvar`**。
 
+**简体扩展：** Zen Maru 没有简体专用字形，`tools/extend_font.py` 用它**自己的轮廓**拼出 13 个（贝 页 马 鸟 乌 岛 门 陈 护 进 迁 赵 飞 + 手写目标里的字），规则是可复读的小表，保存前断言"原有字形逐字节不变"；某个字重拼不出来就跳过并记进报告（如 Bold/Black 的 飞、合框的 见）。详见 [`docs/simplified-extension.md`](docs/simplified-extension.md)。
+
 **手写笔画：** 只通过**逐字、逐点、显式写出**的 patch 修改（`config/glyph-patches/<Style>.json`）。没有整字库批量改写、没有从照片自动描摹、没有平滑/圆头"算子"。工具会拒绝复合字形、带 hinting 的字形和任何越界或空改动。
 
 > **状态（诚实版）**
 > - 主机侧：100 项 Python 契约测试 + 3 项 node 测试 + ruff 全绿；真实 Zen Maru 五个面已完成"下载→校验→改名→度量归一→打包"全链路本地演练（合成 base ZIP）。
 > - 真机：**未验收**。模块安装、网页绘制、角标等紧凑槽位都需要按 `docs/validation.md` 重新测一遍。
-> - 已知边界：Zen Maru 是**日文字体**，简体专用字形大量缺失。对作者手写练习字表 44 个目标的审计结果：**30 字可改，14 字需要新造**（`python3 tools/glyph_audit.py`）。所以"手写笔画"目前只能覆盖已有字形，缺字要么接受系统回退，要么另行设计。
+> - 已知边界：Zen Maru 是**日文字体**，简体专用字形缺失，已由 `tools/extend_font.py` 用字体自己的轮廓补出 13 个；剩余缺字见 `python3 tools/glyph_audit.py` 的实测结果（`见` 等由引擎明示跳过）。手写笔画 patch 作用在派生之后的面上。
 
 ## 这一版改了什么（相对 v1.4.0）
 
@@ -48,7 +50,7 @@ python3 -m venv .venv
 
 ## 手写笔画工作流
 
-1. `tools/glyph_audit.py` 按 `config/glyph-targets.json` 报告哪些字"可改"、哪些"缺字"。
+1. 先 `tools/extend_font.py` 做简体扩展（可复读的规则表），再 `glyph_audit.py` 看还剩哪些字没有字形。
 2. `tools/preview.py --serve` 起一个审阅页：用**真实 TTF** 渲染五个面 + 目标字表 + 笔画约定，改成什么样当场看得见。
 3. 仓库里已有一个由工具生成的**样例 patch**（`config/glyph-patches/Regular.json`，改 `力` 的去钩与圆头），照它的格式写 `config/glyph-patches/<Style>.json`：`{"faceSha256": "<源面哈希>", "glyphs": {"字": {"points": [{"index": 12, "dx": -6, "dy": 3}]}}}`。
 4. `tools/edit_font.py` 校验（复合/hinting/拓扑/空改动全拒），发布到 `build/fonts-patched`，并断言**只有被点名的字形变了**。
