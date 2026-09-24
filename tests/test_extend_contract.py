@@ -5,6 +5,8 @@ from contours the face already owns, every pre-existing glyph survives byte for
 byte, and a weight whose drawing cannot be derived is reported instead of being
 quietly given a guessed shape.
 """
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -16,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tests"))
 
+import edit_font
 import extend_font
 from font_fixtures import composite_font, static_font
 
@@ -127,11 +130,145 @@ class FaceContractTests(unittest.TestCase):
         self.assertEqual(len(extend_font._glyph_contours(face.pending[0][2])), 1)
 
 
+class WindingTests(unittest.TestCase):
+    """Mirroring reverses winding; a frame with holes must survive that."""
+
+    @staticmethod
+    def _box(x0, y0, x1, y1, reversed_=False):
+        """A box wound the way this face winds outlines (negative signed area)."""
+        corners = [(x0, y0), (x0, y1), (x1, y1), (x1, y0)]
+        if reversed_:
+            corners = list(reversed(corners))
+        return extend_font.Contour([("moveTo", (corners[0],)),
+                                    *[("lineTo", (p,)) for p in corners[1:]],
+                                    ("closePath", ())])
+
+    def test_reversed_flips_the_signed_area(self):
+        box = self._box(0, 0, 100, 100)
+        self.assertLess(extend_font.signed_area(box), 0)
+        self.assertGreater(extend_font.signed_area(box.reversed()), 0)
+        self.assertEqual(extend_font.bounds([box.reversed()]), extend_font.bounds([box]))
+
+    def test_reversed_keeps_curves_and_their_endpoints(self):
+        curve = extend_font.Contour([("moveTo", ((0, 0),)), ("qCurveTo", ((50, 100), (100, 0))),
+                                     ("lineTo", ((50, -20),)), ("closePath", ())])
+        back = curve.reversed()
+        self.assertEqual(extend_font.bounds([back]), extend_font.bounds([curve]))
+        self.assertEqual([op for op, _ in back.commands],
+                         ["moveTo", "lineTo", "qCurveTo", "closePath"])
+
+    def test_frame_mirrors_without_turning_holes_into_ink(self):
+        outer = self._box(600, 0, 900, 500)
+        hole = self._box(650, 100, 850, 400, reversed_=True)
+        built = extend_font.frame()([outer, hole], {"built": [], "notes": {}})
+        self.assertEqual(len(built), 4)
+        mirrored_outer, mirrored_hole = built[2], built[3]
+        self.assertLess(extend_font.signed_area(mirrored_outer), 0)
+        self.assertGreater(extend_font.signed_area(mirrored_hole), 0)
+        self.assertEqual(len(extend_font.classify(built)[1]), 2)
+
+    def test_frame_moves_the_half_onto_the_centre_line(self):
+        outer = self._box(600, 0, 900, 500)
+        built = extend_font.frame(axis=500)([outer], {"built": [], "notes": {}})
+        x0, _, x1, _ = extend_font.bounds(built)
+        self.assertEqual((x0 + x1) / 2, 500)
+        self.assertEqual(extend_font.bounds([built[0]])[0], 500,
+                         "the half handed over should end up touching the centre line")
+
+
+class SelectorTests(unittest.TestCase):
+    """Selectors name roles, so a weight that fused them must come back empty."""
+
+    @staticmethod
+    def _box(x0, y0, x1, y1, reversed_=False):
+        corners = [(x0, y0), (x0, y1), (x1, y1), (x1, y0)]
+        if reversed_:
+            corners = list(reversed(corners))
+        return extend_font.Contour([("moveTo", (corners[0],)),
+                                    *[("lineTo", (p,)) for p in corners[1:]],
+                                    ("closePath", ())])
+
+    def setUp(self):
+        # A compound character: a full-height radical on the left (with its slot
+        # and the little top bar of 戶), and a body on the right.
+        self.radical = self._box(40, -80, 400, 840)
+        self.slot = self._box(150, 300, 300, 600, reversed_=True)
+        self.top_bar = self._box(60, 700, 450, 760)
+        self.body = self._box(460, -80, 960, 840)
+        self.compound = [self.radical, self.slot, self.top_bar, self.body]
+
+    def test_the_radical_is_the_whole_side_of_the_character(self):
+        picked = extend_font.left_radical(self.compound)
+        self.assertEqual(len(picked), 3, "the radical's slot and top bar come with it")
+        self.assertIn(self.slot, picked)
+        self.assertIn(self.top_bar, picked)
+        self.assertNotIn(self.body, picked)
+
+    def test_a_fragment_beside_the_centre_line_is_not_a_radical(self):
+        """陳's 阝 is fused into the body in the heavy weights: only a slot is left."""
+        fused = [self.body, self._box(150, 300, 300, 600, reversed_=True)]
+        self.assertEqual(extend_font.left_radical(fused), [])
+        self.assertEqual(len(extend_font.left_half(fused)), 1,
+                         "left_half still sees the fragment; left_radical must not")
+
+    def test_rightmost_and_leftmost_name_the_two_feet(self):
+        left, middle, right = (self._box(40, 0, 200, 300), self._box(430, -60, 540, 800),
+                               self._box(700, 0, 900, 300))
+        feet = [left, middle, right]
+        self.assertIs(extend_font.leftmost(feet)[0], left)
+        self.assertIs(extend_font.rightmost(feet)[0], right)
+
+    def test_flip_x_mirrors_in_place_and_keeps_the_winding(self):
+        dot = extend_font.Contour([("moveTo", ((100, 0),)), ("lineTo", ((160, 0),)),
+                                   ("lineTo", ((220, 400),)), ("closePath", ())])
+        before = extend_font.bounds([dot])
+        flipped = extend_font.flip_x()([dot], {"built": [], "notes": {}})[0]
+        self.assertEqual(extend_font.bounds([flipped]), before, "it mirrors in place")
+        self.assertEqual(extend_font.signed_area(flipped), extend_font.signed_area(dot),
+                         "a mirrored outline must stay an outline, so the winding is restored")
+        points = list(flipped.points())
+        self.assertEqual(max(p[0] for p in points) - min(p[0] for p in points), 120)
+
+    def test_a_selection_that_must_not_be_empty_is_refused(self):
+        """A missing radical is half a character, not an empty detail."""
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_face(Path(temp), static_font(family="Fixture Maru"))
+            face = extend_font.Face(path)
+            # 中 in the fixture is a single box, so it has no "everything but the body".
+            with self.assertRaisesRegex(ValueError, "except_highest.*cannot be proved"):
+                face.add("户", [("中", extend_font.except_highest, extend_font.translate(0, 0))])
+            face.add("户", [("中", extend_font.everything_but_main, extend_font.translate(0, 0)),
+                            ("体", extend_font.all_contours, extend_font.translate(0, 0))])
+            self.assertIn("户", face.added)
+
+
+class ChainTests(unittest.TestCase):
+    def test_edit_defaults_to_the_extended_faces(self):
+        """The hand patches run after the extension, so the default must say so."""
+        parser = edit_font.build_parser()
+        self.assertEqual(Path(parser.get_default("prepared")).name, "fonts-simplified")
+        self.assertEqual(Path(parser.get_default("output")).name, "fonts-patched")
+
+    def test_editing_a_derived_face_is_announced(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_face(Path(temp), static_font(family="Fixture Maru"))
+            face = {"style": "Regular", "file": "ZenMaruGothic-Regular.ttf",
+                    "sha256": "0" * 64}
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                edit_font._warn_if_derived(path, face)
+            self.assertIn("derived face", stderr.getvalue())
+            quiet = io.StringIO()
+            with contextlib.redirect_stderr(quiet):
+                edit_font._warn_if_derived(path, dict(face, sha256=edit_font.sha256(path)))
+            self.assertNotIn("derived face", quiet.getvalue())
+
+
 class ShaperTests(unittest.TestCase):
     @staticmethod
-    def _box(x0, y0, x1, y1, clockwise=False):
-        corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-        if clockwise:
+    def _box(x0, y0, x1, y1, reversed_=False):
+        corners = [(x0, y0), (x0, y1), (x1, y1), (x1, y0)]
+        if reversed_:
             corners = list(reversed(corners))
         return extend_font.Contour([("moveTo", (corners[0],)),
                                     *[("lineTo", (p,)) for p in corners[1:]],
@@ -140,7 +277,7 @@ class ShaperTests(unittest.TestCase):
     def test_classify_separates_holes_from_strokes(self):
         """A slot wound the other way is a hole; a same-winding small box is a foot."""
         outer = self._box(0, 0, 100, 100)
-        hole = self._box(20, 20, 80, 80, clockwise=True)
+        hole = self._box(20, 20, 80, 80, reversed_=True)
         foot = self._box(-40, -40, -20, -20)
         main, holes, strokes = extend_font.classify([outer, hole, foot])
         self.assertIs(main, outer)

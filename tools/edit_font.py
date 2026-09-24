@@ -288,6 +288,22 @@ def apply_patch(source: Path, patch_path: Path, output: Path, face: dict[str, An
     return result
 
 
+def _warn_if_derived(source: Path, face: dict[str, Any]) -> None:
+    """Say out loud when a patch meets a derived face instead of the pinned one.
+
+    Patches address points by index in the *pinned* source face. The simplified
+    extension runs before the patches, so the face being edited is usually a
+    derived one: that is fine for characters whose glyph was not derived, and
+    wrong for characters that were. The tool cannot tell which is which, so it
+    prints the mismatch rather than staying quiet about it.
+    """
+    digest = sha256(source)
+    if digest != face["sha256"]:
+        print(f"[notice] {face['style']}: editing a derived face ({digest[:12]}), not the "
+              f"pinned {face['file']} ({face['sha256'][:12]}); point indices must match "
+              "the glyph this face actually draws", file=sys.stderr)
+
+
 def apply_patch_dir(prepared: Path, patched: Path, patch_dir: Path, report_path: Path | None = None) -> list[dict[str, Any]]:
     """Apply every ``<Style>.json`` patch found for a prepared face directory."""
     prepared, patched = Path(prepared), Path(patched)
@@ -300,6 +316,7 @@ def apply_patch_dir(prepared: Path, patched: Path, patch_dir: Path, report_path:
         patch_path = Path(patch_dir) / f"{style}.json"
         destination = patched / face["installedFile"]
         if patch_path.is_file():
+            _warn_if_derived(source, face)
             results.append(apply_patch(source, patch_path, destination, face))
         else:
             destination.write_bytes(source.read_bytes())
@@ -308,15 +325,30 @@ def apply_patch_dir(prepared: Path, patched: Path, patch_dir: Path, report_path:
     return results
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--prepared", type=Path, default=ROOT / "build/fonts",
-                        help="Directory produced by tools/prepare_font.py")
+    parser.add_argument("--prepared", type=Path, default=ROOT / "build/fonts-simplified",
+                        help="Directory from tools/prepare_font.py, extended by "
+                             "tools/extend_font.py; falls back to build/fonts when the "
+                             "extension has not run")
     parser.add_argument("--patches", type=Path, default=PATCH_DIR,
                         help="Directory of <Style>.json point patches")
     parser.add_argument("--output", type=Path, default=ROOT / "build/fonts-patched")
     parser.add_argument("--report", type=Path, default=ROOT / "build/glyph-patch-report.json")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    if not args.prepared.is_dir():
+        fallback = ROOT / "build/fonts"
+        if fallback.is_dir():
+            print(f"[notice] {args.prepared} does not exist; using {fallback} "
+                  "(run tools/extend_font.py to include the simplified glyphs)", file=sys.stderr)
+            args.prepared = fallback
+        else:
+            raise SystemExit(f"no prepared faces in {args.prepared} or {fallback}; "
+                             "run tools/prepare_font.py first")
     results = apply_patch_dir(args.prepared, args.output, args.patches, args.report)
     print(json.dumps([{r["face"]: sorted(r["changedGlyphs"])} for r in results], ensure_ascii=False))
 

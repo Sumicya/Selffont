@@ -37,6 +37,13 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads((ROOT / "config/font-source.json").read_text())
 FACES = {face["style"]: face for face in MANIFEST["faces"]}
 
+
+
+
+
+# --- geometry ---
+
+
 def apply(matrix, point):
     a, b, c, d, e, f = matrix
     x, y = point
@@ -105,6 +112,46 @@ class Contour:
                 "top": max(p[1] for p in current["points"]),
             })
         return segments
+
+    def reversed(self):
+        """The same outline walked the other way round.
+
+        TrueType fills by winding: an outer contour runs one way and a white slot
+        runs the other. Mirroring a glyph reverses both, so a mirrored frame
+        would come out with its holes filled and its outline punched out --
+        门 rendered as two blobs. Reversing the copy restores the original
+        orientation.
+        """
+        flat = []
+        for op, args in self.commands:
+            if op in ("moveTo", "lineTo"):
+                flat.append((args[0], True))
+            elif op == "qCurveTo":
+                points = list(args)
+                last = points.pop()
+                flat.extend((point, False) for point in points)
+                flat.append((last, True))
+        if len(flat) > 1 and flat[-1][0] == flat[0][0]:
+            flat.pop()
+        flat.reverse()
+        start = next(index for index, (_, on) in enumerate(flat) if on)
+        flat = flat[start:] + flat[:start]
+        commands = [("moveTo", (flat[0][0],))]
+        index = 1
+        while index < len(flat):
+            if flat[index][1]:
+                commands.append(("lineTo", (flat[index][0],)))
+                index += 1
+                continue
+            controls = []
+            while index < len(flat) and not flat[index][1]:
+                controls.append(flat[index][0])
+                index += 1
+            end = flat[index][0] if index < len(flat) else flat[0][0]
+            commands.append(("qCurveTo", (*controls, end)))
+            index += 1
+        commands.append(("closePath", ()))
+        return Contour(commands)
 
     def clamp_below(self, floor):
         """Pull every point up to ``floor``, so a cut leaves a flat edge.
@@ -177,102 +224,29 @@ def contours_of(font: TTFont, glyph_name: str):
 #
 # *shaper* turns the selected contours into the contours of the new glyph.
 
+
+def _glyph_contours(glyph):
+    pen = DecomposingRecordingPen(None)
+    glyph.draw(pen, None)
+    contours, current = [], []
+    for op, args in pen.value:
+        if op == "moveTo":
+            current = [(op, args)]
+        elif op == "closePath":
+            current.append((op, ()))
+            contours.append(Contour(current))
+            current = []
+        else:
+            current.append((op, args))
+    return contours
+
+
+# --- classification ---
+
+
 def area(contour):
     x0, y0, x1, y1 = bounds([contour])
     return (x1 - x0) * (y1 - y0)
-
-
-def all_contours(contours, context=None):
-    return list(contours)
-
-
-def main_contour(contours, context=None):
-    """The outline that carries the character: the largest one."""
-    return [max(contours, key=area)]
-
-
-def everything_but_main(contours, context=None):
-    biggest = max(contours, key=area)
-    return [c for c in contours if c is not biggest]
-
-
-def left_half(contours, context=None):
-    """Contours whose centre sits left of the glyph's own centre line.
-
-    扌 in 持, 阝 in 陳: the radical is a separate contour, and "left of centre"
-    finds it in every weight without naming an index.
-    """
-    boxes = [bounds([c]) for c in contours]
-    axis = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
-    return [c for c in contours if sum(bounds([c])[:3:2]) < 2 * axis]
-
-
-def highest(contours, context=None):
-    """The topmost contour -- 戸's top bar, which 户 draws as a dot."""
-    return [max(contours, key=lambda c: bounds([c])[1])]
-
-
-def except_highest(contours, context=None):
-    top = highest(contours)[0]
-    return [c for c in contours if c is not top]
-
-
-def below(y):
-    """Contours that sit entirely below ``y``."""
-    return lambda contours, context=None: [c for c in contours if bounds([c])[3] <= y]
-
-
-def bar_over_feet(height=0.13, overhang=0.0, level=0.45):
-    """The long bottom stroke of 马/鸟/乌, placed where the feet used to be.
-
-    Simplified 马/鸟/乌 replace the 灬 feet with one horizontal stroke, so the
-    stroke is fitted into the band the feet occupied -- keeping it inside the
-    character instead of below the baseline. The band is measured by
-    ``without_feet`` and handed over in the context, so the bar follows the
-    weight's own geometry; the bar outline itself comes from 一.
-    """
-    def shaper(contours, context):
-        notes = (context or {}).get("notes", {})
-        if "feetBox" not in notes:
-            raise ValueError("the bar needs the feet band; run the feet removal first")
-        _, fy0, _, fy1 = notes["feetBox"]
-        built = (context or {}).get("built") or []
-        if not built:
-            raise ValueError("the bar needs the body to be built first")
-        bx0, by0, bx1, by1 = bounds(built)
-        thickness = height * (by1 - by0)
-        top = fy0 + level * (fy1 - fy0)
-        span = bx1 - bx0
-        box = (bx0 - overhang * span, top - thickness, bx1 + overhang * span, top)
-        return fit(box, keep_aspect=False)(contours, context)
-    return shaper
-
-
-def above(y):
-    return lambda contours: [c for c in contours if bounds([c])[1] >= y]
-
-
-def translate(dx, dy):
-    def shaper(contours, context):
-        return [c.transform((1, 0, 0, 1, dx, dy)) for c in contours]
-    return shaper
-
-
-def longest_horizontal_y(contour):
-    """Y of the widest horizontal line segment -- a box's baseline.
-
-    Used instead of a hard-coded y so the same rule holds in every weight: the
-    bottom edge of 貝/頁 is the widest flat line in the glyph.
-    """
-    best = None
-    for segment in contour.segments():
-        if segment["straight"] and abs(segment["start"][1] - segment["end"][1]) < 2:
-            width = abs(segment["end"][0] - segment["start"][0])
-            if best is None or width > best[0]:
-                best = (width, (segment["start"][1] + segment["end"][1]) / 2)
-    if best is None:
-        raise ValueError("no horizontal segment to measure a baseline from")
-    return best[1]
 
 
 def signed_area(contour):
@@ -321,6 +295,227 @@ def _feet(main, strokes):
     return small
 
 
+def _floor_segment(contour):
+    """The widest flat horizontal run in the lower half of an outline."""
+    _, y0, _, y1 = bounds([contour])
+    middle = (y0 + y1) / 2
+    candidates = [
+        segment for segment in contour.segments()
+        if segment["straight"]
+        and abs(segment["start"][1] - segment["end"][1]) < 2
+        and segment["start"][1] < middle
+    ]
+    if not candidates:
+        return None
+    segment = max(candidates, key=lambda s: abs(s["end"][0] - s["start"][0]))
+    return {"segment": segment, "y": (segment["start"][1] + segment["end"][1]) / 2}
+
+
+# --- selectors ---
+
+
+def all_contours(contours, context=None):
+    return list(contours)
+
+
+def main_contour(contours, context=None):
+    """The outline that carries the character: the largest one."""
+    return [max(contours, key=area)]
+
+
+# Selectors that may legitimately come back empty say so, because the engine
+# treats an empty selection as "this weight cannot prove the recipe" and reports
+# a skip -- which is only correct for the selectors where empty is expected.
+def _optional(selector):
+    selector.optional = True
+    return selector
+
+
+@_optional
+def everything_but_main(contours, context=None):
+    """Every contour except the one carrying the character.
+
+    Legitimately empty: a heavy weight sometimes draws a character as a single
+    fused outline (飛 in Bold), and "the rest of it" is then nothing at all.
+    """
+    biggest = max(contours, key=area)
+    return [c for c in contours if c is not biggest]
+
+
+def left_half(contours, context=None):
+    """Contours whose centre sits left of the glyph's own centre line.
+
+    扌 in 持, 阝 in 陳: the radical is a separate contour, and "left of centre"
+    finds it in every weight without naming an index.
+    """
+    boxes = [bounds([c]) for c in contours]
+    axis = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
+    return [c for c in contours if sum(bounds([c])[:3:2]) < 2 * axis]
+
+
+def right_half(contours, context=None):
+    """Mirror of ``left_half``: the right component of a compound character."""
+    boxes = [bounds([c]) for c in contours]
+    axis = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
+    return [c for c in contours if sum(bounds([c])[:3:2]) >= 2 * axis]
+
+
+def _radical_side(contours, side, min_height=0.6):
+    """The component that reads as this character's radical.
+
+    A radical is most of the glyph's height and flush with one side of it. The
+    height test is what makes this honest: in the heavier weights a radical is
+    often fused into the body, and what is left of it beside the centre line is
+    a fragment of a slot (55% of the height in 陳). A fragment fails the test, the
+    recipe reports a skip, and no half-drawn character ships.
+    """
+    whole = bounds(contours)
+    height = whole[3] - whole[1]
+    edge = 0.06 * (whole[2] - whole[0])
+    half = left_half(contours) if side == "left" else right_half(contours)
+    for contour in half:
+        x0, y0, x1, y1 = bounds([contour])
+        if y1 - y0 <= min_height * height:
+            continue
+        if (x0 <= whole[0] + edge) if side == "left" else (x1 >= whole[2] - edge):
+            # A radical is not one contour: 所 draws 戶 as a body, the small top
+            # bar of 尸, and the slot inside its head. Once the tall stroke proves
+            # which component this is, the whole side comes with it.
+            return list(half)
+    return []
+
+
+def left_radical(contours, context=None):
+    """The left component: 阝 in 限, 扌 in 打, 戶 in 所."""
+    return _radical_side(contours, "left")
+
+
+def right_radical(contours, context=None):
+    """The right component: 東 in 棟."""
+    return _radical_side(contours, "right")
+
+
+def leftmost(contours, context=None):
+    """The leftmost contour that is not the body: 糸's lower-left dot.
+
+    That dot's own slant already rises to the right, which is the shape 纟 uses
+    for its third stroke, so 维 borrows the dot instead of drawing a 提. The body
+    is excluded because 糸's outline reaches further left than its dot does.
+    """
+    biggest = max(contours, key=area)
+    others = [c for c in contours if c is not biggest]
+    return [min(others, key=lambda c: bounds([c])[0])] if others else []
+
+
+def rightmost(contours, context=None):
+    """The rightmost contour that is not the body: 小's lower-right dot.
+
+    Mirror of ``leftmost``: used when both of a character's feet come from the
+    same glyph and each has to be named by where it sits.
+    """
+    biggest = max(contours, key=area)
+    others = [c for c in contours if c is not biggest]
+    return [max(others, key=lambda c: bounds([c])[0])] if others else []
+
+
+def highest(contours, context=None):
+    """The topmost contour -- 戸's top bar, which 户 draws as a dot."""
+    return [max(contours, key=lambda c: bounds([c])[1])]
+
+
+def except_highest(contours, context=None):
+    top = highest(contours)[0]
+    return [c for c in contours if c is not top]
+
+
+def above(y):
+    return lambda contours: [c for c in contours if bounds([c])[1] >= y]
+
+
+def above_main(contours, context=None):
+    """Contours that sit on top of the main outline: 員's 口 over its 貝."""
+    main = max(contours, key=area)
+    top = bounds([main])[3]
+    return [c for c in contours if c is not main and bounds([c])[1] >= top]
+
+
+def below(y):
+    """Contours that sit entirely below ``y``."""
+    return lambda contours, context=None: [c for c in contours if bounds([c])[3] <= y]
+
+
+# --- shapers ---
+
+
+def translate(dx, dy):
+    def shaper(contours, context):
+        return [c.transform((1, 0, 0, 1, dx, dy)) for c in contours]
+    return shaper
+
+
+def fit(box, keep_aspect=True, align=(0.5, 0.5)):
+    """Scale whatever it is given into ``box`` = (x0, y0, x1, y1).
+
+    ``keep_aspect`` scales uniformly by the smaller ratio, so a box that was
+    square in the traditional glyph stays square in the derived one.
+    """
+    def shaper(contours, context):
+        x0, y0, x1, y1 = bounds(contours)
+        w, h = x1 - x0, y1 - y0
+        if w <= 0 or h <= 0:
+            raise ValueError("degenerate source bounds")
+        fx, fy = (box[2] - box[0]) / w, (box[3] - box[1]) / h
+        if keep_aspect:
+            fx = fy = min(fx, fy)
+        ox = box[0] + (box[2] - box[0]) / 2 - align[0] * w * fx
+        oy = box[1] + (box[3] - box[1]) / 2 - align[1] * h * fy
+        matrix = (fx, 0, 0, fy, ox - fx * x0, oy - fy * y0)
+        return [c.transform(matrix) for c in contours]
+    return shaper
+
+
+def flip_x():
+    """Mirror a shape about its own vertical centre line.
+
+    The face leans its dots one way (丶 leans down-right), and 东's lower-left
+    foot leans the other way, so that foot is the same dot flipped instead of a
+    stroke long enough to be wrong. Mirroring swaps inside and outside, so the
+    copy is reversed to keep its winding.
+    """
+    def shaper(contours, context):
+        x0, _, x1, _ = bounds(contours)
+        matrix = (-1, 0, 0, 1, x0 + x1, 0)
+        return [c.transform(matrix).reversed() for c in contours]
+    return shaper
+
+
+def frame(axis=500):
+    """Build a symmetrical frame from one half of a bracket: 門 -> 门, 見 -> 见.
+
+    Whichever half is handed over is slid inward until it meets the glyph's centre
+    line, then mirrored, so the two halves join instead of keeping the gap the
+    original spacing had. The white slots travel with their half, because a frame
+    without its slots is a pair of solid blobs.
+    """
+    def shaper(contours, context):
+        x0 = min(bounds([c])[0] for c in contours)
+        x1 = max(bounds([c])[2] for c in contours)
+        shift = (axis - x0) if (x0 + x1) / 2 > axis else (axis - x1)
+        placed = [c.transform((1, 0, 0, 1, shift, 0)) for c in contours]
+        mirrored = [c.transform((-1, 0, 0, 1, 2 * axis, 0)).reversed() for c in placed]
+        return [*placed, *mirrored]
+    return shaper
+
+
+def then(*shapers):
+    """Apply shapers in order; each one sees what the previous produced."""
+    def shaper(contours, context):
+        for step in shapers:
+            contours = step(contours, context)
+        return contours
+    return shaper
+
+
 def without_feet(contours, context=None):
     """Drop the 灬 feet, keep the box and every white slot: 貝 -> 贝.
 
@@ -348,22 +543,6 @@ def without_feet(contours, context=None):
         x0, _, x1, _ = bounds([main])
         context.setdefault("notes", {})["feetBox"] = (x0, bounds([main])[1], x1, floor["y"])
     return [shaped, *holes, *strokes]
-
-
-def _floor_segment(contour):
-    """The widest flat horizontal run in the lower half of an outline."""
-    _, y0, _, y1 = bounds([contour])
-    middle = (y0 + y1) / 2
-    candidates = [
-        segment for segment in contour.segments()
-        if segment["straight"]
-        and abs(segment["start"][1] - segment["end"][1]) < 2
-        and segment["start"][1] < middle
-    ]
-    if not candidates:
-        return None
-    segment = max(candidates, key=lambda s: abs(s["end"][0] - s["start"][0]))
-    return {"segment": segment, "y": (segment["start"][1] + segment["end"][1]) / 2}
 
 
 def body_only(contours, context=None):
@@ -408,70 +587,32 @@ def without_feathers(contours, context=None):
     return [main, *holes, *big]
 
 
-def mirror_left(contours, built):
-    """門 -> 门: keep one leaf with its white slots, mirror it about the centre.
+def bar_over_feet(height=0.13, overhang=0.0, level=0.45):
+    """The long bottom stroke of 马/鸟/乌, placed where the feet used to be.
 
-    The leaf is a cage around its own slots; mirroring only the cage gave two
-    solid blobs, and picking the leaf by index failed because each weight merges
-    the halves differently. Taking whatever sits left of the glyph's centre line
-    and mirroring that is stable across all five weights.
-    """
-    boxes = [bounds([c]) for c in contours]
-    axis = (min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2
-    left = [c for c in contours if sum(bounds([c])[:3:2]) < 2 * axis]
-    if not left:
-        raise ValueError("no contour sits left of the centre line")
-    # 門's two leaves sit apart; 门's halves meet in the middle, so the kept
-    # leaf is slid inwards until its inner edge reaches the glyph centre.
-    inner = max(bounds([c])[2] for c in left)
-    shift = (1, 0, 0, 1, axis - inner, 0)
-    placed = [c.transform(shift) for c in left]
-    return [*placed, *[c.transform((-1, 0, 0, 1, 2 * axis, 0)) for c in placed]]
-
-
-def fit(box, keep_aspect=True, align=(0.5, 0.5)):
-    """Scale whatever it is given into ``box`` = (x0, y0, x1, y1).
-
-    ``keep_aspect`` scales uniformly by the smaller ratio, so a box that was
-    square in the traditional glyph stays square in the derived one.
+    Simplified 马/鸟/乌 replace the 灬 feet with one horizontal stroke, so the
+    stroke is fitted into the band the feet occupied -- keeping it inside the
+    character instead of below the baseline. The band is measured by
+    ``without_feet`` and handed over in the context, so the bar follows the
+    weight's own geometry; the bar outline itself comes from 一.
     """
     def shaper(contours, context):
-        x0, y0, x1, y1 = bounds(contours)
-        w, h = x1 - x0, y1 - y0
-        if w <= 0 or h <= 0:
-            raise ValueError("degenerate source bounds")
-        fx, fy = (box[2] - box[0]) / w, (box[3] - box[1]) / h
-        if keep_aspect:
-            fx = fy = min(fx, fy)
-        ox = box[0] + (box[2] - box[0]) / 2 - align[0] * w * fx
-        oy = box[1] + (box[3] - box[1]) / 2 - align[1] * h * fy
-        matrix = (fx, 0, 0, fy, ox - fx * x0, oy - fy * y0)
-        return [c.transform(matrix) for c in contours]
+        notes = (context or {}).get("notes", {})
+        if "feetBox" not in notes:
+            raise ValueError("the bar needs the feet band; run the feet removal first")
+        _, fy0, _, fy1 = notes["feetBox"]
+        built = (context or {}).get("built") or []
+        if not built:
+            raise ValueError("the bar needs the body to be built first")
+        bx0, by0, bx1, by1 = bounds(built)
+        thickness = height * (by1 - by0)
+        top = fy0 + level * (fy1 - fy0)
+        span = bx1 - bx0
+        box = (bx0 - overhang * span, top - thickness, bx1 + overhang * span, top)
+        return fit(box, keep_aspect=False)(contours, context)
     return shaper
 
 
-def mirror(axis=500):
-    def shaper(contours, context):
-        return [c.transform((-1, 0, 0, 1, 2 * axis, 0)) for c in contours]
-    return shaper
-
-
-def mirrored_frame(axis=500):
-    """Mirror a leaf about the glyph centre, so one drawn half gives both.
-
-    門's leaves are symmetric about x=500: mirroring the right leaf puts a
-    copy exactly where the left leaf sits, and the simplified 门 is the frame
-    those two halves form.
-    """
-    def shaper(contours):
-        return [c.transform((-1, 0, 0, 1, 2 * axis, 0)) for c in contours]
-    return shaper
-
-
-# --- recipes ---------------------------------------------------------------
-
-# Each recipe: new character -> [(source glyph, selector, shaper)]. The contours
-# are drawn into one new glyph; nothing else in the face is touched.
 RECIPES: dict[str, list] = {}
 
 
@@ -481,34 +622,74 @@ def recipe(char, *parts):
     return char
 
 
-# 貝/頁: the 灬 feet go, the box and its white slots stay.
-recipe("贝", ("貝", all_contours, simplified_box()))
-recipe("页", ("頁", all_contours, without_feet))
-# 見 -> 见 would need the box's floor removed and the two 儿 legs reconnected
-# through it; contour assembly cannot express that cut yet, so it is left
-# undone instead of shipping a 見-shaped 见. See docs/font-editing.md.
+# Every recipe works in all five weights: selectors name roles, never indices,
+# because each weight was drawn separately (貝 has six contours in Light and four
+# in Bold).
 
-# 馬/鳥/烏: same feet removal; 島 is already the simplified skeleton.
+# --- 貝/頁/見: the 灬 feet go, the box keeps its white slots ------------------
+recipe("贝", ("貝", all_contours, then(without_feet, simplified_box())))
+recipe("页", ("頁", all_contours, without_feet))
+# 见: the frame is one half of 門's bracket mirrored; the legs are 儿 itself.
+# 见 = 冂 + 儿: 冂 is its own character in this face, and 元's main contour is
+# exactly the pair of 儿 legs, so neither part is drawn from scratch.
+recipe("见", ("冂", all_contours, fit((110, 300, 890, 850))),
+             ("元", main_contour, fit((130, -80, 870, 290))))
+# 员: 員's 口 with its white slot, over 貝 simplified exactly the way 贝 is.
+recipe("员", ("員", above_main, fit((355, 575, 645, 865))),
+             ("貝", all_contours, then(without_feet, simplified_box(), fit((150, 40, 850, 520)))))
+
+# --- 馬/鳥/烏: same feet removal, then the long bottom stroke ---------------
 recipe("马", ("馬", all_contours, body_only), ("一", all_contours, bar_over_feet()))
 recipe("鸟", ("鳥", all_contours, body_only), ("一", all_contours, bar_over_feet()))
 recipe("乌", ("烏", all_contours, body_only), ("一", all_contours, bar_over_feet()))
-recipe("岛", ("島", all_contours, translate(0, 0)))
+# 岛 is 島 with the same feet removal and bottom stroke 鸟 gets -- the 鳥 inside
+# 島 is already drawn at 島's size, so nothing is scaled to fit.
+recipe("岛", ("島", all_contours, body_only), ("一", all_contours, bar_over_feet()))
 recipe("飞", ("飛", all_contours, without_feathers))
 
-# 門 -> 门: one leaf with its slots, mirrored.
-recipe("门", ("門", all_contours, mirror_left))
+# --- 門 -> 门: 门 is a plain 冂 frame with a 丶 at the top left, and this face
+# draws 冂 as its own character -- so the frame is borrowed, not re-derived from
+# 門's two leaves (mirroring those gave a doubled middle wall).
+recipe("门", ("冂", all_contours, fit((190, -80, 870, 800))),
+            ("戸", highest, fit((95, 690, 315, 830))))
 
-# 走/辶 compositions.
+# --- 东: assembled from the face's single strokes ---------------------------
+# 东 is not 東 with a piece cut out of it: the box loses its right wall and its
+# bars, and the feet become dots. This face draws single strokes as characters of
+# their own -- 一 丨 亅 丿 丶 and the kana ニ 冫 -- so 东 is assembled from those
+# strokes at their own weight rather than scaled down out of 東: a stroke scaled
+# to a narrower column comes out thin, and this font keeps one weight everywhere.
+recipe("东", ("一", all_contours, fit((55, 730, 945, 800), keep_aspect=False)),
+             ("冫", highest, then(flip_x(), fit((330, 340, 600, 745), keep_aspect=False))),
+             ("ニ", highest, fit((330, 340, 800, 400), keep_aspect=False)),
+             ("亅", all_contours, fit((450, -75, 640, 800))),
+             ("冫", highest, then(flip_x(), fit((140, -75, 360, 190), keep_aspect=False))),
+             ("冫", highest, fit((640, -75, 860, 190), keep_aspect=False)))
+
+# --- 走/辶/糸 compositions --------------------------------------------------
 recipe("赵", ("走", all_contours, fit((20, -60, 580, 840))),
             ("乂", all_contours, fit((560, 40, 950, 780))))
 recipe("进", ("辻", below(500), translate(0, 0)), ("井", all_contours, fit((380, 120, 900, 800))))
 recipe("迁", ("辻", below(500), translate(0, 0)), ("千", all_contours, fit((400, 120, 880, 800))))
-recipe("陈", ("陳", left_half, translate(0, 0)), ("東", all_contours, fit((380, 40, 970, 850))))
-# 护: 扌 from 持 plus 戸, whose top bar 户 draws as a dot.
-recipe("护", ("持", left_half, translate(0, 0)),
-            ("戸", except_highest, translate(0, 0)),
-            ("戸", highest, fit((540, 660, 720, 830))))
-
+# 陈 = 阝 + 东, with that 东 laid out for the narrow column: same strokes, drawn
+# at the column's width instead of squeezed there.
+recipe("陈", ("限", left_radical, fit((60, -90, 430, 850))),
+            ("ニ", highest, fit((450, 736, 960, 801))),
+            ("冫", highest, then(flip_x(), fit((600, 340, 800, 740), keep_aspect=False))),
+            ("-", all_contours, fit((640, 340, 890, 400), keep_aspect=False)),
+            ("亅", all_contours, fit((530, -80, 720, 738), keep_aspect=False)),
+            ("冫", highest, then(flip_x(), fit((455, -80, 640, 185), keep_aspect=False))),
+            ("冫", highest, fit((700, -80, 885, 185), keep_aspect=False)))
+# 护: 扌 from 打; 户 = 所's left component (戶: 尸 plus the bar 户 draws as a dot)
+# with that bar dropped, and the dot taken from 丶 -- which leans the way 户's
+# first stroke leans.
+recipe("护", ("打", left_radical, fit((30, -85, 470, 850))),
+            ("所", left_radical, then(except_highest, fit((490, -85, 970, 850)))),
+            ("丶", all_contours, fit((500, 740, 700, 850))))
+# 维: 糸's body (its own two lower dots are 纟's 撇 and 点) plus 隹.
+recipe("维", ("幺", all_contours, fit((30, 170, 400, 860), keep_aspect=False)),
+            ("糸", leftmost, fit((30, -70, 400, 160), keep_aspect=False)),
+            ("隹", all_contours, fit((410, -50, 950, 850))))
 
 
 class Face:
@@ -545,8 +726,12 @@ class Face:
         for source, select, shape in parts:
             contours = select(self.contours(source))
             if not contours:
-                # Legitimate: "everything but the main contour" is empty when a
-                # weight merged them. The glyph as a whole still needs ink.
+                if not getattr(select, "optional", False):
+                    # A missing radical is not an empty detail, it is half a
+                    # character: refuse the recipe so the weight reports a skip.
+                    raise ValueError(
+                        f"{char}: {source} has no contour for {select.__name__}; "
+                        "this weight draws it fused, so the recipe cannot be proved")
                 detail.append(f"{source}(0)")
                 continue
             shaped = shape(contours, context)
@@ -644,22 +829,6 @@ class Face:
 
     def original_cmap_codes(self):
         return set(TTFont(self.path, lazy=True).getBestCmap() or {})
-
-
-def _glyph_contours(glyph):
-    pen = DecomposingRecordingPen(None)
-    glyph.draw(pen, None)
-    contours, current = [], []
-    for op, args in pen.value:
-        if op == "moveTo":
-            current = [(op, args)]
-        elif op == "closePath":
-            current.append((op, ()))
-            contours.append(Contour(current))
-            current = []
-        else:
-            current.append((op, args))
-    return contours
 
 
 def extend_face(path, output, recipes=None):
