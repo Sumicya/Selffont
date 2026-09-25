@@ -1,8 +1,11 @@
-# 简体扩展：用自己的笔画造简体字
+# 简体扩展：先用自己的笔画拼，拼不出的向参考字体借
 
-Zen Maru 是日文字体，没有简体专用字形（贝/页/马/鸟/门/陈/护…）。`tools/extend_font.py` 用**这个字体自己已有的轮廓和笔画**把它们拼出来：不引入任何其他字体的字形，不描摹，也不做几何美化。
+Zen Maru 是日文字体，简体专用字形缺失。实测它只画了 GB2312 的 **3378/6763** 个汉字，缺 3385 个。`tools/extend_font.py` 分两层补：
 
-目标表里的 44 个字现在全部有字形：`tools/glyph_audit.py` 报 `editable=44 needsNewGlyph=0`（`飞` 的 Bold/Black 除外，见下）。
+1. **自己的轮廓和笔画**：能拼的字（贝/页/马/鸟/门/东/陈/护/见/员/维/飞…）用它**自己已有的轮廓和笔画**拼出来——不描摹，不做路径手术，也不做几何美化。
+2. **可审计的参考字体**：规则够不到的字，从 `config/reference-sources.json` 里钉死的参考源借轮廓——版本、字节数、SHA-256、许可、保留字体名都写死在仓库里，借入逐字记进报告，并按**本字重的实测厚度**缩放。
+
+结果：五个字重都是 **GB2312 6763/6763**；目标表里的 44 个字全部有字形，其中 14 个练习缺字全部由自家规则画出（`飞` 的 Bold/Black 例外，见下）。
 
 ## 规则怎么写的
 
@@ -35,7 +38,7 @@ recipe("马", ("馬", all_contours, body_only), ("一", all_contours, bar_over_f
 | 赵 | 走 乂 | 走 + 乂 缩放拼合 |
 | 飞 | 飛 | 去掉四根小羽（Light/Regular/Medium；Bold/Black 把羽毛并进主体，跳过） |
 
-**故意跳过**：`飞` 的 Bold/Black——这两个字重把四根羽毛并进了主体轮廓，选不出来，硬切就是猜。报告里照实记 `skipped`，那两个字重继续用系统字体。
+**规则够不到时**：`飞` 的 Bold/Black 把四根羽毛并进了主体轮廓，选不出来，硬切就是猜。这两个字重由下面的参考字体补上——报告里照实记 `skipped`（规则跳过）与 `origin: reference`（实际来源）。
 
 ## 东：拿笔画拼，而不是把 東 缩小
 
@@ -60,11 +63,31 @@ recipe("陈", ("限", left_radical, fit((60, -90, 430, 850))),
 
 （`东` 这个字本身也顺手有了：它在目标表里没提，但做 陈 的过程中就齐了。）
 
+## 参考字体：借可以，但必须可审计、且按字重缩放
+
+`config/reference-sources.json` 是唯一的参考源登记表，一条记录钉住项目、发布版本、文件、字节数、**SHA-256**、许可、保留字体名（RFN）以及它自己基于什么。工具在打开参考文件前核对字节数与 SHA-256，不符即拒（`UnpinnedReference`）；许可全文随仓库放在 `licenses/`。
+
+当前参考是**寒蝉半圆体 ChillRoundM v1.805**（`Warren2060/ChillRound`，OFL-1.1，保留字体名 `ChillRoundF`/`ChillRoundM`，本身基于 Zen Maru Gothic 调整）：骨架与圆角风格同源，且对 3385 个缺字**全部**有真轮廓。（早期 ChillRoundM 版本对这批字是空占位，所以版本与哈希必须钉死；`build/reference/` 只放副本，不入 Git。）
+
+两条规矩：
+
+- **规则优先**：规则先跑，参考只补"这个面还没有的码点"。同一码点在通过校验时就地占位，所以绝不会出现一个字被写两遍（这条断言抓出过真实 bug：参考流程曾把规则派生过的字又借了一遍，留下 `uni8D1D.1` 这种不可达重复字形）。
+- **字重要对得上**：参考只有一个字重（400），本字体有五档。借入时先量两面在共有探针字上的"墨面积 ÷ 轮廓周长"厚度比（Light 0.44 → Black 1.72），再沿轮廓法线做 miter 偏移（正数 = 加墨：实体外扩、字腔收缩），初始值取厚度差的一半，然后**量一次、修正一次**迭代到目标厚度（±0.5 单位）。会把轮廓翻面、压塌（面积趋零）或甩出画布的偏移**自动退让**（折半；尖角 miter 上限 4 倍偏移量），退让多少逐字记进报告；单字轮廓跑出 ±1400 单位盒子外 → 拒绝该字并如实记录。
+
+结果：借入字形"达成厚度 ÷ 目标厚度"的中位数 0.98–1.04，**100% 落在目标 ±25% 内**；轮廓坐标审计 0 字越出 1200 单位。
+
+![原生、规则派生、参考借入，五个字重](images/reference-borrowing.png)
+
+（图：左 = Zen Maru 原生，中 = 自家规则派生，右 = 参考借入。三段的字重变化是同步的。）
+
 ## 跑法
 
 ```sh
 python3 tools/prepare_font.py --font-dir <Zen Maru 的 5 个 TTF>   # -> build/fonts
-python3 tools/extend_font.py                                    # -> build/fonts-simplified
+# 可选：把钉死的参考文件放到 build/reference/（工具会核对 SHA-256）
+python3 tools/extend_font.py --reference chillroundm --charset gb2312   # -> build/fonts-simplified
+python3 tools/extend_font.py --reference chillroundm --charset targets  # 只补目标字表那一小批
+python3 tools/extend_font.py                                    # 不带参考：只做自家规则
 python3 tools/edit_font.py                                      # -> build/fonts-patched
 python3 tools/glyph_audit.py --font-dir build/fonts-patched     # 目标字表现况
 python3 tools/make_extension_sheet.py                           # 重画文档里那张图
@@ -77,7 +100,17 @@ python3 tools/build_module.py --base build/base/MFGA-base.zip
 - 保存前逐字断言：原有每个字形**逐字节不变**、字形顺序不变、cmap 只多出这次派生出来的码点。
 - 派生字已存在（面里本来就有）→ 报错拒绝覆盖。
 - 某个字重证不出这条规则 → **跳过并写进报告**，不产出猜测形状；缺字在手机上回退系统字体，比一个坏字形安全。
-- 度量（`hmtx`/`vmtx`）取来源字形的中位数，不外造。
+- 度量（`hmtx`/`vmtx`）取来源字形的中位数；借入字直接沿用参考字形的 advance，不外造。
+- 保存后断言"写进字体的新字形名集合 == 这次准备写的名字"（防止同一码点写两遍），并且 cmap 的增量**正好**等于本次派生的码点。
+- 借入字在报告里带 `origin: reference`、`sourceGlyph`、偏移量与前后厚度（`thickness`、`targetThickness`、必要时 `offsetBackoff`）；自家派生的字没有 `origin`，一眼分得清。
+
+## 覆盖情况
+
+| | Zen Maru 原生 | 加上规则与借入 |
+|---|---|---|
+| GB2312 汉字 | 3378/6763 | **6763/6763**（五个字重） |
+| 目标表 44 字 | 缺 14 个简体形 | 44/44（12 个练习字由规则画，`飞` 的 Bold/Black 由参考补） |
+| 每字重自绘 | — | 规则 17 + 参考 3368（Bold/Black 3369） |
 
 ## 顺序与手写笔画
 

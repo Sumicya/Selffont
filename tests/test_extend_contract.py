@@ -116,7 +116,8 @@ class FaceContractTests(unittest.TestCase):
         path = write_face(self.root, static_font(family="Fixture Maru"))
         recipes = {"狗": [("好", extend_font.main_contour, extend_font.translate(0, 0))],
                    "猫": [("缺失字", extend_font.main_contour, extend_font.translate(0, 0))]}
-        face, skipped = extend_font.extend_face(path, self.root / "out.ttf", recipes)
+        face, skipped, borrowed = extend_font.extend_face(path, self.root / "out.ttf", recipes)
+        self.assertEqual(borrowed, 0)
         self.assertEqual(sorted(skipped), ["猫"])
         self.assertIn("猫", skipped)
         self.assertEqual(sorted(face.added), ["狗"])

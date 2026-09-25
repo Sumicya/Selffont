@@ -1,0 +1,30 @@
+{
+  "_comment": "Reference fonts the derivation may borrow outlines from. A reference is a pinned, licensed source: the identity, the SHA-256 and the license live here, the tool refuses a file that does not match, and every glyph taken from it is recorded in the build report. tools/prepare_reference.py fetches and verifies the file (release asset first, then a mirror); referencing another font is allowed, shipping one without its licence and provenance is not.",
+  "references": [
+    {
+      "id": "chillroundm",
+      "project": "Warren2060/ChillRound",
+      "version": "v1.805",
+      "url": "https://github.com/Warren2060/ChillRound/releases/tag/v1.805",
+      "releaseAsset": "https://github.com/Warren2060/ChillRound/releases/download/v1.805/ChillRoundM_v1.805.zip",
+      "mirrors": [
+        "https://raw.githubusercontent.com/crowforkotlin/ChillRoundM-font/main/ChillRoundM.ttf"
+      ],
+      "file": "ChillRoundM.ttf",
+      "bytes": 6515060,
+      "sha256": "a7d2fb200b7336cbf7171c2205b7e4d75fdcf11f936da8a8e645cb061e7f0024",
+      "sourceFamily": "ChillRoundM",
+      "derivedFrom": "Zen Maru Gothic",
+      "versionString": "Version 1.805",
+      "weight": 400,
+      "license": "OFL-1.1",
+      "licenseFile": "ChillRoundM-OFL.txt",
+      "reservedFontNames": [
+        "ChillRoundF",
+        "ChillRoundM"
+      ],
+      "coverage": "GB2312 simplified Chinese on the Zen Maru skeleton (12,329 codepoints, 3385 of them characters Zen Maru never drew)",
+      "notes": "The maintained build is published as a release asset (ChillRoundM_v1.805.zip); this pin is the extracted ChillRoundM.ttf and is verified by SHA-256 no matter where the copy came from. Earlier ChillRoundM builds shipped blank placeholders for the simplified set, which is why the version and hash matter."
+    }
+  ]
+}

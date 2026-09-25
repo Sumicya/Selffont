@@ -4,14 +4,14 @@
 
 **字体路线：** [Zen Maru Gothic](https://github.com/googlefonts/zen-marugothic)（OFL-1.1，固定提交）五个静态字重，构建期改名为派生家族 **`Selffont Maru`**，装成 `SelffontMaru-{Light,Regular,Medium,Bold,Black}.ttf`。Android 的 100–900 请求按就近映射到这五个面（600→700、800→900，平局取粗），斜体由平台合成，**不伪造 `fvar`**。
 
-**简体扩展：** Zen Maru 没有简体专用字形，`tools/extend_font.py` 用它**自己的轮廓和笔画**拼出 16 个（贝 页 见 马 鸟 乌 岛 门 员 维 陈 护 进 迁 赵 飞，附赠 东），规则是可复读的小表，保存前断言"原有字形逐字节不变"；某个字重拼不出来就跳过并记进报告（如 Bold/Black 的 飞）。`glyph_audit.py` 报 **44 个目标字全部有字形**。详见 [`docs/simplified-extension.md`](docs/simplified-extension.md)。
+**简体扩展（两层）：** Zen Maru 只画了 GB2312 的 3378/6763 个汉字。`tools/extend_font.py` 先用它**自己的轮廓和笔画**按可复读的小表拼出 17 个（贝 页 见 马 鸟 乌 岛 门 员 维 陈 护 进 迁 赵 飞，附赠 东），规则拼不到的再从一份**可审计的参考字体**借：`config/reference-sources.json` 钉死版本与 SHA-256、许可随仓库、借入逐字记进报告，并按**本字重的实测厚度**缩放轮廓（五个字重的中位误差 0.98–1.04，100% 在目标 ±25% 内）。五个面现在都是 **GB2312 6763/6763**，`glyph_audit.py` 报 **44 个目标字全部有字形**。详见 [`docs/simplified-extension.md`](docs/simplified-extension.md)。
 
 **手写笔画：** 只通过**逐字、逐点、显式写出**的 patch 修改（`config/glyph-patches/<Style>.json`）。没有整字库批量改写、没有从照片自动描摹、没有平滑/圆头"算子"。工具会拒绝复合字形、带 hinting 的字形和任何越界或空改动。
 
 > **状态（诚实版）**
-> - 主机侧：100 项 Python 契约测试 + 3 项 node 测试 + ruff 全绿；真实 Zen Maru 五个面已完成"下载→校验→改名→度量归一→打包"全链路本地演练（合成 base ZIP）。
+> - 主机侧：140 项 Python 契约测试 + 3 项 node 测试 + ruff 全绿；真实 Zen Maru 五个面已完成"下载→校验→改名→度量归一→打包"全链路本地演练（合成 base ZIP）。
 > - 真机：**未验收**。模块安装、网页绘制、角标等紧凑槽位都需要按 `docs/validation.md` 重新测一遍。
-> - 已知边界：Zen Maru 是**日文字体**，简体专用字形缺失，已由 `tools/extend_font.py` 补出 16 个，`python3 tools/glyph_audit.py` 现在报 `editable=44 needsNewGlyph=0`（只有 Bold/Black 的 飞 明示跳过，回退系统字体）。手写笔画 patch 作用在派生之后的面上（`edit_font.py` 默认读 `build/fonts-simplified`）。
+> - 已知边界：借入的轮廓是**几何偏移**而不是重绘——极端字重下细小笔画会自动退让（Black 有 513 个字退让过），逐字记在 `build/extend-report.json`；字重经实测对齐，但不是设计级重构。手写笔画 patch 作用在派生之后的面上（`edit_font.py` 默认读 `build/fonts-simplified`）。
 
 ## 这一版改了什么（相对 v1.4.0）
 
@@ -34,14 +34,17 @@ python3 -m venv .venv
 .venv/bin/python tools/prepare_font.py
 .venv/bin/python tools/prepare_font.py --font-dir /path/to/zen-maru/ttf
 
-# 2)（可选）应用手写点 patch；没有 patch 时原样复制
+# 2) 简体扩展：自家规则 + 从钉死的参考字体借缺字（不带 --reference 就只跑自家规则）
+.venv/bin/python tools/extend_font.py --reference chillroundm --charset gb2312
+
+# 3)（可选）应用手写点 patch；没有 patch 时原样复制
 .venv/bin/python tools/edit_font.py
 
-# 3) 审计+预览手写目标
+# 4) 审计+预览手写目标
 .venv/bin/python tools/glyph_audit.py
 .venv/bin/python tools/preview.py --serve            # 浏览器审阅页
 
-# 4) 打包（base ZIP 由 prepare_base.py 校验后提供补充字体）
+# 5) 打包（base ZIP 由 prepare_base.py 校验后提供补充字体）
 .venv/bin/python tools/prepare_base.py
 .venv/bin/python tools/build_module.py --base build/base/MFGA-base.zip
 ```
@@ -50,7 +53,7 @@ python3 -m venv .venv
 
 ## 手写笔画工作流
 
-1. 先 `tools/extend_font.py` 做简体扩展（可复读的规则表），再 `glyph_audit.py` 看还剩哪些字没有字形（现在应为 0）。
+1. 先 `tools/extend_font.py --reference chillroundm --charset gb2312` 做简体扩展（自家规则 + 可审计借入），再 `glyph_audit.py` 看还剩哪些字没有字形（现在应为 0）。
 2. `tools/preview.py --serve` 起一个审阅页：用**真实 TTF** 渲染五个面 + 目标字表 + 笔画约定，改成什么样当场看得见。
 3. 仓库里已有一个由工具生成的**样例 patch**（`config/glyph-patches/Regular.json`，改 `力` 的去钩与圆头），照它的格式写 `config/glyph-patches/<Style>.json`：`{"faceSha256": "<源面哈希>", "glyphs": {"字": {"points": [{"index": 12, "dx": -6, "dy": 3}]}}}`。
 4. `tools/edit_font.py` 校验（复合/hinting/拓扑/空改动全拒），发布到 `build/fonts-patched`，并断言**只有被点名的字形变了**。

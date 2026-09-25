@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
-"""Derive simplified-Chinese glyphs from Zen Maru's own traditional outlines.
+"""Extend Zen Maru with the simplified glyphs it never drew.
 
-Zen Maru is a Japanese face: it draws 貝/頁/馬/鳥/見 and no 贝/页/马/鸟/见. This
-tool builds the simplified forms **without importing outlines from any other
-font** -- every derived glyph is composed from contours the face already owns,
-transformed by explicit matrices. The rules are a small, reviewable table
-(``RECIPES``), one entry per character:
+Zen Maru is a Japanese face: it draws 貝/頁/馬/鳥/見 and no 贝/页/马/鸟/见, and it
+covers only 3378 of the 6763 hanzi in GB2312. This tool fills the rest from two
+sources, in order of preference.
 
-    "赵": [("辻", [0], MATRIX), ("趙", [1], MATRIX)]
+* **Its own contours.** A recipe recomposes a new glyph out of contours the face
+  already owns, transformed by explicit matrices. Rules are a small, reviewable
+  table (``RECIPES``), one entry per character::
 
-Each entry says: take these contours of these existing glyphs, apply this
-2x3 affine, and draw the result as the new glyph. Contours are the ones you
-see numbered in ``tools/glyph_sheet.py`` output, so a recipe can be checked by
-eye.
+      "赵": [("辶", all_contours, ...), ("乂", all_contours, fit(...))]
+
+  A part is ``(source glyph, selector, shaper)``. Selectors pick contours by
+  role, never by index, because each weight was drawn separately and the same
+  character can have four contours in Bold and six in Light.
+
+* **A pinned reference font.** Characters no rule can reach are imported from a
+  reference declared in ``config/reference-sources.json`` -- version, bytes,
+  SHA-256, licence and reserved font names included. The tool refuses a file
+  that does not match the pin, and the borrowed outline is offset along its
+  normals until its measured stroke thickness matches this face's, so one
+  reference weight can serve all five.
 
 What the tool refuses to do:
 
-* it never touches a glyph that is not named in the recipes;
-* it never removes or reorders an existing glyph;
 * it never rewrites an existing codepoint -- a character that is already drawn
-  is an error, not an overwrite;
-* it verifies the result: every pre-existing glyph must be byte-identical, and
-  the cmap may only gain the new characters.
+  is an error, not an overwrite, and a rule always outranks the reference;
+* it never removes or reorders an existing glyph;
+* it never ships a guessed shape: a weight that cannot express a rule is skipped
+  and reported, and an imported outline that would invert, collapse or leave the
+  em box is backed off or refused;
+* it verifies the result: every pre-existing glyph byte-identical, glyph order
+  unchanged, the new glyph list exactly what it wrote, and the cmap gaining
+  exactly the characters it added.
 """
 from __future__ import annotations
 
@@ -29,6 +40,7 @@ import argparse
 import json
 from pathlib import Path
 
+from fontTools.pens.areaPen import AreaPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
@@ -48,6 +60,10 @@ def apply(matrix, point):
     a, b, c, d, e, f = matrix
     x, y = point
     return (a * x + c * y + e, b * x + d * y + f)
+
+
+# How far a derived outline may stray from the em box before it is rejected.
+LIMIT = 1400
 
 
 def bounds(contours):
@@ -71,6 +87,44 @@ class Contour:
     def transform(self, matrix):
         return Contour([(op, tuple(apply(matrix, p) if p else p for p in args))
                         for op, args in self.commands])
+
+    def flags(self):
+        """[(point, is_on_curve)] in contour order, implied points resolved."""
+        result = []
+        for op, args in self.commands:
+            if op in ("moveTo", "lineTo"):
+                result.append((args[0], True))
+            elif op == "qCurveTo":
+                points = list(args)
+                last = points.pop()
+                if last is None:
+                    raise ValueError("contour relies on an implied on-curve point")
+                result.extend((point, False) for point in points)
+                result.append((last, True))
+        return result
+
+    def rebuild(self, points):
+        """A contour with the same on/off pattern but new point positions."""
+        flags = [on for _, on in self.flags()]
+        if len(points) != len(flags):
+            raise ValueError(f"expected {len(flags)} points, got {len(points)}")
+        commands, pending, started = [], [], False
+        for point, on_curve in zip(points, flags, strict=True):
+            if not on_curve:
+                pending.append(point)
+                continue
+            if not started:
+                commands.append(("moveTo", (point,)))
+                started = True
+            elif pending:
+                commands.append(("qCurveTo", (*pending, point)))
+                pending = []
+            else:
+                commands.append(("lineTo", (point,)))
+        if pending:
+            commands.append(("qCurveTo", (*pending, None)))
+        commands.append(("closePath", ()))
+        return Contour(commands)
 
     def segments(self):
         """Split the outline into runs that end at each on-curve point.
@@ -209,7 +263,15 @@ def contours_of(font: TTFont, glyph_name: str):
             current.append((op, args))
     if current:
         raise ValueError(f"{glyph_name}: unclosed contour")
-    return contours
+    return [_resolve_implied(contour) for contour in contours]
+
+
+def _resolve_implied(contour):
+    commands = list(contour.commands)
+    if commands and commands[-1][0] == "qCurveTo" and commands[-1][1][-1] is None:
+        start = next(args[0] for op, args in commands if op == "moveTo")
+        commands[-1] = ("qCurveTo", (*commands[-1][1][:-1], start))
+    return Contour(commands)
 
 
 # --- selectors and shapers --------------------------------------------------
@@ -247,6 +309,79 @@ def _glyph_contours(glyph):
 def area(contour):
     x0, y0, x1, y1 = bounds([contour])
     return (x1 - x0) * (y1 - y0)
+
+
+def apply_offset(contours, delta, offset_matrix_free):
+    """Offset every contour, each backing off as far as its winding requires."""
+    from reference_font import fill_sign
+
+    fill = fill_sign(contours)
+    shaped, backoff = [], 1.0
+    for contour in contours:
+        moved, scale = offset_contour(contour, delta, offset_matrix_free, fill)
+        shaped.append(moved)
+        backoff = min(backoff, scale)
+    return shaped, backoff
+
+
+def match_thickness(contours, target, delta, offset_matrix_free, steps=5, tolerance=0.5):
+    """Pick the offset that makes these contours measure ``target`` thick.
+
+    Half the width difference is the analytic guess, but ink area over outline
+    length is not linear in the offset (junctions, corners and counters all
+    react differently), so the guess is measured and corrected until it lands.
+    """
+    from reference_font import contour_thickness
+
+    shaped, backoff = apply_offset(contours, delta, offset_matrix_free)
+    for _ in range(steps - 1):
+        measured = contour_thickness(shaped)
+        if abs(measured - target) <= tolerance:
+            break
+        delta += (target - measured) / 2
+        shaped, backoff = apply_offset(contours, delta, offset_matrix_free)
+    return shaped, delta, backoff
+
+
+def offset_contour(contour, delta, offset_matrix_free, fill=-1, steps=6):
+    """Offset one contour, halving the offset until its winding survives.
+
+    Returns the contour to draw and the fraction of the offset that was usable.
+    A fraction of zero means the contour is drawn exactly as the reference has
+    it, which is the honest outcome for a shape that cannot take the weight.
+    """
+    from reference_font import MITER_LIMIT
+
+    if not delta:
+        return contour, 1.0
+    box = bounds([contour])
+    slack = abs(delta) * MITER_LIMIT + 1
+    area = abs(signed_area(contour))
+    scale = 1.0
+    for _ in range(steps):
+        moved = offset_matrix_free([contour], delta * scale, fill)[0]
+        # Same winding (it did not turn inside out), same extent (it did not
+        # collapse to nothing), same neighbourhood (no point flew away).
+        if (_winding(moved) == _winding(contour)
+                and abs(signed_area(moved)) > max(1.0, area * 0.01)
+                and _within(bounds([moved]), box, slack)):
+            return moved, scale
+        scale /= 2
+    return contour, 0.0
+
+
+def _within(inner, outer, slack):
+    """True when ``inner`` stays inside ``outer`` grown by ``slack`` on every side."""
+    return all(inner[index] >= outer[index] - slack and inner[index + 2] <= outer[index + 2] + slack
+               for index in (0, 1))
+
+
+
+
+
+def _winding(contour):
+    """True when a contour runs clockwise, which is how this face marks holes."""
+    return signed_area(contour) < 0
 
 
 def signed_area(contour):
@@ -740,17 +875,84 @@ class Face:
             context["built"].extend(shaped)
             used.append(source)
             detail.append(f"{source}({len(contours)}->{len(shaped)})")
-        glyph = pen.glyph()
+        return self.register(char, pen.glyph(), detail, metrics=used)
+
+    def register(self, char, glyph, sources, metrics=None, advance=None, vertical_advance=None):
+        """Register a finished glyph: metrics, cmap, provenance, verification.
+
+        ``sources`` is human-readable provenance for the report; ``metrics``
+        names the glyphs whose advances this one inherits. An imported glyph
+        passes its numbers in directly, because its source lives in another
+        font.
+        """
         if not glyph.numberOfContours or glyph.numberOfContours < 0:
-            raise ValueError(f"{char}: the recipe produced an empty glyph")
+            raise ValueError(f"{char}: the derivation produced an empty glyph")
+        if len(char) != 1:
+            raise ValueError(f"{char!r} is not a single character")
+        if ord(char) in self.cmap:
+            raise ValueError(f"{char!r} is already drawn by this face; a derivation must not overwrite it")
         name = self._glyph_name(char)
-        advance, vertical_advance = self._metrics_of(used)
         box = bounds(_glyph_contours(glyph))
+        # A CJK glyph lives inside the em box. A transform that throws a point
+        # far outside it has gone wrong, and shipping the result would be worse
+        # than leaving the character out and saying so.
+        if not all(-LIMIT <= value <= LIMIT for value in box):
+            raise ValueError(f"{char}: the outline runs to {[round(v) for v in box]}, outside the {LIMIT} unit box")
+        if advance is None:
+            advance, measured_vertical = self._metrics_of(metrics or sources)
+            vertical_advance = measured_vertical if vertical_advance is None else vertical_advance
+        # Claim the codepoint only once the glyph is known to be usable, and
+        # before anything else runs: the reference pass and later recipes must
+        # see this character as already drawn.
+        self.cmap[ord(char)] = name
         self.pending.append((char, name, glyph, advance, vertical_advance))
-        self.added[char] = {"glyph": name, "sources": detail, "advance": advance,
+        self.added[char] = {"glyph": name, "sources": sources, "advance": advance,
                             "verticalAdvance": vertical_advance,
                             "bounds": [round(v) for v in box]}
         return self.added[char]
+
+    def import_glyph(self, char, reference, ratio, reference_name=None):
+        """Draw ``char`` from a pinned reference font, matched to this weight.
+
+        The borrowed outline is offset until its own measured stroke thickness
+        matches this face's, so one reference weight serves all five. The offset
+        moves each point along its normals (a miter offset); where that would
+        turn a thin contour inside out -- heavy faces thicken a reference drawn
+        for 400 by up to 40% -- only that contour backs off, halving until its
+        winding survives, and the report records how far it had to.
+        """
+        from reference_font import _LengthPen, contour_thickness, offset_matrix_free
+
+        name = reference_name or (reference.getBestCmap() or {}).get(ord(char))
+        if not name:
+            raise ValueError(f"{char}: the reference font has no glyph for it")
+        contours = contours_of(reference, name)
+        if not contours:
+            raise ValueError(f"{char}: the reference font maps it to a glyph with no outline")
+        glyph_set = reference.getGlyphSet()
+        area_pen, length_pen = AreaPen(glyph_set), _LengthPen(glyph_set)
+        glyph_set[name].draw(area_pen)
+        glyph_set[name].draw(length_pen)
+        thickness = abs(area_pen.value) / length_pen.length if length_pen.length else 0
+        delta = thickness * (ratio - 1) / 2 if abs(thickness * (ratio - 1) / 2) >= 0.5 else 0.0
+        shaped, delta, backoff = match_thickness(
+            contours, thickness * ratio, delta, offset_matrix_free)
+        pen = TTGlyphPen(None)
+        for contour in shaped:
+            contour.draw(pen)
+        advance = reference["hmtx"][name][0]
+        vertical = reference["vmtx"][name][0] if "vmtx" in reference else advance
+        report = self.register(char, pen.glyph(), [f"reference:{name}"],
+                               advance=advance, vertical_advance=vertical)
+        report["origin"] = "reference"
+        report["offset"] = round(delta, 1)
+        report["thickness"] = [round(thickness, 1),
+                              round(contour_thickness(shaped), 1)]
+        report["targetThickness"] = round(thickness * ratio, 1)
+        report["sourceGlyph"] = name
+        if backoff < 1.0:
+            report["offsetBackoff"] = round(backoff, 3)
+        return report
 
     def _glyph_name(self, char):
         taken = set(self.font.getGlyphOrder()) | {entry[1] for entry in self.pending}
@@ -782,7 +984,8 @@ class Face:
     def save(self, path):
         """Materialise every pending glyph at once, then write and verify."""
         font = self.font
-        font.setGlyphOrder([*font.getGlyphOrder(), *[entry[1] for entry in self.pending]])
+        self.saved_names = [entry[1] for entry in self.pending]
+        font.setGlyphOrder([*font.getGlyphOrder(), *self.saved_names])
         glyf = font["glyf"]
         for char, name, glyph, advance, vertical_advance in self.pending:
             glyf.glyphs[name] = glyph
@@ -814,6 +1017,9 @@ class Face:
             if glyf[name].compile(glyf) != compiled:
                 raise ValueError(f"{self.path.name}: unrelated glyph {name} changed")
         order = after.getGlyphOrder()
+        new = [name for name in order if name not in self.original_glyphs]
+        if new != self.saved_names:
+            raise ValueError(f"{self.path.name}: unexpected new glyphs {sorted(set(new) - set(self.saved_names))}")
         for name in self.original_glyphs:
             if order.index(name) != list(self.original_glyphs).index(name):
                 raise ValueError(f"{self.path.name}: glyph order changed at {name}")
@@ -831,26 +1037,65 @@ class Face:
         return set(TTFont(self.path, lazy=True).getBestCmap() or {})
 
 
-def extend_face(path, output, recipes=None):
-    """Derive every recipe that this weight can prove, report the rest.
+def gb2312_characters():
+    """The GB2312 hanzi set, generated from the codec rather than a data file."""
+    characters = set()
+    for lead in range(0xB0, 0xF8):
+        for trail in range(0xA1, 0xFF):
+            try:
+                char = bytes([lead, trail]).decode("gb2312")
+            except UnicodeDecodeError:
+                continue
+            if "\u4e00" <= char <= "\u9fff":
+                characters.add(char)
+    return characters
+
+
+def extend_face(path, output, recipes=None, reference=None, charset=None):
+    """Derive every recipe this weight can prove, then borrow what is missing.
 
     A weight that fuses a character's strokes into one outline cannot be
     simplified by picking contours, and inventing a cut for it would be
-    guesswork. Those cases are skipped and reported per weight instead: a
-    missing glyph falls back to the system font, which is honest, while a bad
-    glyph would silently ship in the module.
+    guesswork. Those cases are skipped and reported per weight: a missing glyph
+    falls back to the system font, which is honest, while a bad glyph would
+    silently ship in the module. Characters the recipes cannot cover are
+    borrowed from a pinned reference font when one is given.
     """
     recipes = RECIPES if recipes is None else recipes
     face = Face(path)
     skipped = {}
+    # Measure the weight difference while the face is still untouched: a
+    # character that has been claimed but not yet written has no glyph to
+    # measure, and its codepoint is already in this face's map.
+    face.reference_ratio = None
+    if reference is not None:
+        import reference_font as reference_module
+
+        face.reference_ratio = reference_module.shared_stroke_ratio(face.font, reference[0])
     for char, parts in recipes.items():
         try:
             face.add(char, parts)
         except ValueError as error:
             skipped[char] = str(error)
+    borrowed = 0
+    if reference is not None and charset is not None:
+        ref_font, _entry = reference
+        ratio = face.reference_ratio
+        ref_cmap = ref_font.getBestCmap() or {}
+        for char in sorted(charset):
+            if ord(char) in face.cmap:
+                continue
+            if ord(char) not in ref_cmap:
+                skipped[char] = f"{char}: the reference font has no glyph for it"
+                continue
+            try:
+                face.import_glyph(char, ref_font, ratio)
+                borrowed += 1
+            except ValueError as error:
+                skipped[char] = str(error)
     if face.pending:
         face.save(output)
-    return face, skipped
+    return face, skipped, borrowed
 
 
 def main() -> None:
@@ -858,18 +1103,42 @@ def main() -> None:
     parser.add_argument("--prepared", type=Path, default=ROOT / "build/fonts")
     parser.add_argument("--output", type=Path, default=ROOT / "build/fonts-simplified")
     parser.add_argument("--report", type=Path, default=ROOT / "build/extend-report.json")
+    parser.add_argument("--reference", default=None,
+                        help="Reference font id from config/reference-sources.json")
+    parser.add_argument("--reference-dir", type=Path, default=ROOT / "build/reference",
+                        help="Directory holding the pinned reference file")
+    parser.add_argument("--charset", default="none", choices=("none", "gb2312", "targets"),
+                        help="Characters to borrow from the reference when the recipes cannot draw them")
     args = parser.parse_args()
     if not RECIPES:
         raise SystemExit("no recipes are defined yet")
+    reference = None
+    if args.reference:
+        import reference_font as reference_module
+
+        reference = reference_module.load(args.reference, args.reference_dir)
+    charset = None
+    if args.charset == "gb2312":
+        charset = gb2312_characters()
+    elif args.charset == "targets":
+        targets = json.loads((ROOT / "config/glyph-targets.json").read_text())
+        charset = set(targets["textCharacters"])
     report = []
     for style, face in FACES.items():
         source = args.prepared / face["installedFile"]
-        result, skipped = extend_face(source, args.output / face["installedFile"])
-        report.append({"face": style, "source": str(source), "added": result.added,
-                       "skipped": skipped})
-        summary = f"{style}: +{len(result.added)} glyphs"
+        result, skipped, borrowed = extend_face(
+            source, args.output / face["installedFile"], reference=reference, charset=charset)
+        faces_report = {"face": style, "source": str(source), "added": result.added,
+                        "skipped": skipped, "borrowedFromReference": borrowed}
+        if reference is not None:
+            faces_report["reference"] = reference[1]["id"]
+            faces_report["strokeRatio"] = round(result.reference_ratio, 3)
+        report.append(faces_report)
+        summary = f"{style}: 派生 {len(result.added)}"
+        if borrowed:
+            summary += f"（其中参考字体 {borrowed}）"
         if skipped:
-            summary += f", skipped {len(skipped)} ({', '.join(skipped)})"
+            summary += f"，跳过 {len(skipped)}"
         print(summary)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
