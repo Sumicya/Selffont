@@ -1,0 +1,55 @@
+name: Build Selffont font module
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'config/**'
+      - 'tools/**'
+      - 'script/**'
+      - 'lang/**'
+      - 'webroot/**'
+      - 'licenses/**'
+      - 'fonts.xml'
+      - 'fonts_list.yaml'
+      - 'LICENSES.md'
+      - '.github/workflows/build-module.yml'
+permissions:
+  contents: read
+concurrency:
+  group: font-module-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install font inspection tools
+        run: python -m pip install -r tools/requirements.txt
+      - name: Download and verify pinned original resources
+        run: |
+          python tools/prepare_font.py
+          python tools/prepare_reference.py
+          python tools/prepare_base.py
+      - name: Extend the faces and apply the handwriting patches
+        run: |
+          python tools/extend_font.py --reference chillroundm --charset gb2312
+          python tools/edit_font.py
+          python tools/glyph_audit.py --font-dir build/fonts-patched | tail -3
+      - name: Assemble and verify KSU font module
+        run: |
+          python tools/build_module.py --base build/base/MFGA-base.zip --revision "$GITHUB_SHA"
+          python tools/module_report.py --module build/Selffont-Maru.zip
+          (cd build && sha256sum Selffont-Maru.zip > Selffont-Maru.zip.sha256)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: selffont-maru-font-module
+          path: |
+            build/Selffont-Maru.zip
+            build/Selffont-Maru.zip.sha256
+            build/module-report.json
+          compression-level: 0
+          if-no-files-found: error
