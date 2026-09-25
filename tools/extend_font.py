@@ -954,6 +954,83 @@ class Face:
             report["offsetBackoff"] = round(backoff, 3)
         return report
 
+    def thickness_of(self, glyph):
+        """Ink area over outline length for a glyph that is not in the font yet."""
+        from reference_font import contour_thickness
+
+        return contour_thickness(_glyph_contours(glyph))
+
+    def enforce_weight(self, baseline, tolerance=0.12, only=None):
+        """Bring every pending glyph to this face's measured stroke thickness.
+
+        A component scaled down to fit a box scales its strokes down with it:
+        赵 came out at half the face's weight, 见 and 维 at 0.6. The face has no
+        such thing as a lighter stroke -- 同字等粗 is the rule -- so every
+        derived glyph is measured and, if it is off by more than ``tolerance``,
+        offset along its own normals until it matches. Whatever cannot be
+        brought into tolerance is returned: the caller may prefer the reference
+        font for those, and a caller with no reference must report them.
+
+        A clamped ``baseline`` of zero means the face has no measurable weight
+        (a fixture); nothing is normalised in that case. ``only`` narrows the
+        pass to one class of glyph (``"recipe"`` leaves imported ones alone --
+        they were already matched when they were imported, and a second attempt
+        on a dense glyph at Black weight would only drop it).
+        """
+        from reference_font import contour_thickness, offset_matrix_free
+
+        if not baseline:
+            return []
+        def measure(glyph):
+            # A glyph whose outline has no length at all cannot be measured;
+            # that is a failure to prove, not a crash.
+            try:
+                return contour_thickness(_glyph_contours(glyph))
+            except ValueError:
+                return 0.0
+
+        unproven = []
+        for index, (char, name, glyph, advance, vertical) in enumerate(self.pending):
+            if only == "recipe" and self.added[char].get("origin") == "reference":
+                continue
+            measured = measure(glyph)
+            if not measured:
+                unproven.append(char)
+                continue
+            if abs(measured / baseline - 1) <= tolerance:
+                continue
+            shaped, delta, backoff = match_thickness(
+                _glyph_contours(glyph), baseline, measured * (baseline / measured - 1) / 2,
+                offset_matrix_free)
+            pen = TTGlyphPen(None)
+            for contour in shaped:
+                contour.draw(pen)
+            # The pen hands over its contours exactly once: glyph() empties it,
+            # so the object that gets measured has to be the object that gets
+            # stored. Measuring one and storing a second empty one is how an
+            # invisible glyph nearly shipped.
+            normalized = pen.glyph()
+            after = measure(normalized)
+            info = self.added[char]
+            info["weightBefore"] = round(measured / baseline, 3)
+            info["offsetToFaceWeight"] = round(delta, 1)
+            if backoff < 1.0:
+                info["offsetBackoff"] = round(backoff, 3)
+            if not normalized.numberOfContours or normalized.numberOfContours < 0:
+                info["weightAfter"] = 0.0
+                unproven.append(char)
+                continue
+            if abs(after / baseline - 1) > tolerance:
+                # The offset could not reach the face's weight (a contour that
+                # would invert, or a shape whose joins resist). Leave the glyph
+                # as derived and let the caller decide.
+                info["weightAfter"] = round(after / baseline, 3)
+                unproven.append(char)
+                continue
+            info["weightAfter"] = round(after / baseline, 3)
+            self.pending[index] = (char, name, normalized, advance, vertical)
+        return unproven
+
     def _glyph_name(self, char):
         taken = set(self.font.getGlyphOrder()) | {entry[1] for entry in self.pending}
         base = f"uni{ord(char):04X}"
@@ -1067,10 +1144,18 @@ def extend_face(path, output, recipes=None, reference=None, charset=None):
     # Measure the weight difference while the face is still untouched: a
     # character that has been claimed but not yet written has no glyph to
     # measure, and its codepoint is already in this face's map.
-    face.reference_ratio = None
-    if reference is not None:
-        import reference_font as reference_module
+    import reference_font as reference_module
 
+    face.reference_ratio = None
+    # The face's own weight, measured on characters it drew itself: every
+    # derived glyph -- rule or reference -- has to end up at this thickness.
+    try:
+        face.baseline_thickness = reference_module.stroke_width(face.font)
+    except ValueError:
+        # A face with too few shared probe characters has no measurable weight;
+        # there is nothing to normalise against, so derivations are left alone.
+        face.baseline_thickness = None
+    if reference is not None:
         face.reference_ratio = reference_module.shared_stroke_ratio(face.font, reference[0])
     for char, parts in recipes.items():
         try:
@@ -1093,6 +1178,39 @@ def extend_face(path, output, recipes=None, reference=None, charset=None):
                 borrowed += 1
             except ValueError as error:
                 skipped[char] = str(error)
+    unproven = face.enforce_weight(face.baseline_thickness, only="recipe")
+    if unproven and reference is not None:
+        # A rule-derived glyph that cannot reach the face's weight is replaced
+        # by the reference's own drawing of that character, offset to match:
+        # shipping a stroke half the weight of its neighbours is worse than
+        # importing the shape, and the report says which happened.
+        ref_font, _entry = reference
+        for char in unproven:
+            info = face.added[char]
+            face.pending = [entry for entry in face.pending if entry[0] != char]
+            del face.added[char]
+            try:
+                face.import_glyph(char, ref_font, face.reference_ratio)
+                face.added[char]["replacedRecipe"] = True
+                face.added[char]["reason"] = f"the rule-derived outline measured {info.get('weightBefore')} of the face's weight and could not be offset to it"
+                borrowed += 1
+            except ValueError as error:
+                skipped[char] = str(error)
+        if unproven:
+            face.enforce_weight(face.baseline_thickness)
+    elif unproven:
+        for char in unproven:
+            skipped[char] = (f"{char}: the rule-derived outline measures "
+                             f"{face.added[char].get('weightAfter')} of the face's stroke weight")
+    # Imported glyphs keep their shortfall in the report rather than being
+    # dropped: a dense character at 0.86 of the face's weight is a far smaller
+    # defect than a missing character.
+    for _char, info in face.added.items():
+        if info.get("origin") != "reference":
+            continue
+        ratio = info["thickness"][1] / info["targetThickness"] if info.get("targetThickness") else None
+        if ratio is not None and abs(ratio - 1) > 0.12:
+            info["weightShortfall"] = round(ratio, 3)
     if face.pending:
         face.save(output)
     return face, skipped, borrowed

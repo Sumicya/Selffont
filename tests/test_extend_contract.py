@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import edit_font
 import extend_font
+import reference_font
 from font_fixtures import composite_font, static_font
 
 
@@ -314,3 +315,68 @@ class ShaperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WeightContractTests(unittest.TestCase):
+    """A derived glyph must weigh what the face weighs.
+
+    Scaling a component into a box scales its strokes with it: 赵 came out at
+    0.51 of the face's stroke thickness, 见 and 维 at 0.6 -- visibly lighter than
+    the characters around them, and this face has no lighter stroke. Every
+    derivation is therefore measured and offset back to the face's own weight.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.path = write_face(self.root, static_font())
+        # 好 中 国 体 are the fixture's own characters; they double as the probe
+        # for the face's stroke thickness.
+        self.probe = "好中国体"
+
+    def face_with_a_thin_derivation(self):
+        face = extend_font.Face(self.path)
+        baseline = reference_font.stroke_width(face.font, probe=self.probe, minimum_samples=4)
+        # 狗 from 国 scaled to 60%: strokes come out 40% lighter than the face.
+        face.add("狗", [("国", extend_font.all_contours, extend_font.fit((92, 140, 368, 560)))])
+        return face, baseline
+
+    def test_a_thin_derivation_is_brought_back_to_the_face_weight(self):
+        face, baseline = self.face_with_a_thin_derivation()
+        self.assertEqual(face.enforce_weight(baseline), [])
+        info = face.added["狗"]
+        before = info.get("weightBefore")
+        self.assertIsNotNone(before, "a scaled-down derivation must be measured")
+        self.assertLess(before, 0.8)
+        self.assertAlmostEqual(info["weightAfter"], 1.0, delta=0.12)
+        self.assertGreater(info["offsetToFaceWeight"], 0)
+
+    def test_normalisation_never_stores_an_empty_glyph(self):
+        # TTGlyphPen.glyph() empties the pen, so measuring one object and
+        # storing a second one produced an invisible glyph. Nothing may be
+        # stored that has no contours.
+        face, baseline = self.face_with_a_thin_derivation()
+        face.enforce_weight(baseline)
+        for char, _, glyph, _, _ in face.pending:
+            self.assertTrue(glyph.numberOfContours and glyph.numberOfContours > 0,
+                            f"{char} was stored with no outline")
+
+    def test_normalisation_is_idempotent(self):
+        face, baseline = self.face_with_a_thin_derivation()
+        self.assertEqual(face.enforce_weight(baseline), [])
+        first = [entry[2].coordinates for entry in face.pending]
+        self.assertEqual(face.enforce_weight(baseline), [])
+        second = [entry[2].coordinates for entry in face.pending]
+        for before, after in zip(first, second, strict=True):
+            self.assertEqual(list(before), list(after), "a second pass moved points again")
+
+    def test_a_derivation_that_cannot_reach_the_weight_is_reported(self):
+        # Shrinking 国 to a quarter cannot be offset back: the offset that would
+        # reach the face's weight turns the outline inside out, so the character
+        # is reported rather than shipped thin.
+        face = extend_font.Face(self.path)
+        baseline = reference_font.stroke_width(face.font, probe=self.probe, minimum_samples=4)
+        face.add("狗", [("国", extend_font.all_contours, extend_font.fit((208, 320, 252, 380)))])
+        self.assertEqual(face.enforce_weight(baseline), ["狗"])
+        # It got closer, but not within the 12% the face allows.
+        self.assertLess(face.added["狗"]["weightBefore"], face.added["狗"]["weightAfter"])
+        self.assertLess(face.added["狗"]["weightAfter"], 0.89)
