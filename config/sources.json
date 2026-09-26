@@ -1,0 +1,76 @@
+{
+  "_comment": "默认来源与提示性哈希——不是闸门。primary = 文渊圆体(文渊SC Rounded 7 真字重,git 直链)经 tools/round.py 圆头化:自由端头半圆弧 + 撇捺出锋削圆(R20),接口/骨架/字重不动,零提示代码直读 glyf。OFL-1.1 保留字体名 'WenYuan'/'文渊',衍生物改名 'Selffont Round SC'。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
+  "module": {
+    "id": "MFGA",
+    "name": "Selffont",
+    "version": "v2.8.1",
+    "versionCode": "2026092720",
+    "author": "Selffont",
+    "description": "Selffont Round SC(文渊圆体派生:自由端头半圆化+撇捺削圆 R20,7 真字重)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+  },
+  "primary": {
+    "family": "Selffont Round SC",
+    "project": "takushun-wu/WenYuanFonts",
+    "version": "v1.010 ttf 静态",
+    "license": "OFL-1.1,保留字体名 'WenYuan'/'文渊';圆头化=修改,衍生物改名 Selffont Round SC,OFL 文本随包",
+    "vf": false,
+    "files": [
+      {
+        "installed": "Selffont-RoundSC-Thin.ttf",
+        "weight": 100,
+        "round": {
+          "url": "https://raw.githubusercontent.com/takushun-wu/WenYuanFonts/main/ttf/WenYuanRoundedSC-Thin.ttf"
+        }
+      },
+      {
+        "installed": "Selffont-RoundSC-Light.ttf",
+        "weight": 300,
+        "round": {
+          "url": "https://raw.githubusercontent.com/takushun-wu/WenYuanFonts/main/ttf/WenYuanRoundedSC-Light.ttf"
+        }
+      },
+      {
+        "installed": "Selffont-RoundSC-Regular.ttf",
+        "weight": 400,
+        "round": {
+          "url": "https://raw.githubusercontent.com/takushun-wu/WenYuanFonts/main/ttf/WenYuanRoundedSC-Regular.ttf"
+        }
+      },
+      {
+        "installed": "Selffont-RoundSC-Medium.ttf",
+        "weight": 500,
+        "round": {
+          "url": "https://raw.githubusercontent.com/takushun-wu/WenYuanFonts/main/ttf/WenYuanRoundedSC-Medium.ttf"
+        }
+      },
+      {
+        "installed": "Selffont-RoundSC-SemiBold.ttf",
+        "weight": 600,
+        "round": {
+          "url": "https://raw.githubusercontent.com/takushun-wu/WenYuanFonts/main/ttf/WenYuanRoundedSC-SemiBold.ttf"
+        }
+      },
+      {
+        "installed": "Selffont-RoundSC-Bold.ttf",
+        "weight": 700,
+        "round": {
+          "url": "https://raw.githubusercontent.com/takushun-wu/WenYuanFonts/main/ttf/WenYuanRoundedSC-Bold.ttf"
+        }
+      },
+      {
+        "installed": "Selffont-RoundSC-Heavy.ttf",
+        "weight": 900,
+        "round": {
+          "url": "https://raw.githubusercontent.com/takushun-wu/WenYuanFonts/main/ttf/WenYuanRoundedSC-Heavy.ttf"
+        }
+      }
+    ]
+  },
+  "extras": [],
+  "base": {
+    "project": "Numbersf/MakeFontsGreatAgain",
+    "version": "1717180003",
+    "sha256": "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b",
+    "url": "https://github.com/Numbersf/MakeFontsGreatAgain/releases/download/1717180003/MFGA-SELFUSE-17.0.1.08-31-alpha2.1717180003.zip"
+  }
+}

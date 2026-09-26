@@ -5,12 +5,13 @@ __pycache__/
 /build/
 /dist/
 /artifacts/
-/downloads/
 **/.gradle/
 **/build/
-mfga-xposed/local.properties
-# Large font binaries stay outside Git (see tools/prepare_font.py / build.yml).
-# fonts/ keeps only LICENSE-* attribution; module fonts come from the base ZIP.
-fonts/*.ttf
-fonts/*.otf
-fonts/*.ttc
+xposed/local.properties
+# 字体二进制不入 Git:主字体和基础包由 tools/build.py 下载或 --font/--base 提供。
+*.ttf
+*.otf
+*.ttc
+
+# 本地看样页(真 TTF 渲染,体积大,不入 Git)
+/preview/

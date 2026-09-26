@@ -1,65 +1,63 @@
 # 更新日志
 
-## v1.4.0（2026-09-12）
+## v2.8.1(2026-09-27)· 撇捺削圆 R20
 
-面向 Android 16 / Oplus(oplus/oppo/oneplus/realme) / KernelSU 的文渊圆体系统字体模块 + 只读诊断 APK。真机安装、完整字体模块与网页覆盖标注为待验证（见 docs/validation.md）。
+用户验收指出"端头"实指**撇捺出锋的尖尾**(文渊天生圆端头,平头检测在其上近乎无感,实测像素 diff 仅 0.286%)。引擎新增 `round_tips` 过程:发卡夹角(<37°)的出锋尖端削为钝圆收笔,与平头检测互补;定版参数 R20(保留笔意)。全字重改动 33.7k–55.9k 处/字重。文档清理:去除单字重/实验工具等陈旧段落。
 
-- 主字体为文渊圆体可变字体（WenYuan Rounded SC VF，`wght` 100–900 + `ital` 0–1）；`fonts.xml` 为每个字重生成 `<axis>` 指向同一 VF 文件，构建期用真实字体 `fvar` 校验轴值不越界（`dynamicWeightAxes`）。
-- 模块减重：仅打包 `fonts.xml` 实际引用的补充字体，未引用者作为死重丢弃并记入 `module-report.json`（`unreferencedFontsDropped`）。
-- 三化重构（现代化/自由化/原生化）：
-  - 现代化：CI 与构建统一到 node24 + JDK 21（当前 LTS）；`mfga-xposed` 全量迁移到 Kotlin（10/10 类，移除 `src/main/java`），升级 AGP 9.3.0 / Gradle 9.5.0 并改用 AGP 9 内置 Kotlin（无需单独 Kotlin 插件）；策略断言从 `run_java.sh` 迁入 Gradle 单元测试 `PolicyTest.kt`。逻辑不变。
-  - 自由化：新增 `FontIdentity` 作为字体家族名/路径的单一真源（消除 `GeckoFontPolicy`、`FontMetricsProbe` 的重复硬编码）；平台闸门新增用户自选放行标记 `/data/adb/selffont_allow_unsupported`，默认严格不变、仅额外开放"自担风险"的绕过口(安装期 `customize.sh` 与运行期 `TargetPlatform.allowed` 同步支持,含测试)。
-  - 原生化：确认现状已达标（`FontForceCore` 用原生 `Typeface.create`、Hook 仅用平台 API），不强塞 JNI。
-- Gecko `font.name-list` 前置保留（1.4-gecko-fallback）：由"覆盖成只有文渊"改为"前置保留原回退链"，不再对无 list 项造窄列表，不触碰 emoji 首选项。注：设备 prefsMap 无 `font.name-list`/emoji 键，故此改动对火狐缺字为空操作；火狐 Unicode 15.1/16 新 emoji 豆腐块经 A/B 证明属 Gecko 后端限制，非本模块可修（见 docs/validation.md）。
-- 打包期度量归一（1.4-phase2-metrics）：将安装副本文渊的竖直行度量对齐 Roboto 载体名义度量，根治通知计数/红点角标/时钟等紧凑槽的数字偏低与切下沿；只改行度量，字形/cmap/family/轴与原版 SHA-256 不变，带构建期防切保护。
-- 文渊圆体固定资源与配置生成、KSU/Oplus/Android 16 支持边界。
-- 删除上色及字体屏蔽；额外干预仅手动。
-- 现代 API 102 单入口；Gecko 155.0.1 启动字体首选项适配及分层诊断。
-- 主机契约检查（Python + node + Kotlin `gradle test`）及诊断 APK 构建已由 CI 通过；真机安装、完整字体模块与网页覆盖仍待验证，参见 docs/validation.md。
+## v2.8.0(2026-09-27)· 圆头化:Selffont Round SC
+
+圆角引擎正式上产线:基底换文渊圆体 v1.010 静态 7 字重(纯 glyf 零提示,git 直链),`tools/round.py` 圆头化 **18,593–35,012 个自由端头/字重**(两段 90° 弧真半圆;接口/字框零凸起),构建期现场生成。OFL 衍生名 Selffont Round SC。字重阶梯 7 真字重填满 9 档。
+
+## v2.7.0(2026-09-26)· 回归文渊 VF
+
+候选盘点(活跃度/真字重/简体覆盖/空壳扫描全维度)后回归**文渊圆体 v1.010 可变字体**——全场唯一持续维护的(2026-07 v1.000 → 2026-08 v1.010),一个 VF 文件内含 100–900 真字重(+ital),细粗正常,真机验证过。安装副本内部名按 OFL 保留名规则改为 Selffont Rounded SC VF。寒蝉全圆体保留为备选(一个 URL 的距离);圆头化(在文渊上做端头处理)留作后续实验。
+
+## v2.6.0(2026-09-26)· 寒蝉全圆体
+
+同系半圆体 ChillRoundM 实测 **34% 映射为空壳字形**(缺「这们你说发还样种」等常用字,cmap 声称有但字形空白,吞回退)——真机通知栏大面积缺字,弃用。主字体切换到**寒蝉全圆体 Chill Round F**(小杉丸骨架,12,162 码位,空壳仅 13 且多为空格变体):照搬字形仅归一行度量;构建新增**空壳映射剪除**防线(非空白码位映射到空白字形时剪除,让其落到回退链;只剪映射不删字形)。
+
+支撑字体维持 **MFGA 全量支撑面**(平面二/三绝版字兜底全随包,产物约 81MB)——不为体积砍兜底,这是有意取舍。
+
+## v2.5.0(2026-09-26)· 寒蝉半圆体
+
+主字体切换到**寒蝉半圆体 Chill Round M**(Warren2060):Zen Maru Gothic 骨架的 GB2312 简体优化圆体,半圆弧端头,禅丸缺的简体字全有。照搬字形仅归一行度量;OFL 保留字体名,安装副本内部名改为 Chill Round M(合规),OFL 文本随包附带。
+
+## v2.4.0(2026-09-26)· 寒蝉圆黑体
+
+主字体切换到**寒蝉圆黑体 ChillRoundGothic**(Warren2060,OFL 无保留名,main 最后更新 2023-10):7 真字重(ExtraLight 200 / Light 300 / Regular 400 / Medium 500 / Bold 700 / Heavy 900),27,183 码位,龘字在列;全部真实字重无合成。照搬原版字节,仅归一行度量。
+
+## v2.3.1(2026-09-26)· 回归文渊
+
+自研圆体与禅丸方案都止步于实验:端头能仿,设计感仿不了。主字体回归**文渊圆体 v1.010 原版**(真机验证过、专业设计、可变字体),照搬字节仅归一行度量。`tools/round.py` 作为实验工具保留在仓库。
+
+## v2.3.0(2026-09-26)· Zen Maru Gothic
+
+主字体短暂切换到禅丸原版(照搬)。
+
+## v2.2.0(2026-09-26)· 自研圆体字库
+
+主字体由外部字体换为**自研 Selffont Round SC**:
+
+- 圆角引擎 `tools/round.py`:结构化自由端头检测(短封口 + 平行长边 + 近垂直交角)→ 半圆替换;接口、拐角、口框零改动——根除资源圆体一类「逢角必圆」流派的接口凸起。
+- Noto Sans SC(OFL)五字重全量圆角化:24–32 万端头/字重,30,889 码位;CFF→TrueType;衍生字库按保留名条款改名发布。
+- 资源圆体扩展字库方案作废(自研字库覆盖同级,无外来 extras);禅丸 Gothic 方案作废。
+- build.py:多文件静态字重阶梯(每档取最近声明字重,并列取较重)、主字体本地生成 + `--font` 目录输入、extras 机制保留。
+- CI 现场从 Noto 生成五字重再打包,仓库零二进制;自检加圆角引擎冒烟。
+
+## v2.0.0(2026-09-26)· 四化重写
+
+全仓库推倒重来。方向:自由化、简单化、现代化、原生化。
+
+- **原生化**:系统字体只走 `fonts.xml` 原生挂载 + KSU 只读安装;删除开机脚本、GMS 组件干预、应用字体权限把戏(app-fonts)、emoji 重叠处理及其全部原生工具。LSPosed 只剩两条系统管不到的路径:应用自带字体(Typeface 工厂)与 Gecko 启动首选项。只用公开 API,零 JNI。
+- **自由化**:删除全部平台闸门(Android 16/Oplus/KSU 检查、override 标记、平台支持测试)。SHA-256/版本/家族名断言全部降级为提示性警告;`--font`/`--base` 接受任意本地文件或 URL,家族名、可变轴、度量现场从字体读取,静态字体可打包,轴越界夹取不拒绝。
+- **简单化**:10 个 Kotlin 类 → 2 个;5 个 Python 工具 → 1 个 `tools/build.py`;10 个运行时脚本 → 2 个;4 个 CI → 1 个;16 个测试文件 → 3 个(只测真实行为);删除诊断探针、WebUI 按钮矩阵、i18n 层、docs/ 目录;单文件 WebUI 只剩只读诊断。`uninstall.sh` 删除——卸载即删目录重启。
+- **现代化**:Kotlin 2 文件(Entry/Policy),AGP 9.3 内置 Kotlin、JDK 21、SDK 36;Python 3.11 单文件打包器;CI 一个工作流同时出模块 zip 与诊断 APK。
+- 保留的真机验证修复:安装副本竖直行度量归一到 Roboto 空壳载体(角标数字偏低/切下沿),构建期字形/轮廓/cmap/家族/轴逐字节守卫。
+- 主字体安装名改为 `Selffont-primary.ttf`;Gecko 家族名集中在 `xposed/.../Policy.kt` 一处。
+- 上游 MFGA 的变更历史不属于本仓库功能清单,见上游 release 页。
 
 ---
 
-以下是上游历史记录，不是当前功能清单。
+## v1.4.0(2026-09-12)
 
-CN
- 
-17.0.1.08-31-alpha2(1717180003)
- - 1.适配HyperOS4
- - 2.同步/新增部分字体，调整部分私用区符号颜色
- - 3*.新增Xposed版本MFGA覆盖一些内置了字体的应用
- - 4.增加了对部分Unicode18彩色Emoji的初步支持(早期预览版)
-```
-🛙🪋🪌🪍🫌🫝🫫🫹🫺
-```
- 
-17.0.0.06-27-alpha(1717180001)
- - 1.同步Roboto到3.0.16(SU)
- - 2.WebUI新增主字体上色，需支持COLRv0，Android10及以上
- - 3.调整主字体中部分组合类符号，修复缺失、在高安卓版本显示异常的情况
- 
-
--------
-EN
- 
-17.0.1.08-31-alpha2(1717180003)
- - 1.Added support for HyperOS 4
- - 2.Synced/Added some fonts and adjusted the colors of some Private Use Area symbols
- - 3*.Added an Xposed version of MFGA to override fonts in some apps with built-in fonts
- - 4.Added preliminary support for some Unicode 18 colored emoji (early preview)
-```
-🛙🪋🪌🪍🫌🫝🫫🫹🫺
-```
- 
-17.0.0.06-27-alpha(1717180001)
- - 1.Synchronized Roboto font to version 3.0.16(SU).
- - 2.Added main font colorization in WebUI; requires COLRv0 support, Android 10 and above.
- - 3.Adjusted some composite symbols in the main font, fixing missing glyphs and display issues on higher Android versions.
- 
-
-Telegram channel:
-
-https://t.me/AndroidCoreLayer
-
-Power by:
-
-Yiyunlengyu(酷安@Numbersf)
+三化重构(现代化/自由化/原生化)的首版:文渊圆体系统字体模块 + 只读诊断 APK;度量归一修复角标;Gecko `font.name-list` 前置保留;平台闸门 + override 标记;SHA-256 死锁式校验。该策略路线已在 v2.0.0 被推翻。
