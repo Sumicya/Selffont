@@ -1,38 +1,25 @@
 {
-  "_comment": "默认来源与提示性哈希——不是闸门。primary = 寒蝉圆黑体 ChillRoundGothic(Warren2060,OFL-1.1 无保留字体名;7 真字重,27,183 码位;照搬原版,仅归一行度量修角标)。extras 空。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
+  "_comment": "默认来源与提示性哈希——不是闸门。primary = 寒蝉半圆体 ChillRoundM(Warren2060,Zen Maru Gothic 骨架的 GB2312 简体优化圆体,半圆弧端头;OFL-1.1 保留字体名 'ChillRoundM',归一属修改,安装副本内部名改为 'Chill Round M' 并随包附带 OFL 文本)。单字重 Regular 400,系统 100–900 全阶梯映射到它。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.4.0",
-    "versionCode": "2026092660",
+    "version": "v2.5.0",
+    "versionCode": "2026092680",
     "author": "Selffont",
-    "description": "寒蝉圆黑体系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+    "description": "寒蝉半圆体(Chill Round M)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
   },
   "primary": {
-    "family": "Chill Round Gothic",
-    "project": "Warren2060/ChillRoundGothic",
-    "version": "main 2026-09 (v3.750)",
-    "license": "OFL-1.1,未声明保留字体名;本模块仅归一行度量",
+    "family": "Chill Round M",
+    "rename": "Chill Round M",
+    "project": "Warren2060/ChillRound",
+    "version": "main (ChillRoundM v3.x)",
+    "license": "OFL-1.1,保留字体名 'ChillRoundM'/'ChillRoundF';本模块仅归一行度量+内部改名,不占用保留名",
     "vf": false,
     "files": [
-      { "installed": "Selffont-ChillRoundGothic-ExtraLight.ttf", "weight": 200,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRoundGothic/main/ttf/ChillRoundGothic_ExtraLight.ttf",
-        "sha256": "fb7369eb41fc95cf80b1bb5d8fb78c9d58f0f0344b88915279e73f0ccb6e7a10" },
-      { "installed": "Selffont-ChillRoundGothic-Light.ttf", "weight": 300,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRoundGothic/main/ttf/ChillRoundGothic_Light.ttf",
-        "sha256": "6bff0d31a922760a722f2be2f9a834dd92657c9c36985d4a27025e9a80b42788" },
-      { "installed": "Selffont-ChillRoundGothic-Regular.ttf", "weight": 400,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRoundGothic/main/ttf/ChillRoundGothic_Regular.ttf",
-        "sha256": "b73776f591bae1b64a949ff9b527614919bfff7c6987367e68e57ad0af6468cc" },
-      { "installed": "Selffont-ChillRoundGothic-Medium.ttf", "weight": 500,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRoundGothic/main/ttf/ChillRoundGothic_Medium.ttf",
-        "sha256": "7aaf168681f168b9f550734d9e25058ffe73213db07d7a50152d5446dd9e7094" },
-      { "installed": "Selffont-ChillRoundGothic-Bold.ttf", "weight": 700,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRoundGothic/main/ttf/ChillRoundGothic_Bold.ttf",
-        "sha256": "dee7faf4ad8ad99720b3ffd045f3bfe4f22b8168f7cc70812aca6d1d95529dae" },
-      { "installed": "Selffont-ChillRoundGothic-Heavy.ttf", "weight": 900,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRoundGothic/main/ttf/ChillRoundGothic_Heavy.ttf",
-        "sha256": "8e008ecec9854ec2887cea9e28a7826c65c00409d532e0fe5bd01afe704e718e" }
+      { "installed": "Selffont-ChillRoundM.ttf", "weight": 400,
+        "url": "https://raw.githubusercontent.com/Warren2060/ChillRound/main/ChillRound/ChillRoundM.ttf",
+        "sha256": "dfd9a757088409cbb017933d057e92991b7f2e0228dd53fafa2a3c27c32bdd04",
+        "bytes": 6853208 }
     ]
   },
   "extras": [],

@@ -11,7 +11,7 @@ diagnose() {
         echo 'Android API: unknown (no getprop in this environment)'
     fi
     sed -n 's/^version=/Module: /p' "$MODPATH/module.prop" 2>/dev/null
-    if [ -r /system/fonts/Selffont-ChillRoundGothic-Regular.ttf ]; then
+    if [ -r /system/fonts/Selffont-ChillRoundM.ttf ]; then
         echo '[font-visible] 主字体在本 shell 可读。'
     else
         echo '[font-missing] 主字体不可读:检查安装、重启、KSU 挂载。'

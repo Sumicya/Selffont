@@ -295,20 +295,14 @@ def build_end_to_end():
 def real_sources_config():
     """仓库真实 sources.json 的结构自检(不下载)。"""
     primary = builder.SOURCES["primary"]
-    assert primary["family"] == "Chill Round Gothic", "主字体应为寒蝉圆黑体"
-    assert primary["vf"] is False
-    weights = [f["weight"] for f in primary["files"]]
-    assert weights == [200, 300, 400, 500, 700, 900], weights
-    assert all(f["url"].startswith("https://") for f in primary["files"])
-    assert all("sha256" in f for f in primary["files"]), "直链应带提示哈希"
+    assert primary["family"] == "Chill Round M", "主字体应为寒蝉半圆体(内部名,规避保留名 ChillRoundM)"
+    assert primary["rename"] == "Chill Round M", "归一属 OFL 修改,必须整体改名"
+    assert primary["vf"] is False and len(primary["files"]) == 1
+    f = primary["files"][0]
+    assert f["installed"] == "Selffont-ChillRoundM.ttf" and f["weight"] == 400
+    assert f["sha256"] == "dfd9a757088409cbb017933d057e92991b7f2e0228dd53fafa2a3c27c32bdd04"
     ladder = builder.map_weights(primary["files"])
-    got = [next(e["file"] for e in ladder if e["weight"] == w and not e["italic"])
-           for w in range(100, 1000, 100)]
-    assert got == ["Selffont-ChillRoundGothic-ExtraLight.ttf", "Selffont-ChillRoundGothic-ExtraLight.ttf",
-                   "Selffont-ChillRoundGothic-Light.ttf", "Selffont-ChillRoundGothic-Regular.ttf",
-                   "Selffont-ChillRoundGothic-Medium.ttf", "Selffont-ChillRoundGothic-Bold.ttf",
-                   "Selffont-ChillRoundGothic-Bold.ttf", "Selffont-ChillRoundGothic-Heavy.ttf",
-                   "Selffont-ChillRoundGothic-Heavy.ttf"], got
+    assert all(e["file"] == "Selffont-ChillRoundM.ttf" for e in ladder if not e["italic"])
     assert builder.SOURCES["extras"] == []
     module = builder.SOURCES["module"]
     assert module["id"] == "MFGA" and module["version"].startswith("v2.")
@@ -357,7 +351,7 @@ def runtime_scripts():
         tmp = Path(tmp)
         modpath = tmp / "module"
         (modpath / "system/fonts").mkdir(parents=True)
-        (modpath / "system/fonts/Selffont-ChillRoundGothic-Regular.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-ChillRoundM.ttf").write_bytes(b"font")
         (modpath / "fonts.xml").write_bytes(b"<familyset/>")
         (modpath / "module.prop").write_text("version=v2.2.0\n")
         for script in ("customize.sh", "action.sh"):
@@ -382,11 +376,11 @@ def runtime_scripts():
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 3 份" in result.stdout, "应报告替换数量:" + result.stdout
 
-        (modpath / "system/fonts/Selffont-ChillRoundGothic-Regular.ttf").unlink()
+        (modpath / "system/fonts/Selffont-ChillRoundM.ttf").unlink()
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "ABORT" in result.stderr
 
-        (modpath / "system/fonts/Selffont-ChillRoundGothic-Regular.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-ChillRoundM.ttf").write_bytes(b"font")
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout and "unknown" in result.stdout
         assert sh([str(modpath / "action.sh"), "gms", "--confirm"], env).returncode == 2, "已删动作应报用法错"

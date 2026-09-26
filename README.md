@@ -1,12 +1,12 @@
 # Selffont
 
-Android 个人字体模块:**寒蝉圆黑体 ChillRoundGothic**(Warren2060,专业设计中文圆体,7 真字重,27,183 码位)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
+Android 个人字体模块:**寒蝉半圆体 Chill Round M**(Warren2060,Zen Maru Gothic 骨架的 GB2312 简体优化圆体,半圆弧端头,12,091 码位)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
 
 ## 字体
 
-主字体完全照搬[寒蝉圆黑体](https://github.com/Warren2060/ChillRoundGothic)(OFL-1.1,无保留字体名)原版字节——字形、cmap、家族名逐字节不动;仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。
+主字体照搬[寒蝉半圆体](https://github.com/Warren2060/ChillRound)(OFL-1.1)——字形、cmap 逐字节不动,仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。因 OFL 保留字体名 `'ChillRoundM'`,归一(=修改)后的安装副本内部名整体改为 **Chill Round M**,OFL 文本随包附带(`module/licenses/`)。
 
-字重阶梯:100–200→ExtraLight、300→Light、400→Regular、500→Medium、600–700→Bold、800–900→Heavy,全部真实字重,无合成。
+单字重 Regular 400,系统 100–900 全阶梯映射到它(单字重家族策略)。
 
 仓库另附 `tools/round.py`(圆角引擎实验):对 Noto Sans SC 做「自由端头半圆化」,端头圆、接口锐。作为工具保留,不是交付字体。
 

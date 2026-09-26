@@ -378,6 +378,28 @@ def render_module_prop(fields: dict) -> str:
 
 # ---------------------------------------------------------------- 组装
 
+def rename_font(data: bytes, family: str) -> bytes:
+    """OFL 保留名合规:修改过的主字体在安装副本里整体改名(legacy/typographic 双模型都写)。"""
+    font = TTFont(io.BytesIO(data))
+    name, os2 = font["name"], font["OS/2"]
+    style = "Bold" if os2.fsSelection & 0x20 else "Regular"
+    legacy_family = family if style == "Regular" else f"{family} {style}"
+    ps = family.replace(" ", "-") + ("" if style == "Regular" else "-" + style)
+    full = f"{legacy_family} {style}"
+    for record in list(name.names):
+        if record.nameID in (1, 3, 4, 6, 16, 17):
+            name.removeNames(record.nameID, record.platformID, record.platEncID, record.langID)
+    for pid, eid, lid in ((3, 1, 0x409), (1, 0, 0)):
+        name.setName(legacy_family, 1, pid, eid, lid)
+        name.setName(style, 2, pid, eid, lid)
+        name.setName(full, 4, pid, eid, lid)
+        name.setName(ps, 6, pid, eid, lid)
+        name.setName(f"{family}; metric-normalized, see OFL.txt; {full}", 3, pid, eid, lid)
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
 def build(base: Path, output: Path, revision: str | None = None,
           font_override: Path | None = None, refresh: bool = False) -> dict:
     base, output = Path(base), Path(output)
@@ -405,7 +427,7 @@ def build(base: Path, output: Path, revision: str | None = None,
     regular_info = read_font(primary_data[regular_name])
     primary_ladder = ladder_for(primary, regular_info.get("axes"))
     extra_ladder = map_weights(SOURCES["extras"])
-    if regular_info["family"] != primary["family"]:
+    if regular_info["family"] != primary["family"] and not primary.get("rename"):
         warnings.append(f"主字体实际家族名 {regular_info['family']!r} 与配置 {primary['family']!r} 不同;"
                         "Gecko/Firefox 适配需同步修改 xposed 的 Policy.kt。")
     if any(read_font(data)["axes"] for data in primary_data.values()):
@@ -455,6 +477,11 @@ def build(base: Path, output: Path, revision: str | None = None,
                 assert_glyphs_preserved(data, normalized[name])
         else:
             normalized = primary_data
+        if primary.get("rename"):
+            # 归一(=修改)之后统一内部家族名;字形守卫在改名前已验证。
+            normalized = {name: rename_font(data, primary["rename"])
+                          for name, data in normalized.items()}
+            regular_info = read_font(normalized[regular_name])
 
         with Path(base).open("rb") as base_stream:
             base_sha256 = hashlib.file_digest(base_stream, "sha256").hexdigest()
