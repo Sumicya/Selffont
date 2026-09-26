@@ -138,14 +138,16 @@ def round_glyph(glyph, glyf_table) -> int:
                 ax, ay = contour[seg["a"]][0], contour[seg["a"]][1]
                 b = (seg["a"] + 1 + len(seg["interior"])) % n
                 bx, by = contour[b][0], contour[b][1]
-                # 二次曲线近似半圆:控制点在 2h,弧顶恰达 h(= 半个笔画宽)。
-                h = cap_len * 0.5
-                mid = ((ax + bx) / 2 + d[0] * h, (ay + by) / 2 + d[1] * h)
-                c1 = (ax + d[0] * 2 * h, ay + d[1] * 2 * h)
-                c2 = (bx + d[0] * 2 * h, by + d[1] * 2 * h)
-                out.append((c1[0], c1[1], False))
-                out.append((mid[0], mid[1], True))
-                out.append((c2[0], c2[1], False))
+                # 真半圆头(禅丸式):两段 90° 二次弧,控制点在切线交点 A+r·d / B+r·d。
+                # 单段抛物线肩部外鼓 55% 成方肩;两段弧肩部误差 <7%,肉眼即圆。
+                r = cap_len * 0.5
+                mx, my = (ax + bx) / 2, (ay + by) / 2
+                apex = (mx + d[0] * r, my + d[1] * r)
+                q1 = (ax + d[0] * r, ay + d[1] * r)
+                q2 = (bx + d[0] * r, by + d[1] * r)
+                out.append((q1[0], q1[1], False))
+                out.append((apex[0], apex[1], True))
+                out.append((q2[0], q2[1], False))
                 skip_anchor = True  # 端头另一侧锚点被弧替代
                 made += 1
                 continue
