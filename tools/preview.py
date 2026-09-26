@@ -33,6 +33,10 @@ from glyph_audit import MANIFEST, TARGETS, audit
 
 FACES = {face["style"]: face for face in MANIFEST["faces"]}
 SAMPLE = "你好中国圆体 0123456789 Abc"
+# What the extension is for: the practice characters plus samples of what came
+# from the rules (贝 页 见 马 鸟 门 员 维 陈 东) and from the reference font.
+EXTENDED = "乌员岛护维贝赵迁进陈页飞马鸟门东偿叠橥恿巅"
+DEFAULT_TEXT = f"{EXTENDED}  体永国字 0123456789"
 
 
 def _load_faces(directory: Path):
@@ -102,7 +106,7 @@ def _page(report: dict, faces: dict, size: int, baseline_faces: dict | None = No
         styles.append(_face_css(face, f"/fonts/{path.name}", weight))
         rows.append(
             f'<p class="face"><b>{face}</b> weight {weight}</p>'
-            f'<p class="sample" style="font-family:{face};font-weight:{weight}">{html.escape(SAMPLE)}</p>'
+            f'<p class="sample live" style="font-family:{face};font-weight:{weight}">{html.escape(SAMPLE)}</p>'
             f'<p class="targets" style="font-family:{face};font-weight:{weight}">{html.escape(editable)}</p>'
         )
     patched = _patched_styles(faces, patch_report)
@@ -145,6 +149,17 @@ border:1px solid #d6cec4;border-radius:.4rem;background:#fff;font-size:1.5rem}}
 <p class="meta">基准 {html.escape(MANIFEST['sourceFamily'])} @ {html.escape(MANIFEST['version'])}
 · 派生家族 {html.escape(MANIFEST['family'])} · 五个静态 face，斜体由平台合成</p>
 {comparison_html}
+<h2>随手打字看效果（在下面输入框里改，五个字重同时变）</h2>
+<p><input id="probe" type="text" value="{html.escape(DEFAULT_TEXT)}" spellcheck="false"
+style="width:100%;font-size:1.4rem;padding:.5rem .6rem;border:1px solid #cbbfb0;border-radius:.5rem;background:#fff"></p>
+{''.join(
+    f'<p class="face"><b>{face}</b> weight {FACES[face]["weight"]}</p>'
+    f'<p class="live" style="font-family:{face};font-weight:{FACES[face]["weight"]};'
+    f'font-size:{size}px;line-height:1.6">{html.escape(DEFAULT_TEXT)}</p>'
+    for face in faces
+)}
+<p class="meta">默认这一行就是简体扩展的成品：<b>乌 员 岛 护 维 贝 赵 迁 进 陈 页 飞 马 鸟 门 东</b>（自家规则）
+与 <b>偿 叠 橥 恿 巅</b>（参考借入）。上面这一行跟随输入框，原样用当前字体渲染。</p>
 <h2>实际 face 渲染（浏览器直接加载已备好的 TTF）</h2>
 {''.join(rows)}
 <h2>你的练习字：可改（已有字形，可用逐点 patch 改笔画）</h2>
@@ -161,7 +176,17 @@ border:1px solid #d6cec4;border-radius:.4rem;background:#fff;font-size:1.5rem}}
 <p>每个面一个 <code>config/glyph-patches/&lt;Style&gt;.json</code>，只写明确点号与位移，
 然后 <code>tools/edit_font.py</code> 校验并发布到 <code>build/fonts-patched</code>，
 本页刷新即可看到。审计数字由 <code>tools/glyph_audit.py</code> 生成。</p>
-</main></body></html>"""
+</main>
+<script>
+const probe = document.getElementById('probe');
+const live = Array.from(document.querySelectorAll('p.live'));
+function refresh() {{
+  const text = probe.value || '';
+  for (const row of live) row.textContent = text;
+}}
+probe.addEventListener('input', refresh);
+</script>
+</body></html>"""
 
 
 def serve(faces: dict, report: dict, host: str, port: int, size: int,
