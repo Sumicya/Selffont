@@ -4,15 +4,18 @@ Android 个人字体模块:**Selffont Round SC**——文渊圆体(文渊SC Roun
 
 ## 字体
 
-基底[文渊圆体 v1.010](https://github.com/takushun-wu/WenYuanFonts)(OFL-1.1,7 真字重,零提示代码纯 glyf)。构建时现场圆头化(`tools/round.py`):**只圆自由笔画端头**(两段 90° 弧真半圆,禅丸同级),T 形接口、L 形拐角、字框一概不动 → 接口处零凸起;骨架、字重、字面不变。安装副本再归一行度量(修角标)+ 剪除空壳映射。因 OFL 保留字体名 `'WenYuan'/'文渊'`,派生家族改名 **Selffont Round SC**,OFL 文本随包附带(`module/licenses/`)。
+基底[文渊圆体 v1.010](https://github.com/takushun-wu/WenYuanFonts)(OFL-1.1,7 真字重,零提示代码纯 glyf)。构建时现场圆头化(`tools/round.py`),两笔刀:
+
+1. **自由端头半圆化**:平切直线封口替换为两段 90° 弧真半圆(禅丸同级);T 形接口、L 形拐角、字框一概不动 → 接口处零凸起。
+2. **撇捺削圆(R20)**:发卡夹角(<37°)的出锋尖尾替换为钝圆收笔,保留笔意;内部关节不触发。
+
+骨架、字重、字面不变。安装副本再归一行度量(修角标)+ 剪除空壳映射。因 OFL 保留字体名 `'WenYuan'/'文渊'`,派生家族改名 **Selffont Round SC**,OFL 文本随包附带(`module/licenses/`)。
 
 字重阶梯:100→Thin、200–300→Light、400→Regular、500→Medium、600→SemiBold、700→Bold、800–900→Heavy,全部真实字重。
 
 备选方案(改 `config/sources.json` 即可切换):文渊 VF 原版(100–900 可变)、寒蝉全圆体/圆黑体。
 
-单字重 Regular 400,系统 100–900 全阶梯映射到它(单字重家族策略)。
 
-仓库另附 `tools/round.py`(圆角引擎实验):对 Noto Sans SC 做「自由端头半圆化」,端头圆、接口锐。作为工具保留,不是交付字体。
 
 ## 模块结构
 
@@ -36,7 +39,7 @@ tests/selfcheck.py   一个自检文件:归一、配置生成、端到端构建�
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
 .venv/bin/python tests/selfcheck.py
-# 一条命令:下载并校验寒蝉全圆体 → 剪除空壳映射 → 度量归一+改名 → 打包。
+# 一条命令:下载文渊圆体 → 圆头化(端头半圆+撇捺削圆)→ 剪壳 → 归一+改名 → 打包。
 # 基础包默认源自动下载;--base/--font 可换任意来源:
 .venv/bin/python tools/build.py
 ```

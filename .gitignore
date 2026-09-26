@@ -12,3 +12,6 @@ xposed/local.properties
 *.ttf
 *.otf
 *.ttc
+
+# 本地看样页(真 TTF 渲染,体积大,不入 Git)
+/preview/

@@ -1,12 +1,12 @@
 {
-  "_comment": "默认来源与提示性哈希——不是闸门。primary = 文渊圆体(文渊SC Rounded 7 真字重,git 仓库直链)经 tools/round.py 圆头化:自由端头半圆弧替换,接口/骨架/字重不动,零提示代码直读 glyf。OFL-1.1 保留字体名 'WenYuan'/'文渊',衍生物改名 'Selffont Round SC'。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
+  "_comment": "默认来源与提示性哈希——不是闸门。primary = 文渊圆体(文渊SC Rounded 7 真字重,git 直链)经 tools/round.py 圆头化:自由端头半圆弧 + 撇捺出锋削圆(R20),接口/骨架/字重不动,零提示代码直读 glyf。OFL-1.1 保留字体名 'WenYuan'/'文渊',衍生物改名 'Selffont Round SC'。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.8.0",
-    "versionCode": "2026092710",
+    "version": "v2.8.1",
+    "versionCode": "2026092720",
     "author": "Selffont",
-    "description": "Selffont Round SC(文渊圆体圆头化派生,7 真字重)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+    "description": "Selffont Round SC(文渊圆体派生:自由端头半圆化+撇捺削圆 R20,7 真字重)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
   },
   "primary": {
     "family": "Selffont Round SC",
