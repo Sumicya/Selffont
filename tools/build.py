@@ -87,32 +87,27 @@ def resolve(spec: str | None, kind: str, cache: Path, refresh: bool) -> Path:
     return cache
 
 
-NOTO_WEIGHT = {300: "Light", 400: "Regular", 500: "Medium", 700: "Bold", 900: "Black"}
+NOTO_WEIGHT = {300: "Thin", 400: "Light", 500: "DemiLight", 700: "Medium", 900: "Bold"}
+NOTO_SOURCE = {"repo": "notofonts/noto-cjk", "dir": "Sans/SubsetOTF/SC"}
 
 
-def ensure_generated_primary(primary: dict, cache: Path, refresh: bool) -> Path:
-    """主字体缺省时,从配置的源(默认 Noto Sans SC, OFL)现场生成。需要 git + fontTools。"""
-    out = cache / "fonts"
-    if not refresh and all((out / f["installed"]).exists() for f in primary["files"]):
-        return out
-    repo = cache / primary["source"]["repo"].split("/")[1]
+def generate_noto_font(installed: str, from_style: str, family: str, cache: Path, refresh: bool) -> Path:
+    """用圆角引擎从 Noto Sans SC(OFL)生成单个字重文件,缓存到 cache/<installed>。"""
+    dest = cache / installed
+    if dest.exists() and not refresh:
+        return dest
+    repo = cache / NOTO_SOURCE["repo"].split("/")[1]
     if not repo.exists():
-        print(f"[primary] sparse clone {primary['source']['repo']} …")
+        print(f"[generate] sparse clone {NOTO_SOURCE['repo']} …")
         subprocess.run(["git", "clone", "-q", "--depth", "1", "--filter=blob:none",
-                        "--sparse", f"https://github.com/{primary['source']['repo']}", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "sparse-checkout", "set", "Sans/SubsetOTF/SC"], check=True)
-    out.mkdir(parents=True, exist_ok=True)
-    engine = ROOT / "tools" / "round.py"
-    for entry in primary["files"]:
-        dest = out / entry["installed"]
-        if dest.exists() and not refresh:
-            continue
-        style = entry.get("from") or NOTO_WEIGHT[entry["weight"]]
-        src = repo / f"Sans/SubsetOTF/SC/NotoSansSC-{style}.otf"
-        print(f"[primary] 生成 {dest.name} ← {src.name}")
-        subprocess.run([sys.executable, str(engine), str(src), str(dest),
-                        "--family", primary["family"]], check=True)
-    return out
+                        "--sparse", f"https://github.com/{NOTO_SOURCE['repo']}", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "sparse-checkout", "set", NOTO_SOURCE["dir"]], check=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src = repo / NOTO_SOURCE["dir"] / f"NotoSansSC-{from_style}.otf"
+    print(f"[generate] {installed} ← Noto {from_style} → {family}")
+    subprocess.run([sys.executable, str(ROOT / "tools" / "round.py"), str(src), str(dest),
+                    "--family", family], check=True)
+    return dest
 
 
 def resolve_font_file(entry: dict, cache: Path, refresh: bool) -> Path:
@@ -393,13 +388,17 @@ def build(base: Path, output: Path, revision: str | None = None,
     warnings: list[str] = []
 
     # 主字体文件:现场读取家族/字重/轴;vf 单文件或静态多文件。
-    if font_override is None and any("url" not in f for f in primary["files"]):
-        if "source" not in primary:
-            raise ValueError("主字体既无 url 也无 source:用 --font 提供目录,或在 sources.json 配置 source")
-        font_override = ensure_generated_primary(primary, cache, refresh)
     primary_data: dict[str, bytes] = {}
     for entry in primary["files"]:
-        path = font_override / entry["installed"] if font_override else resolve_font_file(entry, cache, refresh)
+        if font_override is not None:
+            path = font_override / entry["installed"]
+        elif "url" in entry:
+            path = resolve_font_file(entry, cache, refresh)
+        elif "source" in primary:
+            path = generate_noto_font(entry["installed"], NOTO_WEIGHT[entry["weight"]],
+                                      primary["family"], cache, refresh)
+        else:
+            raise ValueError("主字体无 url 也无 source:用 --font 提供目录,或在 sources.json 配置 url/source")
         primary_data[entry["installed"]] = Path(path).read_bytes()
     regular_name = next((f["installed"] for f in primary["files"] if f["weight"] == 400),
                         primary["files"][0]["installed"])
@@ -427,9 +426,13 @@ def build(base: Path, output: Path, revision: str | None = None,
         extras_data: dict[str, bytes] = {}
         for entry in SOURCES["extras"]:
             try:
-                path = resolve_font_file(entry, cache, refresh)
+                if "generate" in entry:
+                    path = generate_noto_font(entry["installed"], entry["generate"]["from"],
+                                              entry["generate"]["family"], cache, refresh)
+                else:
+                    path = resolve_font_file(entry, cache, refresh)
                 extras_data[entry["installed"]] = Path(path).read_bytes()
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, subprocess.CalledProcessError) as error:
                 warnings.append(f"扩展字库 {entry['installed']} 获取失败,跳过:{error}")
         extra_ladder = [e for e in extra_ladder
                         if e["file"] in extras_data or e["file"] in primary_data]

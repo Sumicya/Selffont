@@ -8,10 +8,10 @@ import java.util.Collections
  */
 object Policy {
     /** 字体的内部家族名(Gecko 首选项按它指名)。 */
-    const val FAMILY = "Selffont Round SC"
+    const val FAMILY = "Zen Maru Gothic"
 
     /** 与 tools/build.py 的主字体 Regular 安装名一致。 */
-    const val FONT_PATH = "/system/fonts/Selffont-RoundSC-Regular.ttf"
+    const val FONT_PATH = "/system/fonts/Selffont-ZenMaruGothic-Regular.ttf"
 
     private val FAMILIES = listOf("serif", "sans-serif", "monospace", "cursive", "fantasy")
 
@@ -25,9 +25,8 @@ object Policy {
     )
 
     /**
-     * 把 Selffont Round SC 前置为 Gecko 各 generic/language 的首选;回退链只前置不清空,
-     * emoji 首选项不碰——缺的字(平面二三生僻字由 MFGA 补充字体兜,彩色 emoji、
-     * 生僻码位走系统回退)。
+     * 把 Zen Maru Gothic 前置为 Gecko 各 generic/language 的首选;回退链只前置不清空,
+     * emoji 首选项不碰——缺的字(简体缺字、平面二绝版字走 MFGA 补充字体,彩色 emoji 走系统回退)。
      */
     @JvmStatic
     fun geckoPrefs(original: Map<String, Any>, fontVisible: Boolean): Map<String, Any> {
