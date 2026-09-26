@@ -3,10 +3,10 @@
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.2.0",
-    "versionCode": "2026092620",
+    "version": "v2.2.1",
+    "versionCode": "2026092630",
     "author": "Selffont",
-    "description": "Selffont Round SC 自研圆体(端头圆·接口锐)接管系统主家族(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+    "description": "Selffont Round SC 自研圆体(端头圆·接口锐·Light 基底近禅丸观感)。原生 fonts.xml 挂载 + 可选 LSPosed 替换。无平台闸门。"
   },
   "primary": {
     "family": "Selffont Round SC",
@@ -19,12 +19,33 @@
     },
     "vf": false,
     "files": [
-      { "installed": "Selffont-RoundSC-Light.ttf", "weight": 300 },
-      { "installed": "Selffont-RoundSC-Regular.ttf", "weight": 400 },
-      { "installed": "Selffont-RoundSC-Medium.ttf", "weight": 500 },
-      { "installed": "Selffont-RoundSC-Bold.ttf", "weight": 700 },
-      { "installed": "Selffont-RoundSC-Black.ttf", "weight": 900 }
-    ]
+      {
+        "installed": "Selffont-RoundSC-Light.ttf",
+        "weight": 300,
+        "from": "Thin"
+      },
+      {
+        "installed": "Selffont-RoundSC-Regular.ttf",
+        "weight": 400,
+        "from": "Light"
+      },
+      {
+        "installed": "Selffont-RoundSC-Medium.ttf",
+        "weight": 500,
+        "from": "DemiLight"
+      },
+      {
+        "installed": "Selffont-RoundSC-Bold.ttf",
+        "weight": 700,
+        "from": "Medium"
+      },
+      {
+        "installed": "Selffont-RoundSC-Black.ttf",
+        "weight": 900,
+        "from": "Bold"
+      }
+    ],
+    "weightBase": "Noto 下移两档:300←Thin,400←Light,500←DemiLight,700←Medium,900←Bold"
   },
   "extras": [],
   "base": {
