@@ -31,4 +31,4 @@ if [ "$copied" -gt 0 ]; then
 else
     ui_print "Selffont: 警告——没找到系统 font*.xml,字体配置未替换(模块只挂载了字体文件)。"
 fi
-ui_print "Selffont: 重启,然后冷启动 LSPosed 勾选过的应用。无开机自动干预。"
+ui_print "Selffont: 重启即生效。无开机自动干预。"

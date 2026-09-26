@@ -14,9 +14,7 @@ import argparse
 import hashlib
 import io
 import json
-import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -87,29 +85,6 @@ def resolve(spec: str | None, kind: str, cache: Path, refresh: bool) -> Path:
     return cache
 
 
-NOTO_WEIGHT = {300: "Thin", 400: "Light", 500: "DemiLight", 700: "Medium", 900: "Bold"}
-NOTO_SOURCE = {"repo": "notofonts/noto-cjk", "dir": "Sans/SubsetOTF/SC"}
-
-
-def generate_noto_font(installed: str, from_style: str, family: str, cache: Path, refresh: bool) -> Path:
-    """用圆角引擎从 Noto Sans SC(OFL)生成单个字重文件,缓存到 cache/<installed>。"""
-    dest = cache / installed
-    if dest.exists() and not refresh:
-        return dest
-    repo = cache / NOTO_SOURCE["repo"].split("/")[1]
-    if not repo.exists():
-        print(f"[generate] sparse clone {NOTO_SOURCE['repo']} …")
-        subprocess.run(["git", "clone", "-q", "--depth", "1", "--filter=blob:none",
-                        "--sparse", f"https://github.com/{NOTO_SOURCE['repo']}", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "sparse-checkout", "set", NOTO_SOURCE["dir"]], check=True)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    src = repo / NOTO_SOURCE["dir"] / f"NotoSansSC-{from_style}.otf"
-    print(f"[generate] {installed} ← Noto {from_style} → {family}")
-    subprocess.run([sys.executable, str(ROOT / "tools" / "round.py"), str(src), str(dest),
-                    "--family", family], check=True)
-    return dest
-
-
 def resolve_font_file(entry: dict, cache: Path, refresh: bool) -> Path:
     """主字体/扩展的单个文件:本地路径(相对路径按仓库根)或 URL,按 installed 名缓存。"""
     dest = cache / entry["installed"]
@@ -122,23 +97,8 @@ def resolve_font_file(entry: dict, cache: Path, refresh: bool) -> Path:
     if dest.exists() and not refresh:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if entry.get("archive") == "7z":
-        import py7zr  # 只在真用到 7z 源时导入
-        archive_path = cache / (entry["installed"] + ".7z")
-        if not archive_path.exists() or refresh:
-            print(f"[extra] 下载 {entry['url']}")
-            fetch(entry["url"], archive_path)
-        with py7zr.SevenZipFile(archive_path) as archive:
-            matches = [n for n in archive.getnames() if n.endswith(entry["pick"])]
-        if len(matches) != 1:
-            raise ValueError(f"7z 包里 {entry['pick']!r} 匹配到 {len(matches)} 个文件")
-        with py7zr.SevenZipFile(archive_path) as archive:
-            archive.extract(targets=matches, path=dest.parent)
-        extracted = dest.parent / matches[0]
-        shutil.move(extracted, dest)
-    else:
-        print(f"[font] 下载 {entry['url']}")
-        fetch(entry["url"], dest)
+    print(f"[font] 下载 {entry['url']}")
+    fetch(entry["url"], dest)
     return dest
 
 
@@ -448,11 +408,8 @@ def build(base: Path, output: Path, revision: str | None = None,
             path = font_override / entry["installed"]
         elif "url" in entry:
             path = resolve_font_file(entry, cache, refresh)
-        elif "source" in primary:
-            path = generate_noto_font(entry["installed"], NOTO_WEIGHT[entry["weight"]],
-                                      primary["family"], cache, refresh)
         else:
-            raise ValueError("主字体无 url 也无 source:用 --font 提供目录,或在 sources.json 配置 url/source")
+            raise ValueError("主字体无 url:用 --font 提供目录,或在 sources.json 配置 url")
         primary_data[entry["installed"]] = Path(path).read_bytes()
     regular_name = next((f["installed"] for f in primary["files"] if f["weight"] == 400),
                         primary["files"][0]["installed"])
@@ -461,7 +418,7 @@ def build(base: Path, output: Path, revision: str | None = None,
     extra_ladder = map_weights(SOURCES["extras"])
     if regular_info["family"] != primary["family"] and not primary.get("rename"):
         warnings.append(f"主字体实际家族名 {regular_info['family']!r} 与配置 {primary['family']!r} 不同;"
-                        "Gecko/Firefox 适配需同步修改 xposed 的 Policy.kt。")
+                        "按家族名请求的取不到,落 sans-serif 回退链。")
     if any(read_font(data)["axes"] for data in primary_data.values()):
         warnings.append("主字体含 fvar 但配置为静态多字重;如需可变轴请设 primary.vf=true。")
 
@@ -480,11 +437,7 @@ def build(base: Path, output: Path, revision: str | None = None,
         extras_data: dict[str, bytes] = {}
         for entry in SOURCES["extras"]:
             try:
-                if "generate" in entry:
-                    path = generate_noto_font(entry["installed"], entry["generate"]["from"],
-                                              entry["generate"]["family"], cache, refresh)
-                else:
-                    path = resolve_font_file(entry, cache, refresh)
+                path = resolve_font_file(entry, cache, refresh)
                 extras_data[entry["installed"]] = Path(path).read_bytes()
             except (OSError, ValueError, subprocess.CalledProcessError) as error:
                 warnings.append(f"扩展字库 {entry['installed']} 获取失败,跳过:{error}")

@@ -307,10 +307,10 @@ def real_sources_config():
     assert all(e["file"] == "Selffont-WenYuanRoundedSCVF.ttf" for e in ladder)
     assert builder.SOURCES["extras"] == []
     module = builder.SOURCES["module"]
-    assert module["id"] == "MFGA" and module["version"].startswith("v2.")
+    assert module["id"] == "MFGA" and module["version"].startswith("v3.")
 
 
-# ---------------------------------------------------------------- 圆角引擎冒烟
+# ---------------------------------------------------------------- 空壳映射剪除
 
 @check
 def blank_prune():
@@ -337,32 +337,6 @@ def blank_prune():
     cmap = TF(io.BytesIO(pruned)).getBestCmap()
     assert 0x41 in cmap and 0x42 not in cmap
     assert set(TF(io.BytesIO(pruned)).getGlyphOrder()) == set(order), "只剪映射,不删字形"
-
-@check
-def round_engine_smoke():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("round", ROOT / "tools" / "round.py")
-    round_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(round_mod)
-    # 100×600 竖条:上下两个自由端头,应各被圆掉(竖边 600 为合格邻居)。
-    builder = FontBuilder(1000, isTTF=True)
-    builder.setupGlyphOrder(["stem"])
-    builder.setupCharacterMap({})
-    pen = TTGlyphPen(None)
-    pen.moveTo((0, 0)), pen.lineTo((0, 600)), pen.lineTo((100, 600)), pen.lineTo((100, 0))
-    pen.closePath()
-    builder.setupGlyf({"stem": pen.glyph()})
-    builder.setupHorizontalMetrics({"stem": (500, 0)})
-    builder.setupHorizontalHeader(ascent=700, descent=-200)
-    builder.setupNameTable({"familyName": "T", "styleName": "R", "uniqueFontIdentifier": "T",
-                            "fullName": "T", "psName": "T"})
-    builder.setupOS2()
-    builder.setupPost()
-    out = io.BytesIO()
-    builder.save(out)
-    font = TTFont(io.BytesIO(out.getvalue()))  # 已是 glyf,无需 CFF 转换
-    made = round_mod.round_glyph(font["glyf"]["stem"], font["glyf"])
-    assert made == 2, f"竖条应圆掉上下两个端头,实际 {made}"
 
 
 # ---------------------------------------------------------------- 模块运行时脚本
@@ -412,18 +386,6 @@ def runtime_scripts():
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout and "unknown" in result.stdout
         assert sh([str(modpath / "action.sh"), "gms", "--confirm"], env).returncode == 2, "已删动作应报用法错"
-
-        logdir = tmp / "log"
-        logdir.mkdir()
-        (logdir / "modules.log").write_text(
-            "07-26 00:00:00.000 LSPosed/Bridge(1)[Other: X]: noise\n"
-            "07-26 00:00:01.000 LSPosed/Bridge(1)[Selffont: Entry]: [attach] api=36\n")
-        result = sh([str(modpath / "action.sh"), "logs"],
-                    {**env, "SELFFONT_LOG_DIR": str(logdir)})
-        assert result.returncode == 0 and "[attach]" in result.stdout and "noise" not in result.stdout
-        result = sh([str(modpath / "action.sh"), "logs"],
-                    {**env, "SELFFONT_LOG_DIR": str(tmp / "absent")})
-        assert result.returncode == 0 and "[logs-missing]" in result.stdout
 
 
 def main():

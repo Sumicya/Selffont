@@ -1,12 +1,12 @@
 {
-  "_comment": "默认来源与提示性哈希——不是闸门。primary = 文渊圆体 v1.010 可变字体(takushun-wu;OFL-1.1,保留字体名 'WenYuan'/'文渊';一个 VF 文件内含 wght 100–900 + ital 真字重,本仓库实测 sha256 来自 v2.3.1 时代 CI 真下载校验)。归一+剪壳均属 OFL 修改,安装副本内部名改为 'Selffont Rounded SC VF'(不以保留名发布改造字体)。后续想做圆头化,把 primary 换回 ChillRoundF(寒蝉全圆体)或圆黑体都只差一个 URL。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
+  "_comment": "默认来源与提示性哈希——不是闸门。primary = 文渊圆体 v1.010 可变字体(takushun-wu;OFL-1.1,保留字体名 'WenYuan'/'文渊';一个 VF 文件内含 wght 100–900 + ital 真字重,本仓库实测 sha256 来自 v2.3.1 时代 CI 真下载校验)。归一+剪壳均属 OFL 修改,安装副本内部名改为 'Selffont Rounded SC VF'(不以保留名发布改造字体)。换寒蝉全圆体/圆黑体都只差一个 URL。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.7.0",
-    "versionCode": "2026092700",
+    "version": "v3.0.0",
+    "versionCode": "2026092730",
     "author": "Selffont",
-    "description": "文渊圆体(可变字体,100–900 真字重)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+    "description": "文渊圆体(可变字体,100–900 真字重)系统字体家族统一(原生 fonts.xml 挂载)。无平台闸门:装在未测试设备上自担风险。"
   },
   "primary": {
     "family": "Selffont Rounded SC VF",

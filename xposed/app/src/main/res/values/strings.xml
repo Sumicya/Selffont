@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="module_name">Selffont</string>
-    <string name="module_description">系统字体家族统一:fonts.xml 原生挂载 + LSPosed 应用内替换。无平台闸门,未测试平台自担风险。</string>
-</resources>
