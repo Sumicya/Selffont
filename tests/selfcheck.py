@@ -295,14 +295,16 @@ def build_end_to_end():
 def real_sources_config():
     """仓库真实 sources.json 的结构自检(不下载)。"""
     primary = builder.SOURCES["primary"]
-    assert primary["family"] == "Selffont Round SC", "主字体应为文渊圆头化派生(OFL 保留名规避)"
-    assert primary["vf"] is False
-    files = primary["files"]
-    assert [f["weight"] for f in files] == [100, 300, 400, 500, 600, 700, 900]
-    assert all("round" in f and f["round"]["url"].startswith("https://") for f in files)
-    ladder = builder.map_weights(files)
+    assert primary["family"] == "Selffont Rounded SC VF", "主字体应为文渊 VF(内部名,规避保留名 WenYuan/文渊)"
+    assert primary["rename"] == "Selffont Rounded SC VF", "归一属 OFL 修改,必须整体改名"
+    assert primary["vf"] is True and len(primary["files"]) == 1
+    f = primary["files"][0]
+    assert f["installed"] == "Selffont-WenYuanRoundedSCVF.ttf" and f["weight"] == 400
+    assert f["sha256"] == "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122"
+    ladder = builder.ladder_for(primary, {"wght": (100, 400, 900)})
     weights = sorted({e["weight"] for e in ladder if not e["italic"]})
     assert weights == [100, 200, 300, 400, 500, 600, 700, 800, 900], weights
+    assert all(e["file"] == "Selffont-WenYuanRoundedSCVF.ttf" for e in ladder)
     assert builder.SOURCES["extras"] == []
     module = builder.SOURCES["module"]
     assert module["id"] == "MFGA" and module["version"].startswith("v2.")
@@ -377,7 +379,7 @@ def runtime_scripts():
         tmp = Path(tmp)
         modpath = tmp / "module"
         (modpath / "system/fonts").mkdir(parents=True)
-        (modpath / "system/fonts/Selffont-RoundSC-Regular.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
         (modpath / "fonts.xml").write_bytes(b"<familyset/>")
         (modpath / "module.prop").write_text("version=v2.2.0\n")
         for script in ("customize.sh", "action.sh"):
@@ -402,11 +404,11 @@ def runtime_scripts():
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 3 份" in result.stdout, "应报告替换数量:" + result.stdout
 
-        (modpath / "system/fonts/Selffont-RoundSC-Regular.ttf").unlink()
+        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").unlink()
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "ABORT" in result.stderr
 
-        (modpath / "system/fonts/Selffont-RoundSC-Regular.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout and "unknown" in result.stdout
         assert sh([str(modpath / "action.sh"), "gms", "--confirm"], env).returncode == 2, "已删动作应报用法错"

@@ -22,8 +22,6 @@ MAX_CAP = 115     # 太长不是笔画端头
 NEIGHBOR = 2.5    # 两侧长边至少是封口长的倍数
 COS_LIMIT = 0.20  # 端点须近垂直(θ≥78°):关节角(如 A 顶点 ~71°)不在此列
 PARALLEL = -0.55  # 两长边平行:dot(d_in, d_out) 须小于此
-TIP_DOT = -0.80   # 出锋尖端:in/out 夹角 <37°(hairpin);内部关节(人字交点 ~90°)不触发
-TIP_R = 20        # 削圆半径(1000upm):撇捺尖锋 → 钝圆收笔(保留笔意,用户定版 R20)
 
 
 def otf_to_glyf(font: TTFont, max_err: float = 1.0) -> None:
@@ -61,83 +59,6 @@ def _unit(a, b):
     dx, dy = b[0] - a[0], b[1] - a[1]
     length = math.hypot(dx, dy)
     return (dx / length, dy / length) if length else (0.0, 0.0), length
-
-
-def round_tips(glyph, glyf_table) -> int:
-    """出锋尖端削圆:撇/捺/钩的尖尾(hairpin 夹角)替换为钝圆头。
-
-    与 round_glyph 的平头检测互补;字形骨架、接口、直角关节一律不动。
-    返回削圆的尖数。
-    """
-    if glyph.isComposite() or glyph.numberOfContours <= 0:
-        return 0
-    coords, ends, flags = glyph.getCoordinates(glyf_table)
-    points = [(float(x), float(y), bool(on)) for (x, y), on in zip(coords, flags)]
-    made = 0
-    new_points_all = []
-    for c in range(len(ends)):
-        start = 0 if c == 0 else ends[c - 1] + 1
-        end = ends[c] + 1
-        contour = points[start:end]
-        n = len(contour)
-        anchors = [i for i in range(n) if contour[i][2]]
-        if n < 4 or len(anchors) < 3:
-            new_points_all.append(contour)
-            continue
-        straight = {}
-        for k, i in enumerate(anchors):
-            j = anchors[(k + 1) % len(anchors)]
-            straight[(i, j)] = _is_straight_wrap(contour, i, j, n)
-        tips = {}
-        for k, i in enumerate(anchors):
-            h = anchors[(k - 1) % len(anchors)]
-            j = anchors[(k + 1) % len(anchors)]
-            if not (straight.get((h, i)) and straight.get((i, j))):
-                continue
-            d_in, len_in = _unit(contour[h], contour[i])
-            d_out, len_out = _unit(contour[i], contour[j])
-            if len_in < TIP_R * 3 or len_out < TIP_R * 3:
-                continue
-            if d_in[0] * d_out[0] + d_in[1] * d_out[1] > TIP_DOT:
-                continue
-            tips[i] = (d_in, d_out)
-        if not tips:
-            new_points_all.append(contour)
-            continue
-        out = []
-        for k, i in enumerate(anchors):
-            j = anchors[(k + 1) % len(anchors)]
-            if i in tips:
-                d_in, d_out = tips[i]
-                vx, vy = contour[i][0], contour[i][1]
-                p1 = (vx + d_in[0] * TIP_R, vy + d_in[1] * TIP_R)
-                p2 = (vx + d_out[0] * TIP_R, vy + d_out[1] * TIP_R)
-                bis, _ = _unit(p1, p2)                   # 角内平分方向(单位向量)
-                dist = TIP_R * 0.9
-                apex = ((p1[0] + p2[0]) / 2 + bis[0] * dist, (p1[1] + p2[1]) / 2 + bis[1] * dist)
-                q1 = (vx + d_in[0] * TIP_R * 0.2, vy + d_in[1] * TIP_R * 0.2)
-                q2 = (vx + d_out[0] * TIP_R * 0.2, vy + d_out[1] * TIP_R * 0.2)
-                out.append(p1 + (True,))
-                out.append(q1 + (False,))
-                out.append(apex + (True,))
-                out.append(q2 + (False,))
-                made += 1
-            else:
-                out.append(contour[i])
-            out.extend(contour[t] for t in (list(range(i + 1, j)) if i < j
-                                            else list(range(i + 1, n)) + list(range(0, j))))
-        new_points_all.append(out)
-    flat, ends_out = [], []
-    for contour in new_points_all:
-        for x, y, on in contour:
-            flat.append((x, y, on))
-        ends_out.append(len(flat) - 1)
-    if made:
-        glyph.coordinates = GlyphCoordinates([(int(round(x)), int(round(y))) for x, y, on in flat])
-        glyph.flags = [bool(on) for _, _, on in flat]
-        glyph.endPtsOfContours = ends_out
-        glyph.recalcBounds(glyf_table)
-    return made
 
 
 def round_glyph(glyph, glyf_table) -> int:
@@ -255,8 +176,7 @@ def _is_straight_wrap(contour, i, j, n):
     return all(not contour[k][2] for k in list(range(i + 1, n)) + list(range(0, j)))
 
 
-WEIGHT_STYLE = {100: "Thin", 300: "Light", 400: "Regular", 500: "Medium",
-                600: "SemiBold", 700: "Bold", 900: "Heavy"}
+WEIGHT_STYLE = {300: "Light", 400: "Regular", 500: "Medium", 700: "Bold", 900: "Black"}
 
 
 def rename_family(font: TTFont, family: str) -> None:
@@ -278,7 +198,7 @@ def rename_family(font: TTFont, family: str) -> None:
         name.setName(legacy_style, 2, pid, eid, lid)
         name.setName(full, 4, pid, eid, lid)
         name.setName(ps, 6, pid, eid, lid)
-        name.setName(f"Selffont Round SC; OFL derivative, see OFL.txt; {full}", 3, pid, eid, lid)
+        name.setName(f"Selffont Round; derived from Noto Sans SC (OFL); {full}", 3, pid, eid, lid)
         if style not in ("Regular", "Bold"):
             name.setName(family, 16, pid, eid, lid)
             name.setName(style, 17, pid, eid, lid)
@@ -300,7 +220,7 @@ def main():
     total = rounded_glyphs = 0
     for name in font.getGlyphOrder():
         glyph = glyf[name]
-        made = round_tips(glyph, glyf) + round_glyph(glyph, glyf)
+        made = round_glyph(glyph, glyf)
         if made:
             rounded_glyphs += 1
             total += made

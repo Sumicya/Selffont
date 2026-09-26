@@ -410,34 +410,6 @@ def prune_blank_mappings(data: bytes) -> tuple[bytes, int]:
     return out.getvalue(), len(pruned)
 
 
-def round_source(entry: dict, family: str, cache: Path, refresh: bool) -> Path:
-    """圆头化来源:下载原始 TTF → 自由端头半圆化(tools/round.py)→ OFL 改名。
-
-    产物按 installed 名缓存;上游 sha256 只是提示,衍生物字形以引擎输出为准。
-    """
-    dest = cache / entry["installed"]
-    if dest.exists() and not refresh:
-        return dest
-    src = resolve_font_file({"installed": entry["installed"] + ".src.ttf",
-                             "url": entry["round"]["url"]}, cache, refresh)
-    import sys
-    sys.path.insert(0, str(ROOT / "tools"))
-    import round as rounder  # noqa: PLC0415(引擎与构建同仓,避免复制几何代码)
-    font = TTFont(src)
-    glyf = font["glyf"]
-    total = rounded = 0
-    for name in font.getGlyphOrder():
-        made = rounder.round_glyph(glyf[name], glyf)
-        if made:
-            rounded += 1
-            total += made
-    rounder.rename_family(font, family)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    font.save(dest)
-    print(f"[round] {entry['installed']}: {total} caps in {rounded} glyphs")
-    return dest
-
-
 def rename_font(data: bytes, family: str) -> bytes:
     """OFL 保留名合规:修改过的主字体在安装副本里整体改名(legacy/typographic 双模型都写)。"""
     font = TTFont(io.BytesIO(data))
@@ -476,8 +448,6 @@ def build(base: Path, output: Path, revision: str | None = None,
             path = font_override / entry["installed"]
         elif "url" in entry:
             path = resolve_font_file(entry, cache, refresh)
-        elif "round" in entry:
-            path = round_source(entry, primary["family"], cache, refresh)
         elif "source" in primary:
             path = generate_noto_font(entry["installed"], NOTO_WEIGHT[entry["weight"]],
                                       primary["family"], cache, refresh)

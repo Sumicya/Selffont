@@ -6,7 +6,7 @@ SKIPUNZIP=0
 command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
 command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 
-[ -s "$MODPATH/system/fonts/Selffont-RoundSC-Regular.ttf" ] ||
+[ -s "$MODPATH/system/fonts/Selffont-WenYuanRoundedSCVF.ttf" ] ||
     abort "Selffont: 缺少主字体。请用 tools/build.py 打包,不要直接压缩仓库。"
 
 # 把本模块的 fonts.xml 放到系统全部 font*.xml 的位置(整份替换 familyset)。
