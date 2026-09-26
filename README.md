@@ -1,10 +1,10 @@
 # Selffont
 
-Android 个人字体模块:**寒蝉半圆体 Chill Round M**(Warren2060,Zen Maru Gothic 骨架的 GB2312 简体优化圆体,半圆弧端头,12,091 码位)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
+Android 个人字体模块:**寒蝉全圆体 Chill Round F**(Warren2060,小杉丸/Kosugi Maru 骨架 + jf-open 粉圆 + 猫啃糖圆混编的简体优化圆体,12,162 码位)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
 
 ## 字体
 
-主字体照搬[寒蝉半圆体](https://github.com/Warren2060/ChillRound)(OFL-1.1)——字形、cmap 逐字节不动,仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。因 OFL 保留字体名 `'ChillRoundM'`,归一(=修改)后的安装副本内部名整体改为 **Chill Round M**,OFL 文本随包附带(`module/licenses/`)。
+主字体照搬[寒蝉全圆体](https://github.com/Warren2060/ChillRound)(OFL-1.1)——字形、cmap 逐字节不动,仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。因 OFL 保留字体名 `'ChillRoundF'`,归一(=修改)后的安装副本内部名整体改为 **Chill Round F**,OFL 文本随包附带(`module/licenses/`)。
 
 单字重 Regular 400,系统 100–900 全阶梯映射到它(单字重家族策略)。
 
