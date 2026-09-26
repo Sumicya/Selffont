@@ -480,6 +480,9 @@ def build(base: Path, output: Path, revision: str | None = None,
             "warnings": warnings,
             "deviceInstallation": "NOT_TESTED",
         }
+        # 兼容旧 CI/脚本的 report 读取(v2.1 前的键名)。
+        report["font"] = report["primary"]
+        report["weightLadder"] = sorted({e["weight"] for e in primary_ladder if not e["italic"]})
 
         output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
