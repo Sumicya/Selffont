@@ -224,7 +224,7 @@ def build_end_to_end():
             with zipfile.ZipFile(output) as archive:
                 members = set(archive.namelist())
                 for expected in ("module.prop", "fonts.xml", "report.json", "LICENSES.md",
-                                 "customize.sh", "action.sh", "webroot/index.html",
+                                 "customize.sh", "action.sh",
                                  "system/fonts/P-Light.ttf", "system/fonts/P-Regular.ttf",
                                  "system/fonts/X-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
                                  "system/fonts/NotoSansPro.otf"):

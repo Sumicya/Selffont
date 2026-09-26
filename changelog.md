@@ -4,7 +4,7 @@
 
 先回退:v2.8.0/v2.8.1 圆头化产线(前分支 PR #2)整条作废,树回到 v2.7.0 基线。再按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)重写:
 
-- **删优先**:`tools/round.py` 实验引擎(不在产线,2.8.x 过度建造的源头);`xposed/` LSPosed 模块整条(Firefox 修复疑似失效,该路径失去存在理由);`generate_noto_font`(v2.2.0 遗留死代码,依赖引擎);7z/py7zr 分支(未声明依赖,从未使用);Noto/ZenMaru 陈旧许可文件。
+- **删优先**:`tools/round.py` 实验引擎(不在产线,2.8.x 过度建造的源头);`xposed/` LSPosed 模块整条(Firefox 修复疑似失效,该路径失去存在理由);`generate_noto_font`(v2.2.0 遗留死代码,依赖引擎);7z/py7zr 分支(未声明依赖,从未使用);Noto/ZenMaru 陈旧许可文件;`webroot/` 单按钮 WebUI(唯一功能 `action.sh diagnose` 已有,UI 冗余);report.json 的 v2.1 前兼容键 `font`/`weightLadder`(唯一消费者 CI 已迁移到 `primary`)。
 - **工具链收敛**:仓库不再有 Kotlin/Gradle/Android SDK——构建链单语言 Python + fontTools;CI 两 job → 一 job(自检 → zip),30 分钟 Android job 消失。
 - **简单化**:打包器清死分支;自检 7 项 → 6 项(去引擎冒烟);`action.sh` 去 LSPosed 日志子命令;README 同步 2.7.0 事实(修正"单字重"/"寒蝉"陈旧段)。
 - **自由化/原生化不变**:无平台闸门,`--font/--base` 任意来源,`fonts.xml` 原生挂载,零 JNI 零开机脚本,零伴侣应用。

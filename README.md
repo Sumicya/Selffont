@@ -16,13 +16,13 @@ Android 个人字体模块:**文渊圆体 v1.010 可变字体**(takushun-wu;OFL,
 tools/build.py       打包器:主字体 + 扩展字库 + 任意基础包 → KSU 模块 zip
 config/sources.json  来源声明(主字体默认源;基础包默认源;可任意替换)
 fonts.xml            系统字体配置输入(MFGA 补充字体引用,不改动)
-module/              装进 zip 的运行时:customize.sh / action.sh / webroot / 许可
+module/              装进 zip 的运行时:customize.sh / action.sh / 许可
 tests/selfcheck.py   一个自检文件:归一、配置生成、端到端构建、脚本行为
 ```
 
 - **原生化**:系统字体走 `fonts.xml` 原生挂载;零 JNI、零开机脚本、零伴侣应用——无 LSPosed,无 APK。
 - **自由化**:无平台闸门;基础包 `--base` 任意本地文件或 URL,哈希只是提示;主字体度量归一在现场从字体读取。
-- **简单化**:打包器 1 个、模块脚本 2 个、WebUI 1 页、CI 1 job、自检 1 文件。没有第二种语言,没有第二条工具链。
+- **简单化**:打包器 1 个、模块脚本 2 个、CI 1 job、自检 1 文件。没有 WebUI,没有第二种语言,没有第二条工具链。
 - **现代化**:Python 3.14 / fontTools 4.66;Kotlin、Gradle、Android SDK 不在仓库里。
 
 ## 构建
