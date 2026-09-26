@@ -295,20 +295,46 @@ def build_end_to_end():
 def real_sources_config():
     """仓库真实 sources.json 的结构自检(不下载)。"""
     primary = builder.SOURCES["primary"]
-    assert primary["family"] == "Chill Round M", "主字体应为寒蝉半圆体(内部名,规避保留名 ChillRoundM)"
-    assert primary["rename"] == "Chill Round M", "归一属 OFL 修改,必须整体改名"
+    assert primary["family"] == "Chill Round F", "主字体应为寒蝉全圆体(内部名,规避保留名 ChillRoundF)"
+    assert primary["rename"] == "Chill Round F", "归一属 OFL 修改,必须整体改名"
     assert primary["vf"] is False and len(primary["files"]) == 1
     f = primary["files"][0]
-    assert f["installed"] == "Selffont-ChillRoundM.ttf" and f["weight"] == 400
-    assert f["sha256"] == "dfd9a757088409cbb017933d057e92991b7f2e0228dd53fafa2a3c27c32bdd04"
+    assert f["installed"] == "Selffont-ChillRoundF.ttf" and f["weight"] == 400
+    assert f["sha256"] == "ebeb471ae9778a26012a18136f8a9ae99450832cd8bb259265684720d60839f0"
     ladder = builder.map_weights(primary["files"])
-    assert all(e["file"] == "Selffont-ChillRoundM.ttf" for e in ladder if not e["italic"])
+    assert all(e["file"] == "Selffont-ChillRoundF.ttf" for e in ladder if not e["italic"])
     assert builder.SOURCES["extras"] == []
     module = builder.SOURCES["module"]
     assert module["id"] == "MFGA" and module["version"].startswith("v2.")
 
 
 # ---------------------------------------------------------------- 圆角引擎冒烟
+
+@check
+def blank_prune():
+    """空壳映射剪除:映射到空白字形的非空白码位被剪,字形集合不动。"""
+    import io
+    from fontTools.fontBuilder import FontBuilder
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib import TTFont as TF
+    fb = FontBuilder(1000, isTTF=True)
+    order = [".notdef", "A", "B"]
+    fb.setupGlyphOrder(order)
+    pen_a = TTGlyphPen(None)
+    pen_a.moveTo((0, 0)); pen_a.lineTo((100, 0)); pen_a.lineTo((100, 100)); pen_a.closePath()
+    fb.setupCharacterMap({0x41: "A", 0x42: "B"})
+    fb.setupGlyf({"A": pen_a.glyph(), "B": TTGlyphPen(None).glyph(),
+                  ".notdef": TTGlyphPen(None).glyph()})
+    fb.setupHorizontalMetrics({g: (500, 0) for g in order})
+    fb.setupHorizontalHeader(ascent=930, descent=-250)
+    fb.setupNameTable({"familyName": "T", "styleName": "Regular"})
+    fb.setupOS2(); fb.setupPost()
+    buf = io.BytesIO(); fb.save(buf)
+    pruned, count = builder.prune_blank_mappings(buf.getvalue())
+    assert count == 1, count  # 唯一码位计数(format4/12 同码位只算一个)
+    cmap = TF(io.BytesIO(pruned)).getBestCmap()
+    assert 0x41 in cmap and 0x42 not in cmap
+    assert set(TF(io.BytesIO(pruned)).getGlyphOrder()) == set(order), "只剪映射,不删字形"
 
 @check
 def round_engine_smoke():
@@ -351,7 +377,7 @@ def runtime_scripts():
         tmp = Path(tmp)
         modpath = tmp / "module"
         (modpath / "system/fonts").mkdir(parents=True)
-        (modpath / "system/fonts/Selffont-ChillRoundM.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-ChillRoundF.ttf").write_bytes(b"font")
         (modpath / "fonts.xml").write_bytes(b"<familyset/>")
         (modpath / "module.prop").write_text("version=v2.2.0\n")
         for script in ("customize.sh", "action.sh"):
@@ -376,11 +402,11 @@ def runtime_scripts():
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 3 份" in result.stdout, "应报告替换数量:" + result.stdout
 
-        (modpath / "system/fonts/Selffont-ChillRoundM.ttf").unlink()
+        (modpath / "system/fonts/Selffont-ChillRoundF.ttf").unlink()
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "ABORT" in result.stderr
 
-        (modpath / "system/fonts/Selffont-ChillRoundM.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-ChillRoundF.ttf").write_bytes(b"font")
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout and "unknown" in result.stdout
         assert sh([str(modpath / "action.sh"), "gms", "--confirm"], env).returncode == 2, "已删动作应报用法错"

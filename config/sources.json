@@ -1,25 +1,25 @@
 {
-  "_comment": "默认来源与提示性哈希——不是闸门。primary = 寒蝉半圆体 ChillRoundM(Warren2060,Zen Maru Gothic 骨架的 GB2312 简体优化圆体,半圆弧端头;OFL-1.1 保留字体名 'ChillRoundM',归一属修改,安装副本内部名改为 'Chill Round M' 并随包附带 OFL 文本)。单字重 Regular 400,系统 100–900 全阶梯映射到它。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
+  "_comment": "默认来源与提示性哈希——不是闸门。primary = 寒蝉全圆体 ChillRoundF(Warren2060;小杉丸/Kosugi Maru 骨架 + jf-open 粉圆 + 猫啃糖圆混编的简体优化圆体;OFL-1.1 保留字体名 'ChillRoundF'/'ChillRoundM',归一属修改,安装副本内部名改 'Chill Round F' 并随包附 OFL 文本)。同系半圆体 ChillRoundM 实测 34% 映射为空壳字形(缺常用字),不可用,已弃。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.5.0",
-    "versionCode": "2026092680",
+    "version": "v2.6.0",
+    "versionCode": "2026092690",
     "author": "Selffont",
-    "description": "寒蝉半圆体(Chill Round M)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+    "description": "寒蝉全圆体(Chill Round F)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
   },
   "primary": {
-    "family": "Chill Round M",
-    "rename": "Chill Round M",
+    "family": "Chill Round F",
+    "rename": "Chill Round F",
     "project": "Warren2060/ChillRound",
-    "version": "main (ChillRoundM v3.x)",
-    "license": "OFL-1.1,保留字体名 'ChillRoundM'/'ChillRoundF';本模块仅归一行度量+内部改名,不占用保留名",
+    "version": "main (ChillRoundF v3.x)",
+    "license": "OFL-1.1,保留字体名 'ChillRoundF'/'ChillRoundM';本模块仅归一行度量+剪除空壳映射+内部改名,不占用保留名",
     "vf": false,
     "files": [
-      { "installed": "Selffont-ChillRoundM.ttf", "weight": 400,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRound/main/ChillRound/ChillRoundM.ttf",
-        "sha256": "dfd9a757088409cbb017933d057e92991b7f2e0228dd53fafa2a3c27c32bdd04",
-        "bytes": 6853208 }
+      { "installed": "Selffont-ChillRoundF.ttf", "weight": 400,
+        "url": "https://raw.githubusercontent.com/Warren2060/ChillRound/main/ChillRound/ChillRoundF.ttf",
+        "sha256": "ebeb471ae9778a26012a18136f8a9ae99450832cd8bb259265684720d60839f0",
+        "bytes": 9611828 }
     ]
   },
   "extras": [],

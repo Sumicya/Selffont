@@ -8,10 +8,10 @@ import java.util.Collections
  */
 object Policy {
     /** 字体的内部家族名(Gecko 首选项按它指名)。 */
-    const val FAMILY = "Chill Round M"
+    const val FAMILY = "Chill Round F"
 
     /** 与 tools/build.py 的主字体 Regular 安装名一致。 */
-    const val FONT_PATH = "/system/fonts/Selffont-ChillRoundM.ttf"
+    const val FONT_PATH = "/system/fonts/Selffont-ChillRoundF.ttf"
 
     private val FAMILIES = listOf("serif", "sans-serif", "monospace", "cursive", "fantasy")
 
@@ -25,7 +25,7 @@ object Policy {
     )
 
     /**
-     * 把寒蝉半圆体前置为 Gecko 各 generic/language 的首选;回退链只前置不清空,
+     * 把寒蝉全圆体前置为 Gecko 各 generic/language 的首选;回退链只前置不清空,
      * emoji 首选项不碰——缺的字(简体缺字、平面二绝版字走 MFGA 补充字体,彩色 emoji 走系统回退)。
      */
     @JvmStatic

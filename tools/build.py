@@ -378,6 +378,38 @@ def render_module_prop(fields: dict) -> str:
 
 # ---------------------------------------------------------------- 组装
 
+def prune_blank_mappings(data: bytes) -> tuple[bytes, int]:
+    """剪除 cmap 里映射到空白字形的码位(字形缺失却声称覆盖,会吞掉回退)。
+
+    空白类码位(空格/制表等 Zs/Zl/Zp)是合法空白,保留;其余空壳剪除,
+    让这些字落到回退链。字形本身一律不动。
+    """
+    font = TTFont(io.BytesIO(data))
+    glyphs = font.getGlyphSet()
+    pruned: set[int] = set()
+    for table in font["cmap"].tables:
+        kept = {}
+        for codepoint, glyph_name in table.cmap.items():
+            char = chr(codepoint)
+            if unicodedata.category(char) in ("Cc", "Cf", "Zs", "Zl", "Zp") or char in "\t\n\r\f\v":
+                kept[codepoint] = glyph_name
+                continue
+            pen = BoundsPen(glyphs)
+            try:
+                glyphs[glyph_name].draw(pen)
+            except Exception:
+                kept[codepoint] = glyph_name
+                continue
+            if pen.bounds is None:
+                pruned.add(codepoint)
+            else:
+                kept[codepoint] = glyph_name
+        table.cmap = kept
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue(), len(pruned)
+
+
 def rename_font(data: bytes, family: str) -> bytes:
     """OFL 保留名合规:修改过的主字体在安装副本里整体改名(legacy/typographic 双模型都写)。"""
     font = TTFont(io.BytesIO(data))
@@ -482,6 +514,14 @@ def build(base: Path, output: Path, revision: str | None = None,
             normalized = {name: rename_font(data, primary["rename"])
                           for name, data in normalized.items()}
             regular_info = read_font(normalized[regular_name])
+        pruned_total = 0
+        for name, data in list(normalized.items()):
+            data, pruned = prune_blank_mappings(data)
+            if pruned:
+                normalized[name] = data
+                pruned_total += pruned
+        if pruned_total:
+            warnings.append(f"主字体剪除空壳映射 {pruned_total} 个(上游声称覆盖但字形空白),这些字落到回退链。")
 
         with Path(base).open("rb") as base_stream:
             base_sha256 = hashlib.file_digest(base_stream, "sha256").hexdigest()
