@@ -1,50 +1,24 @@
 {
-  "_comment": "默认来源与提示性哈希——不是闸门。primary = Zen Maru Gothic 原版(FONTWORKS,OFL 无保留字体名;仅归一行度量,字形零改动)。extras = Selffont Round SC 自研圆体(round.py 从 Noto Sans SC 生成),只兜禅丸缺的简体字,挂在主字体之后。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。",
+  "_comment": "默认来源与提示性哈希——不是闸门。primary = 文渊圆体 v1.010(专业设计的手写风圆体,真机验证过的主字体;可变字体 wght 100–900 + ital,照搬原版,仅归一行度量修角标)。extras 空。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.3.0",
-    "versionCode": "2026092640",
+    "version": "v2.3.1",
+    "versionCode": "2026092650",
     "author": "Selffont",
-    "description": "Zen Maru Gothic 原版主家族(照搬,仅归一行度量修角标)。原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换。无平台闸门。"
+    "description": "文渊圆体 v1.010 系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
   },
   "primary": {
-    "family": "Zen Maru Gothic",
-    "project": "googlefonts/zen-marugothic",
-    "version": "main 2026-09",
-    "license": "OFL-1.1,未声明保留字体名;本模块仅归一行度量",
-    "vf": false,
+    "family": "WenYuan Rounded SC VF",
+    "project": "takushun-wu/WenYuanFonts",
+    "version": "v1.010",
+    "license": "OFL-1.1(保留字体名 'WenYuan'/'文渊';本模块仅归一行度量,不以文渊名发布改造字体)",
+    "vf": true,
     "files": [
-      {
-        "installed": "Selffont-ZenMaruGothic-Light.ttf",
-        "weight": 300,
-        "url": "https://raw.githubusercontent.com/googlefonts/zen-marugothic/main/fonts/ttf/ZenMaruGothic-Light.ttf",
-        "sha256": "c4e6fa10ff517df37cb0c13038fe2813f3c47afe6577fa4a5573200e4508b2c1"
-      },
-      {
-        "installed": "Selffont-ZenMaruGothic-Regular.ttf",
-        "weight": 400,
-        "url": "https://raw.githubusercontent.com/googlefonts/zen-marugothic/main/fonts/ttf/ZenMaruGothic-Regular.ttf",
-        "sha256": "a0c0b53543e0993ae2225e629c833f3d51495ad31720694ff112ce4ce11111ef"
-      },
-      {
-        "installed": "Selffont-ZenMaruGothic-Medium.ttf",
-        "weight": 500,
-        "url": "https://raw.githubusercontent.com/googlefonts/zen-marugothic/main/fonts/ttf/ZenMaruGothic-Medium.ttf",
-        "sha256": "3cfdb98a13571ede17fcc769f5093a97c38b80a7b9b2ab754a26b4d822092b3b"
-      },
-      {
-        "installed": "Selffont-ZenMaruGothic-Bold.ttf",
-        "weight": 700,
-        "url": "https://raw.githubusercontent.com/googlefonts/zen-marugothic/main/fonts/ttf/ZenMaruGothic-Bold.ttf",
-        "sha256": "fe24426b9c8b5523a0146a8235c8674eccf0493af354a53ec895c3596d9eb745"
-      },
-      {
-        "installed": "Selffont-ZenMaruGothic-Black.ttf",
-        "weight": 900,
-        "url": "https://raw.githubusercontent.com/googlefonts/zen-marugothic/main/fonts/ttf/ZenMaruGothic-Black.ttf",
-        "sha256": "6bd74fe76cd39ee0ec18775c3661d845343fb3f6f8fa09a3076638417baf741f"
-      }
+      { "installed": "Selffont-WenYuanRoundedSCVF.ttf", "weight": 400,
+        "url": "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf",
+        "sha256": "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122",
+        "bytes": 48755224 }
     ]
   },
   "extras": [],

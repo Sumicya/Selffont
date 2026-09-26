@@ -1,26 +1,12 @@
 # Selffont
 
-Android 个人字体模块:自研圆体字库 **Selffont Round SC** 接管系统字体家族——**笔画端头圆、接口锐利**,没有资源圆体一类「逢角必圆」流派的接口凸起。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
+Android 个人字体模块:**文渊圆体 v1.010**(专业设计的手写风圆体,可变字体 `wght` 100–900 + `ital`)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
 
-## 自研字库(圆角引擎)
+## 字体
 
-`tools/round.py`:对 Noto Sans SC(OFL)做结构化的「自由端头半圆化」——
+主字体完全照搬[文渊圆体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)(OFL)原版字节——字形、cmap、家族名、可变轴逐字节不动;仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。不以文渊保留名发布任何改造字体。
 
-- 只圆**自由笔画端头**(短直线封口 + 两侧平行长边 + 近垂直交角);T 形接口、L 形拐角、口框一概不动 → **接口处零凸起**
-- CFF → TrueType(cu2qu),字形骨架、字重、字面不变;五字重 30,889 码位(含扩展 A)
-- 衍生字库依 OFL 保留名条款改名 `Selffont Round SC` 发布(`module/licenses/Noto-OFL.txt`)
-
-生成(约 30 秒/字重,仅需 fontTools):
-
-```sh
-git clone -q --depth 1 --filter=blob:none --sparse https://github.com/notofonts/noto-cjk
-git -C noto-cjk sparse-checkout set Sans/SubsetOTF/SC
-mkdir -p build/fonts
-for w in Light Regular Medium Bold Black; do
-  python3 tools/round.py "noto-cjk/Sans/SubsetOTF/SC/NotoSansSC-$w.otf" \
-    "build/fonts/Selffont-RoundSC-$w.ttf" --family "Selffont Round SC"
-done
-```
+仓库另附 `tools/round.py`(圆角引擎实验):对 Noto Sans SC 做「自由端头半圆化」,端头圆、接口锐。作为工具保留,不是交付字体。
 
 ## 模块结构
 
@@ -44,12 +30,12 @@ tests/selfcheck.py   一个自检文件:归一、配置生成、端到端构建�
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
 .venv/bin/python tests/selfcheck.py
-# 一条命令:自动 sparse-clone Noto → 圆角引擎生成五字重 → 度量归一 → 打包。
+# 一条命令:下载并校验文渊原版 → 度量归一 → 打包。
 # 基础包默认源自动下载;--base/--font 可换任意来源:
 .venv/bin/python tools/build.py
 ```
 
-产物 `build/Selffont.zip`。CI(`.github/workflows/build.yml`)同一条流水线:自检 → 自动生成字库 → 模块 zip + 诊断 APK。
+产物 `build/Selffont.zip`。CI(`.github/workflows/build.yml`)同一条流水线:自检 → 下载文渊 → 模块 zip + 诊断 APK。
 
 打包时把主字体安装副本的竖直行度量归一到 Roboto 空壳载体的名义度量(修角标数字偏低/切下沿);只改行度量,字形、cmap、家族名、轴逐字节守卫。字重阶梯按现场读取的 `OS/2` 字重映射(100–900 每档取最近声明字重,并列取较重)。
 

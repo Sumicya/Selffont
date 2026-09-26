@@ -295,13 +295,12 @@ def build_end_to_end():
 def real_sources_config():
     """仓库真实 sources.json 的结构自检(不下载)。"""
     primary = builder.SOURCES["primary"]
-    assert primary["family"] == "Zen Maru Gothic", "主字体应完全照搬禅丸"
-    installed = [f["installed"] for f in primary["files"]]
-    assert installed == [f"Selffont-ZenMaruGothic-{w}.ttf" for w in
-                         ("Light", "Regular", "Medium", "Bold", "Black")]
-    assert all(f["url"].startswith("https://") for f in primary["files"]), "禅丸应直链原版"
-    assert all("sha256" in f for f in primary["files"]), "原版直链应带提示哈希"
-    assert builder.SOURCES["extras"] == [], "照搬:禅丸缺字直接落 MFGA 补充字体,不做自研兜底"
+    assert primary["family"] == "WenYuan Rounded SC VF", "主字体应为文渊圆体"
+    assert primary["vf"] is True and len(primary["files"]) == 1
+    f = primary["files"][0]
+    assert f["installed"] == "Selffont-WenYuanRoundedSCVF.ttf"
+    assert f["sha256"] == "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122"
+    assert builder.SOURCES["extras"] == [], "不做自研兜底"
     module = builder.SOURCES["module"]
     assert module["id"] == "MFGA" and module["version"].startswith("v2.")
 
@@ -349,7 +348,7 @@ def runtime_scripts():
         tmp = Path(tmp)
         modpath = tmp / "module"
         (modpath / "system/fonts").mkdir(parents=True)
-        (modpath / "system/fonts/Selffont-ZenMaruGothic-Regular.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
         (modpath / "fonts.xml").write_bytes(b"<familyset/>")
         (modpath / "module.prop").write_text("version=v2.2.0\n")
         for script in ("customize.sh", "action.sh"):
@@ -374,11 +373,11 @@ def runtime_scripts():
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 3 份" in result.stdout, "应报告替换数量:" + result.stdout
 
-        (modpath / "system/fonts/Selffont-ZenMaruGothic-Regular.ttf").unlink()
+        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").unlink()
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "ABORT" in result.stderr
 
-        (modpath / "system/fonts/Selffont-ZenMaruGothic-Regular.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout and "unknown" in result.stdout
         assert sh([str(modpath / "action.sh"), "gms", "--confirm"], env).returncode == 2, "已删动作应报用法错"
