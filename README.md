@@ -1,10 +1,12 @@
 # Selffont
 
-Android 个人字体模块:**文渊圆体 v1.010**(专业设计的手写风圆体,可变字体 `wght` 100–900 + `ital`)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
+Android 个人字体模块:**寒蝉圆黑体 ChillRoundGothic**(Warren2060,专业设计中文圆体,7 真字重,27,183 码位)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
 
 ## 字体
 
-主字体完全照搬[文渊圆体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)(OFL)原版字节——字形、cmap、家族名、可变轴逐字节不动;仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。不以文渊保留名发布任何改造字体。
+主字体完全照搬[寒蝉圆黑体](https://github.com/Warren2060/ChillRoundGothic)(OFL-1.1,无保留字体名)原版字节——字形、cmap、家族名逐字节不动;仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。
+
+字重阶梯:100–200→ExtraLight、300→Light、400→Regular、500→Medium、600–700→Bold、800–900→Heavy,全部真实字重,无合成。
 
 仓库另附 `tools/round.py`(圆角引擎实验):对 Noto Sans SC 做「自由端头半圆化」,端头圆、接口锐。作为工具保留,不是交付字体。
 

@@ -295,12 +295,21 @@ def build_end_to_end():
 def real_sources_config():
     """仓库真实 sources.json 的结构自检(不下载)。"""
     primary = builder.SOURCES["primary"]
-    assert primary["family"] == "WenYuan Rounded SC VF", "主字体应为文渊圆体"
-    assert primary["vf"] is True and len(primary["files"]) == 1
-    f = primary["files"][0]
-    assert f["installed"] == "Selffont-WenYuanRoundedSCVF.ttf"
-    assert f["sha256"] == "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122"
-    assert builder.SOURCES["extras"] == [], "不做自研兜底"
+    assert primary["family"] == "Chill Round Gothic", "主字体应为寒蝉圆黑体"
+    assert primary["vf"] is False
+    weights = [f["weight"] for f in primary["files"]]
+    assert weights == [200, 300, 400, 500, 700, 900], weights
+    assert all(f["url"].startswith("https://") for f in primary["files"])
+    assert all("sha256" in f for f in primary["files"]), "直链应带提示哈希"
+    ladder = builder.map_weights(primary["files"])
+    got = [next(e["file"] for e in ladder if e["weight"] == w and not e["italic"])
+           for w in range(100, 1000, 100)]
+    assert got == ["Selffont-ChillRoundGothic-ExtraLight.ttf", "Selffont-ChillRoundGothic-ExtraLight.ttf",
+                   "Selffont-ChillRoundGothic-Light.ttf", "Selffont-ChillRoundGothic-Regular.ttf",
+                   "Selffont-ChillRoundGothic-Medium.ttf", "Selffont-ChillRoundGothic-Bold.ttf",
+                   "Selffont-ChillRoundGothic-Bold.ttf", "Selffont-ChillRoundGothic-Heavy.ttf",
+                   "Selffont-ChillRoundGothic-Heavy.ttf"], got
+    assert builder.SOURCES["extras"] == []
     module = builder.SOURCES["module"]
     assert module["id"] == "MFGA" and module["version"].startswith("v2.")
 
@@ -348,7 +357,7 @@ def runtime_scripts():
         tmp = Path(tmp)
         modpath = tmp / "module"
         (modpath / "system/fonts").mkdir(parents=True)
-        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-ChillRoundGothic-Regular.ttf").write_bytes(b"font")
         (modpath / "fonts.xml").write_bytes(b"<familyset/>")
         (modpath / "module.prop").write_text("version=v2.2.0\n")
         for script in ("customize.sh", "action.sh"):
@@ -373,11 +382,11 @@ def runtime_scripts():
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 3 份" in result.stdout, "应报告替换数量:" + result.stdout
 
-        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").unlink()
+        (modpath / "system/fonts/Selffont-ChillRoundGothic-Regular.ttf").unlink()
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "ABORT" in result.stderr
 
-        (modpath / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-ChillRoundGothic-Regular.ttf").write_bytes(b"font")
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout and "unknown" in result.stdout
         assert sh([str(modpath / "action.sh"), "gms", "--confirm"], env).returncode == 2, "已删动作应报用法错"
