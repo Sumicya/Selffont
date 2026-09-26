@@ -1,10 +1,10 @@
 # Selffont
 
-Android 个人字体模块:**寒蝉全圆体 Chill Round F**(Warren2060,小杉丸/Kosugi Maru 骨架 + jf-open 粉圆 + 猫啃糖圆混编的简体优化圆体,12,162 码位)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
+Android 个人字体模块:**文渊圆体 v1.010 可变字体**(takushun-wu;OFL,活跃维护,2026-08 还在发版;一个 VF 文件内含 `wght` 100–900 + `ital` 真字重)接管系统字体家族。原生 `fonts.xml` 挂载 + 可选 LSPosed 应用内替换。
 
 ## 字体
 
-主字体照搬[寒蝉全圆体](https://github.com/Warren2060/ChillRound)(OFL-1.1)——字形、cmap 逐字节不动,仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)。因 OFL 保留字体名 `'ChillRoundF'`,归一(=修改)后的安装副本内部名整体改为 **Chill Round F**,OFL 文本随包附带(`module/licenses/`)。
+主字体照搬[文渊圆体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)(OFL-1.1)——字形、cmap 逐字节不动,仅安装副本做竖直行度量归一(修角标数字偏低/切下沿,构建期字形守卫)+ 空壳映射剪除。因 OFL 保留字体名 `'WenYuan'/'文渊'`,归一(=修改)后的安装副本内部名整体改为 **Selffont Rounded SC VF**,OFL 文本随包附带(`module/licenses/`)。备选:寒蝉全圆体/圆黑体(OFL,小杉丸/思源骨架圆体),换 `config/sources.json` 一个 URL 即可。
 
 单字重 Regular 400,系统 100–900 全阶梯映射到它(单字重家族策略)。
 

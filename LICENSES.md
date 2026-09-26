@@ -41,7 +41,7 @@ Unless otherwise specified, all fonts are licensed under OFL-1.1 by default.
 Primary font usage is unrelated to the MFGA module.
 ## Selffont 新增资源
 
-- 主字体(默认源):[寒蝉全圆体 ChillRoundF](https://github.com/Warren2060/ChillRound)(Warren2060),OFL-1.1,保留字体名 'ChillRoundF'/'ChillRoundM',完整声明随包(`licenses/ChillRound-OFL.txt`)。换任意字体请自行确认其许可。
-- 主字体是外部构建输入,不提交大二进制;安装副本归一行度量、剪除空壳映射、内部名改为 'Chill Round F'(归一与剪除均属 OFL 意义上的修改,不以保留名 'ChillRoundF' 发布改造字体)。
+- 主字体(默认源):[文渊圆体 v1.010 可变字体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)(takushun-wu),OFL-1.1,保留字体名 'WenYuan'/'文渊',完整声明随包(`licenses/WenYuan-OFL.txt`)。换任意字体请自行确认其许可。备选寒蝉全圆体/圆黑体(OFL,`licenses/ChillRound-OFL.txt`)。
+- 主字体是外部构建输入,不提交大二进制;安装副本归一行度量、剪除空壳映射、内部名改为 'Selffont Rounded SC VF'(归一与剪除均属 OFL 意义上的修改,不以保留名 'WenYuan'/'文渊' 发布改造字体)。
 - 同系半圆体 ChillRoundM 实测 34% 映射为空壳字形(常用字缺),不可用,已弃;构建含空壳映射剪除防线。
 - 基础包只提供补充字体资源;各资源遵循其自己的许可,基础包归属说明随包保留。`config/sources.json` 的哈希只是提示,自选来源的许可由你确认。

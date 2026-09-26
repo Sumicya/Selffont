@@ -1,25 +1,25 @@
 {
-  "_comment": "默认来源与提示性哈希——不是闸门。primary = 寒蝉全圆体 ChillRoundF(Warren2060;小杉丸/Kosugi Maru 骨架 + jf-open 粉圆 + 猫啃糖圆混编的简体优化圆体;OFL-1.1 保留字体名 'ChillRoundF'/'ChillRoundM',归一属修改,安装副本内部名改 'Chill Round F' 并随包附 OFL 文本)。同系半圆体 ChillRoundM 实测 34% 映射为空壳字形(缺常用字),不可用,已弃。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
+  "_comment": "默认来源与提示性哈希——不是闸门。primary = 文渊圆体 v1.010 可变字体(takushun-wu;OFL-1.1,保留字体名 'WenYuan'/'文渊';一个 VF 文件内含 wght 100–900 + ital 真字重,本仓库实测 sha256 来自 v2.3.1 时代 CI 真下载校验)。归一+剪壳均属 OFL 修改,安装副本内部名改为 'Selffont Rounded SC VF'(不以保留名发布改造字体)。后续想做圆头化,把 primary 换回 ChillRoundF(寒蝉全圆体)或圆黑体都只差一个 URL。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。--font/--base 可换任意来源。",
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.6.0",
-    "versionCode": "2026092690",
+    "version": "v2.7.0",
+    "versionCode": "2026092700",
     "author": "Selffont",
-    "description": "寒蝉全圆体(Chill Round F)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+    "description": "文渊圆体(可变字体,100–900 真字重)系统字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
   },
   "primary": {
-    "family": "Chill Round F",
-    "rename": "Chill Round F",
-    "project": "Warren2060/ChillRound",
-    "version": "main (ChillRoundF v3.x)",
-    "license": "OFL-1.1,保留字体名 'ChillRoundF'/'ChillRoundM';本模块仅归一行度量+剪除空壳映射+内部改名,不占用保留名",
-    "vf": false,
+    "family": "Selffont Rounded SC VF",
+    "rename": "Selffont Rounded SC VF",
+    "project": "takushun-wu/WenYuanFonts",
+    "version": "v1.010 (2026-08-21)",
+    "license": "OFL-1.1,保留字体名 'WenYuan'/'文渊';本模块归一行度量+剪壳(=修改),安装副本内部改名,不以保留名发布",
+    "vf": true,
     "files": [
-      { "installed": "Selffont-ChillRoundF.ttf", "weight": 400,
-        "url": "https://raw.githubusercontent.com/Warren2060/ChillRound/main/ChillRound/ChillRoundF.ttf",
-        "sha256": "ebeb471ae9778a26012a18136f8a9ae99450832cd8bb259265684720d60839f0",
-        "bytes": 9611828 }
+      { "installed": "Selffont-WenYuanRoundedSCVF.ttf", "weight": 400,
+        "url": "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf",
+        "sha256": "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122",
+        "bytes": 48755224 }
     ]
   },
   "extras": [],
