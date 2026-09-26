@@ -44,11 +44,12 @@ tests/selfcheck.py   一个自检文件:归一、配置生成、端到端构建�
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
 .venv/bin/python tests/selfcheck.py
-# 先生成主字体(见上),再打包(基础包默认源自动下载,也可 --base 换任意):
-.venv/bin/python tools/build.py --font build/fonts
+# 一条命令:自动 sparse-clone Noto → 圆角引擎生成五字重 → 度量归一 → 打包。
+# 基础包默认源自动下载;--base/--font 可换任意来源:
+.venv/bin/python tools/build.py
 ```
 
-产物 `build/Selffont.zip`。CI(`.github/workflows/build.yml`)一条流水线:自检 → 从 Noto 现场生成五字重 → 打包模块 zip + 诊断 APK。
+产物 `build/Selffont.zip`。CI(`.github/workflows/build.yml`)同一条流水线:自检 → 自动生成字库 → 模块 zip + 诊断 APK。
 
 打包时把主字体安装副本的竖直行度量归一到 Roboto 空壳载体的名义度量(修角标数字偏低/切下沿);只改行度量,字形、cmap、家族名、轴逐字节守卫。字重阶梯按现场读取的 `OS/2` 字重映射(100–900 每档取最近声明字重,并列取较重)。
 

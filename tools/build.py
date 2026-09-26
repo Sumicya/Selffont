@@ -16,6 +16,7 @@ import io
 import json
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -84,6 +85,34 @@ def resolve(spec: str | None, kind: str, cache: Path, refresh: bool) -> Path:
         if digest != default["sha256"]:
             warn(f"默认源 {kind} 哈希变化:期望 {default['sha256'][:12]}…,实际 {digest[:12]}…。继续构建。")
     return cache
+
+
+NOTO_WEIGHT = {300: "Light", 400: "Regular", 500: "Medium", 700: "Bold", 900: "Black"}
+
+
+def ensure_generated_primary(primary: dict, cache: Path, refresh: bool) -> Path:
+    """主字体缺省时,从配置的源(默认 Noto Sans SC, OFL)现场生成。需要 git + fontTools。"""
+    out = cache / "fonts"
+    if not refresh and all((out / f["installed"]).exists() for f in primary["files"]):
+        return out
+    repo = cache / primary["source"]["repo"].split("/")[1]
+    if not repo.exists():
+        print(f"[primary] sparse clone {primary['source']['repo']} …")
+        subprocess.run(["git", "clone", "-q", "--depth", "1", "--filter=blob:none",
+                        "--sparse", f"https://github.com/{primary['source']['repo']}", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "sparse-checkout", "set", "Sans/SubsetOTF/SC"], check=True)
+    out.mkdir(parents=True, exist_ok=True)
+    engine = ROOT / "tools" / "round.py"
+    for entry in primary["files"]:
+        dest = out / entry["installed"]
+        if dest.exists() and not refresh:
+            continue
+        style = entry.get("from") or NOTO_WEIGHT[entry["weight"]]
+        src = repo / f"Sans/SubsetOTF/SC/NotoSansSC-{style}.otf"
+        print(f"[primary] 生成 {dest.name} ← {src.name}")
+        subprocess.run([sys.executable, str(engine), str(src), str(dest),
+                        "--family", primary["family"]], check=True)
+    return out
 
 
 def resolve_font_file(entry: dict, cache: Path, refresh: bool) -> Path:
@@ -365,7 +394,9 @@ def build(base: Path, output: Path, revision: str | None = None,
 
     # 主字体文件:现场读取家族/字重/轴;vf 单文件或静态多文件。
     if font_override is None and any("url" not in f for f in primary["files"]):
-        raise ValueError("主字体未配置 url:先按 README 生成 Selffont Round 字库,再用 --font <目录> 构建")
+        if "source" not in primary:
+            raise ValueError("主字体既无 url 也无 source:用 --font 提供目录,或在 sources.json 配置 source")
+        font_override = ensure_generated_primary(primary, cache, refresh)
     primary_data: dict[str, bytes] = {}
     for entry in primary["files"]:
         path = font_override / entry["installed"] if font_override else resolve_font_file(entry, cache, refresh)
