@@ -1,6 +1,0 @@
-fallback:
-  whitelist:
-  blacklist:
-    # This file has a different root/schema, not a familyset.
-    - fonts_customization.xml
-  reverse:

@@ -1,0 +1,27 @@
+{
+  "_comment": "默认来源与提示性哈希——不是闸门。--font/--base 可指向任意本地文件或 URL;哈希不匹配只警告,不拦截。",
+  "module": {
+    "id": "MFGA",
+    "name": "Selffont",
+    "version": "v2.0.0",
+    "versionCode": "2026092600",
+    "author": "Selffont",
+    "description": "系统级字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+  },
+  "font": {
+    "project": "takushun-wu/WenYuanFonts",
+    "version": "v1.010",
+    "family": "WenYuan Rounded SC VF",
+    "installedFile": "Selffont-primary.ttf",
+    "bytes": 48755224,
+    "sha256": "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122",
+    "url": "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf"
+  },
+  "base": {
+    "project": "Numbersf/MakeFontsGreatAgain",
+    "version": "1717180003",
+    "bytes": 153978003,
+    "sha256": "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b",
+    "url": "https://github.com/Numbersf/MakeFontsGreatAgain/releases/download/1717180003/MFGA-SELFUSE-17.0.1.08-31-alpha2.1717180003.zip"
+  }
+}
