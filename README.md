@@ -32,12 +32,12 @@ tests/selfcheck.py   一个自检文件:归一、配置生成、端到端构建�
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
 .venv/bin/python tests/selfcheck.py
-# 一条命令:下载并校验文渊原版 → 度量归一 → 打包。
+# 一条命令:下载并校验寒蝉全圆体 → 剪除空壳映射 → 度量归一+改名 → 打包。
 # 基础包默认源自动下载;--base/--font 可换任意来源:
 .venv/bin/python tools/build.py
 ```
 
-产物 `build/Selffont.zip`。CI(`.github/workflows/build.yml`)同一条流水线:自检 → 下载文渊 → 模块 zip + 诊断 APK。
+产物 `build/Selffont.zip`。CI(`.github/workflows/build.yml`)同一条流水线:自检 → 下载寒蝉全圆体 → 模块 zip + 诊断 APK。
 
 打包时把主字体安装副本的竖直行度量归一到 Roboto 空壳载体的名义度量(修角标数字偏低/切下沿);只改行度量,字形、cmap、家族名、轴逐字节守卫。字重阶梯按现场读取的 `OS/2` 字重映射(100–900 每档取最近声明字重,并列取较重)。
 
