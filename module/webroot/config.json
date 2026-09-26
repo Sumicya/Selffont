@@ -1,6 +1,5 @@
 {
   "title": "Selffont",
-  "icon": "icon.png",
   "exitConfirm": false,
   "backInterceptor": "javascript"
 }
