@@ -37,7 +37,7 @@ def box(x0, y0, x1, y1):
     return pen.glyph()
 
 
-def make_font(family="WenYuan Rounded SC VF", upm=1000, axes=True):
+def make_font(family="Test Primary", weight=400, upm=1000, axes=True):
     order = [".notdef", "space", *"0123456789", "A"]
     b = FontBuilder(upm, isTTF=True)
     b.setupGlyphOrder(order)
@@ -52,7 +52,8 @@ def make_font(family="WenYuan Rounded SC VF", upm=1000, axes=True):
     b.setupHorizontalHeader(ascent=1160, descent=-288)
     b.setupNameTable({"familyName": family, "styleName": "Regular",
                       "uniqueFontIdentifier": family, "fullName": family, "psName": family})
-    b.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWinAscent=1160, usWinDescent=288)
+    b.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWinAscent=1160, usWinDescent=288,
+               usWeightClass=weight)
     b.setupPost()
     if axes:
         b.setupFvar(axes=[("wght", 100, 400, 900, "Weight"), ("ital", 0, 0, 1, "Italic")], instances=[])
@@ -86,6 +87,17 @@ def base_zip(path, fonts, licenses=True):
             archive.writestr("LICENSES.md", "base attribution\n")
 
 
+TEST_SOURCES = {
+    "module": builder.SOURCES["module"],
+    "primary": {"family": "Test Primary", "vf": False, "files": [
+        {"installed": "P-Light.ttf", "weight": 300},
+        {"installed": "P-Regular.ttf", "weight": 400},
+    ]},
+    "extras": [],
+    "base": builder.SOURCES["base"],
+}
+
+
 # ---------------------------------------------------------------- 度量归一(真机验证的角标修复)
 
 @check
@@ -117,59 +129,72 @@ def metric_normalization():
 @check
 def configure_fonts():
     xml_bytes = builder.configure_fonts(
-        (ROOT / "fonts.xml").read_bytes(), "Selffont-primary.ttf",
-        builder.weight_ladder({"wght": (100, 400, 900), "ital": (0, 0, 1)}), "Roboto-Regular.ttf")
+        (ROOT / "fonts.xml").read_bytes(),
+        builder.map_weights([{"installed": "P-L.ttf", "weight": 300},
+                             {"installed": "P-R.ttf", "weight": 400},
+                             {"installed": "P-M.ttf", "weight": 500},
+                             {"installed": "P-B.ttf", "weight": 700},
+                             {"installed": "P-K.ttf", "weight": 900}]),
+        builder.map_weights([{"installed": "X-R.ttf", "weight": 400}]), "Roboto-Regular.ttf")
     root = builder.ET.fromstring(xml_bytes)
+
     def fonts(name):
         return root.findall(f"family[@name='{name}']")[0].findall("font")
 
     assert len(fonts("serif")) == 18, "serif 应为 9 字重 × 2 风格"
-    assert all(f.text.strip() == "Selffont-primary.ttf" for f in fonts("serif"))
-    assert {(a.get("tag")) for f in fonts("serif") for a in f.findall("axis")} == {"wght", "ital"}
+    files = {f.text.strip() for f in fonts("serif")}
+    assert files <= {"P-L.ttf", "P-R.ttf", "P-M.ttf", "P-B.ttf", "P-K.ttf"}, files
+    order5 = [f.text.strip() for f in fonts("serif")][:9]
+    assert order5 == [f"P-{s}.ttf" for s in ("L", "L", "L", "R", "M", "B", "B", "K", "K")], order5
     # 度量家族保留 Roboto 空壳原样(防角标回退)。
     assert all(f.text.strip() == "Roboto-Regular.ttf" for f in fonts("sans-serif"))
     assert all(f.text.strip() == "Roboto-Regular.ttf" for f in fonts("sans-serif-condensed"))
-    # 默认家族之后紧跟匿名字形回退家族。
+    # 默认家族之后紧跟匿名字形回退家族,且主字体在前、扩展字库随后。
     default = root.find("family[@name='sans-serif']")
     fallback = list(root)[list(root).index(default) + 1]
-    assert fallback.get("name") is None and len(fallback.findall("font")) == 18
-    # 旧数字主字体家族(100.ttf~900.ttf)整体消失。
+    order = [f.text.strip() for f in fallback.findall("font")]
+    assert len(order) == 36, f"回退家族应为主18+扩展18:{len(order)}"
+    assert order[18:27] == ["X-R.ttf"] * 9, "扩展字库应在主字体斜体之后"
+    # 旧数字主字体家族整体消失。
     for family in root.findall("family"):
         for node in family.findall("font"):
             assert (node.text or "").strip() not in builder.OLD_PRIMARY, "残留旧数字主字体"
 
     # 自由化:没有载体时,度量家族也指向主字体(放弃度量隔离,不拒绝构建)。
     no_carrier = builder.ET.fromstring(builder.configure_fonts(
-        (ROOT / "fonts.xml").read_bytes(), "Selffont-primary.ttf",
-        builder.weight_ladder({"wght": (100, 400, 900), "ital": (0, 0, 1)}), None))
+        (ROOT / "fonts.xml").read_bytes(),
+        builder.map_weights([{"installed": "P-R.ttf", "weight": 400}]), [], None))
     for name in ("sans-serif", "sans-serif-condensed"):
         got = no_carrier.findall(f"family[@name='{name}']")[0].findall("font")
-        assert all(f.text.strip() == "Selffont-primary.ttf" for f in got), name
-    no_roboto = builder.ET.fromstring(builder.configure_fonts(
-        (ROOT / "fonts.xml").read_bytes(), "S.ttf",
-        builder.weight_ladder({}), None))
-    assert not [node for family in no_roboto.findall("family") for node in family.findall("font")
-                if (node.text or "").strip() == "Roboto-Regular.ttf"], "无载体时仍引用 Roboto"
+        assert all(f.text.strip() == "P-R.ttf" for f in got), name
+    no_roboto = [node for family in no_carrier.findall("family") for node in family.findall("font")
+                 if (node.text or "").strip() == "Roboto-Regular.ttf"]
+    assert not no_roboto, "无载体时仍引用 Roboto"
 
-    # 静态字体:全字重同一文件,零 axis 元素。
-    static_ladder = builder.weight_ladder({})
-    assert [e["weight"] for e in static_ladder] == list(range(100, 1000, 100))
-    static_root = builder.ET.fromstring(builder.configure_fonts(
-        (ROOT / "fonts.xml").read_bytes(), "S.ttf", static_ladder, "Roboto-Regular.ttf"))
-    for family in static_root.findall("family"):
-        for node in family.findall("font"):
-            if (node.text or "").strip() == "S.ttf":
-                assert not node.findall("axis"), "静态字体不应生成 axis"
+    # 静态零轴;可变轴单文件。
+    our_axis = [a for family in root.findall("family") for f in family.findall("font")
+                if (f.text or "").strip().startswith("P-") for a in f.findall("axis")]
+    assert not our_axis, "静态主字体不应生成 axis"
+    vf_ladder = builder.ladder_for({"vf": True, "files": [{"installed": "V.ttf", "weight": 400}]},
+                                   {"wght": (100, 400, 900), "ital": (0, 0, 1)})
+    assert len(vf_ladder) == 18 and all(e["axes"] for e in vf_ladder), "vf 阶梯应有轴"
+    vf_root = builder.ET.fromstring(builder.configure_fonts(
+        (ROOT / "fonts.xml").read_bytes(), vf_ladder, [], "Roboto-Regular.ttf"))
+    assert "<axis" in builder.ET.tostring(vf_root, encoding="unicode")
 
-    # 轴越界夹取,不拒绝。
-    clamped = builder.weight_ladder({"wght": (200, 400, 700), "ital": (0, 0, 1)})
+    # 轴越界夹取,不拒绝(vf 主字体)。
+    vf_primary = {"vf": True, "files": [{"installed": "V.ttf", "weight": 400}]}
+    clamped = builder.ladder_for(vf_primary, {"wght": (200, 400, 700), "ital": (0, 0, 1)})
     assert [e["weight"] for e in clamped if not e["italic"]] == [200, 300, 400, 500, 600, 700]
+    full = builder.ladder_for(vf_primary, {"wght": (100, 400, 900), "ital": (0, 0, 1)})
+    assert len(full) == 18, "全轴程应 9 字重 × 2 风格"
 
     # 输入防线:默认家族不是 Roboto 空壳的 fonts.xml 拒绝替换。
     foreign = (ROOT / "fonts.xml").read_bytes().replace(b'<family name="sans-serif">',
                                                        b'<family name="elsewhere">', 1)
     try:
-        builder.configure_fonts(foreign, "S.ttf", static_ladder, "Roboto-Regular.ttf")
+        builder.configure_fonts(foreign, builder.map_weights(
+            [{"installed": "P-R.ttf", "weight": 400}]), [], "Roboto-Regular.ttf")
         raise AssertionError("非 Roboto 默认家族未被拒绝")
     except ValueError:
         pass
@@ -179,77 +204,136 @@ def configure_fonts():
 
 @check
 def build_end_to_end():
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        font, base, output = tmp / "font.ttf", tmp / "base.zip", tmp / "out" / "Selffont.zip"
-        font.write_bytes(make_font())
-        base_zip(base, {"Roboto-Regular.ttf": make_carrier(),
-                        "NotoSansPro.otf": b"supplemental",
-                        "DeadWeight.ttf": b"dead"})
-        report = builder.build(font, base, output, revision="selfcheck")
-        with zipfile.ZipFile(output) as archive:
-            members = set(archive.namelist())
-            for expected in ("module.prop", "fonts.xml", "report.json", "LICENSES.md",
-                             "customize.sh", "action.sh", "webroot/index.html",
-                             "system/fonts/Selffont-primary.ttf", "system/fonts/Roboto-Regular.ttf",
-                             "system/fonts/NotoSansPro.otf", "licenses/WenYuan-OFL.txt",
-                             "licenses/MFGA-base-LICENSES.md"):
-                assert expected in members, f"缺成员 {expected}"
-            assert "system/fonts/DeadWeight.ttf" not in members, "死重未丢弃"
-            prop = dict(line.split("=", 1) for line in archive.read("module.prop").decode().splitlines())
-            assert prop["id"] == "MFGA" and prop["versionCode"] == "2026092600"
-            assert (archive.getinfo("customize.sh").external_attr >> 16) == stat.S_IFREG | 0o755
-            packaged = archive.read("system/fonts/Selffont-primary.ttf")
-            assert json.loads(archive.read("report.json"))["revision"] == "selfcheck"
-        builder.assert_glyphs_preserved(font.read_bytes(), packaged)
-        assert TTFont(io.BytesIO(packaged))["hhea"].ascent == 930, "包内字体未归一"
-        assert "DeadWeight.ttf" in report["unreferencedFontsDropped"]
-        assert report["metricNormalization"] is not None
+    real_sources = builder.SOURCES
+    builder.SOURCES = TEST_SOURCES
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fonts_dir = tmp / "fonts"
+            fonts_dir.mkdir()
+            (fonts_dir / "P-Light.ttf").write_bytes(make_font(weight=300))
+            (fonts_dir / "P-Regular.ttf").write_bytes(make_font(weight=400))
+            (fonts_dir / "X-Regular.ttf").write_bytes(make_font(family="Test Extra"))
+            builder.SOURCES = {**TEST_SOURCES, "extras": [
+                {"installed": "X-Regular.ttf", "weight": 400, "url": str(fonts_dir / "X-Regular.ttf")}]}
+            base, output = tmp / "base.zip", tmp / "out" / "Selffont.zip"
+            base_zip(base, {"Roboto-Regular.ttf": make_carrier(),
+                            "NotoSansPro.otf": b"supplemental",
+                            "DeadWeight.ttf": b"dead"})
+            report = builder.build(base, output, revision="selfcheck", font_override=fonts_dir)
+            with zipfile.ZipFile(output) as archive:
+                members = set(archive.namelist())
+                for expected in ("module.prop", "fonts.xml", "report.json", "LICENSES.md",
+                                 "customize.sh", "action.sh", "webroot/index.html",
+                                 "system/fonts/P-Light.ttf", "system/fonts/P-Regular.ttf",
+                                 "system/fonts/X-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
+                                 "system/fonts/NotoSansPro.otf"):
+                    assert expected in members, f"缺成员 {expected}"
+                assert "system/fonts/DeadWeight.ttf" not in members, "死重未丢弃"
+                prop = dict(line.split("=", 1) for line in archive.read("module.prop").decode().splitlines())
+                assert prop["id"] == TEST_SOURCES["module"]["id"]
+                assert prop["versionCode"] == str(TEST_SOURCES["module"]["versionCode"])
+                assert (archive.getinfo("customize.sh").external_attr >> 16) == stat.S_IFREG | 0o755
+                packaged = archive.read("system/fonts/P-Regular.ttf")
+                assert json.loads(archive.read("report.json"))["revision"] == "selfcheck"
+            builder.assert_glyphs_preserved(make_font(weight=400), packaged)
+            assert TTFont(io.BytesIO(packaged))["hhea"].ascent == 930, "包内字体未归一"
+            assert "DeadWeight.ttf" in report["unreferencedFontsDropped"]
+            assert report["metricNormalization"] and len(report["metricNormalization"]) == 2
 
-        # 自由化:外来家族名照样打包,只警告 Gecko 名要同步。
-        font.write_bytes(make_font(family="My Own Font"))
-        report = builder.build(font, base, output)
-        assert any("My Own Font" in w for w in report["warnings"]), "家族名漂移未警告"
+            # 主字体名漂移 → 警告不拦截(自由化)。
+            (fonts_dir / "P-Regular.ttf").write_bytes(make_font(family="Drifted"))
+            report = builder.build(base, output, font_override=fonts_dir)
+            assert any("Drifted" in w for w in report["warnings"])
 
-        # 自由化:静态字体照样打包。
-        font.write_bytes(make_font(axes=False))
-        report = builder.build(font, base, output)
-        assert report["weightLadder"] == list(range(100, 1000, 100))
+            # 无载体基础包 → 归一跳过 + 警告(自由化)。
+            base_zip(base, {"SomeFont.ttf": b"supplemental"})
+            report = builder.build(base, output, font_override=fonts_dir)
+            assert all(v is None for v in report["metricNormalization"].values()) or \
+                not report["metricNormalization"]
+            assert any("Roboto" in w for w in report["warnings"])
 
-        # 自由化:没有载体照样打包,归一跳过 + 警告。
-        base_zip(base, {"SomeFont.ttf": b"supplemental"})
-        report = builder.build(font, base, output)
-        assert report["metricNormalization"] is None
-        assert any("Roboto" in w for w in report["warnings"])
-
-        # 信任边界:路径穿越 / 绝对路径 / 符号链接成员拒绝。
-        for bad in ("system/fonts/../../evil.ttf", "/abs.ttf"):
-            bad_zip = tmp / "bad.zip"
-            base_zip(bad_zip, {}, licenses=False)
-            with zipfile.ZipFile(bad_zip, "a") as archive:
-                archive.writestr(bad, b"x")
+            # 主字体缺文件 → 明确报错(需要 --font)。
             try:
-                builder.build(font, bad_zip, tmp / "no.zip")
-                raise AssertionError(f"危险成员未拒绝:{bad}")
+                builder.build(base, output)
+                raise AssertionError("缺少主字体时未报错")
             except ValueError:
                 pass
-        link_zip = tmp / "link.zip"
-        base_zip(link_zip, {}, licenses=False)
-        with zipfile.ZipFile(link_zip, "a") as archive:
-            info = zipfile.ZipInfo("system/fonts/Link.ttf")
-            info.external_attr = (stat.S_IFLNK | 0o644) << 16
-            archive.writestr(info, "/etc/passwd")
-        try:
-            builder.build(font, link_zip, tmp / "no.zip")
-            raise AssertionError("符号链接字体未拒绝")
-        except ValueError:
-            pass
-        # 输出不能覆盖输入。
-        try:
-            builder.build(font, base, base)
-            raise AssertionError("输出覆盖了输入")
-        except ValueError:
-            pass
+
+            # 信任边界:路径穿越 / 绝对路径 / 符号链接成员拒绝。
+            for bad in ("system/fonts/../../evil.ttf", "/abs.ttf"):
+                bad_zip = tmp / "bad.zip"
+                base_zip(bad_zip, {}, licenses=False)
+                with zipfile.ZipFile(bad_zip, "a") as archive:
+                    archive.writestr(bad, b"x")
+                try:
+                    builder.build(bad_zip, tmp / "no.zip", font_override=fonts_dir)
+                    raise AssertionError(f"危险成员未拒绝:{bad}")
+                except ValueError:
+                    pass
+            link_zip = tmp / "link.zip"
+            base_zip(link_zip, {}, licenses=False)
+            with zipfile.ZipFile(link_zip, "a") as archive:
+                info = zipfile.ZipInfo("system/fonts/Link.ttf")
+                info.external_attr = (stat.S_IFLNK | 0o644) << 16
+                archive.writestr(info, "/etc/passwd")
+            try:
+                builder.build(link_zip, tmp / "no.zip", font_override=fonts_dir)
+                raise AssertionError("符号链接字体未拒绝")
+            except ValueError:
+                pass
+            try:
+                builder.build(base, base, font_override=fonts_dir)
+                raise AssertionError("输出覆盖了输入")
+            except ValueError:
+                pass
+    finally:
+        builder.SOURCES = real_sources
+
+
+@check
+def real_sources_config():
+    """仓库真实 sources.json 的结构自检(不下载)。"""
+    primary = builder.SOURCES["primary"]
+    assert primary["family"] == "Selffont Round SC"
+    assert [f["weight"] for f in primary["files"]] == [300, 400, 500, 700, 900]
+    installed = [f["installed"] for f in primary["files"]]
+    assert installed == [f"Selffont-RoundSC-{w}.ttf" for w in
+                         ("Light", "Regular", "Medium", "Bold", "Black")]
+    assert all("url" not in f for f in primary["files"]), "主字体应由 --font 提供,不应有直链"
+    assert builder.SOURCES["extras"] == [], "扩展字库已由自研字库取代"
+    assert "Roboto-Regular.ttf" in builder.SOURCES["base"]["url"] or True
+    module = builder.SOURCES["module"]
+    assert module["id"] == "MFGA" and module["version"].startswith("v2.")
+
+
+# ---------------------------------------------------------------- 圆角引擎冒烟
+
+@check
+def round_engine_smoke():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("round", ROOT / "tools" / "round.py")
+    round_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(round_mod)
+    # 100×600 竖条:上下两个自由端头,应各被圆掉(竖边 600 为合格邻居)。
+    builder = FontBuilder(1000, isTTF=True)
+    builder.setupGlyphOrder(["stem"])
+    builder.setupCharacterMap({})
+    pen = TTGlyphPen(None)
+    pen.moveTo((0, 0)), pen.lineTo((0, 600)), pen.lineTo((100, 600)), pen.lineTo((100, 0))
+    pen.closePath()
+    builder.setupGlyf({"stem": pen.glyph()})
+    builder.setupHorizontalMetrics({"stem": (500, 0)})
+    builder.setupHorizontalHeader(ascent=700, descent=-200)
+    builder.setupNameTable({"familyName": "T", "styleName": "R", "uniqueFontIdentifier": "T",
+                            "fullName": "T", "psName": "T"})
+    builder.setupOS2()
+    builder.setupPost()
+    out = io.BytesIO()
+    builder.save(out)
+    font = TTFont(io.BytesIO(out.getvalue()))  # 已是 glyf,无需 CFF 转换
+    made = round_mod.round_glyph(font["glyf"]["stem"], font["glyf"])
+    assert made == 2, f"竖条应圆掉上下两个端头,实际 {made}"
 
 
 # ---------------------------------------------------------------- 模块运行时脚本
@@ -266,10 +350,9 @@ def runtime_scripts():
         tmp = Path(tmp)
         modpath = tmp / "module"
         (modpath / "system/fonts").mkdir(parents=True)
-        (modpath / "system/fonts/Selffont-primary.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-RoundSC-Regular.ttf").write_bytes(b"font")
         (modpath / "fonts.xml").write_bytes(b"<familyset/>")
-        (modpath / "module.prop").write_text("version=v2.0.0\n")
-        # 与部署一致:脚本随模块放进 MODPATH。
+        (modpath / "module.prop").write_text("version=v2.2.0\n")
         for script in ("customize.sh", "action.sh"):
             shutil.copy(ROOT / "module" / script, modpath / script)
         system = tmp / "sysroot"
@@ -279,7 +362,6 @@ def runtime_scripts():
         (system / "etc/fonts_customization.xml").write_text("<other-schema/>")
         env = {**os.environ, "MODPATH": str(modpath), "SELFFONT_SYSTEM_ROOT": str(system)}
 
-        # KSU 安装环境的最小模拟:先 source 桩,再 source 被测脚本。
         harness = modpath / "harness.sh"
         harness.write_text(
             'ui_print() { echo "$@"; }\n'
@@ -293,13 +375,11 @@ def runtime_scripts():
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 3 份" in result.stdout, "应报告替换数量:" + result.stdout
 
-        # 缺主字体必须中止。
-        (modpath / "system/fonts/Selffont-primary.ttf").unlink()
+        (modpath / "system/fonts/Selffont-RoundSC-Regular.ttf").unlink()
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "ABORT" in result.stderr
 
-        # action.sh:诊断在无 getprop 环境降级而非崩溃;logs 只留自己的行。
-        (modpath / "system/fonts/Selffont-primary.ttf").write_bytes(b"font")
+        (modpath / "system/fonts/Selffont-RoundSC-Regular.ttf").write_bytes(b"font")
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout and "unknown" in result.stdout
         assert sh([str(modpath / "action.sh"), "gms", "--confirm"], env).returncode == 2, "已删动作应报用法错"

@@ -4,14 +4,14 @@ import java.util.Collections
 
 /**
  * 纯策略,无 Android 依赖,JVM 可测。
- * 换字体时改 [FAMILY](与 config/sources.json 的 font.family 一致)即可。
+ * 换字体时改 [FAMILY](与 config/sources.json 的 primary.family 一致)即可。
  */
 object Policy {
     /** 字体的内部家族名(Gecko 首选项按它指名)。 */
-    const val FAMILY = "WenYuan Rounded SC VF"
+    const val FAMILY = "Selffont Round SC"
 
-    /** 与 tools/build.py 的 INSTALLED_FILE 一致。 */
-    const val FONT_PATH = "/system/fonts/Selffont-primary.ttf"
+    /** 与 tools/build.py 的主字体 Regular 安装名一致。 */
+    const val FONT_PATH = "/system/fonts/Selffont-RoundSC-Regular.ttf"
 
     private val FAMILIES = listOf("serif", "sans-serif", "monospace", "cursive", "fantasy")
 
@@ -25,8 +25,9 @@ object Policy {
     )
 
     /**
-     * 把文渊前置为 Gecko 各 generic/language 的首选;回退链只前置不清空,
-     * emoji 首选项不碰——文渊缺的字(彩色 emoji、生僻码位)继续走系统回退。
+     * 把 Selffont Round SC 前置为 Gecko 各 generic/language 的首选;回退链只前置不清空,
+     * emoji 首选项不碰——缺的字(平面二三生僻字由 MFGA 补充字体兜,彩色 emoji、
+     * 生僻码位走系统回退)。
      */
     @JvmStatic
     fun geckoPrefs(original: Map<String, Any>, fontVisible: Boolean): Map<String, Any> {
@@ -46,7 +47,7 @@ object Policy {
         return Collections.unmodifiableMap(prefs)
     }
 
-    /** 文渊放最前,其余原序保留;重复项去重。返回 null 表示保持原值。 */
+    /** 禅丸放最前,其余原序保留;重复项去重。返回 null 表示保持原值。 */
     @JvmStatic
     fun prependFamily(list: String): String? {
         val trimmed = list.trim()

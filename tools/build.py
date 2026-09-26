@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Selffont 打包器:任意主字体 + 任意基础包 ZIP → 一个 KSU 模块。
+"""Selffont 打包器:任意主字体 + 扩展字库 + 任意基础包 ZIP → 一个 KSU 模块。
 
 自由化:config/sources.json 里的哈希和版本只是默认下载源的提示,不是闸门。
---font / --base 接受本地文件或 URL;家族名、可变轴、行度量全部现场从字体读取。
-唯一硬性要求:主字体必须能被 fontTools 解析。度量归一(真机验证过的角标修复)
-在基础包里找不到 Roboto 空壳载体时自动跳过并警告,而不是拒绝构建。
+主字体/扩展/基础包都接受本地路径或 URL;家族名、字重、行度量全部现场从字体读取。
+唯一硬性要求:主字体能被 fontTools 解析。度量归一(真机验证的角标修复)在基础包
+里找不到 Roboto 空壳载体时自动跳过并警告,而不是拒绝构建。
 
-原字体字形、cmap、家族名、可变轴逐字节保留;只改安装副本的竖直行度量。
+原字体字形、cmap、家族名、可变轴逐字节保留;只改主字体安装副本的竖直行度量。
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import io
 import json
+import shutil
 import stat
 import sys
 import tempfile
@@ -31,8 +32,6 @@ SOURCES = json.loads((ROOT / "config/sources.json").read_text())
 FONTS_XML = ROOT / "fonts.xml"
 MODULE_DIR = ROOT / "module"
 
-INSTALLED_FILE = SOURCES["font"]["installedFile"]      # zip 内的主字体安装名
-DEFAULT_FAMILY = SOURCES["font"]["family"]             # Xposed Policy.kt 内置的 Gecko 家族名
 INPUT_CARRIER = "Roboto-Regular.ttf"                   # 输入 fonts.xml 引用的度量空壳
 PRIMARY_NAMES = {"sans-serif", "sans-serif-condensed", "serif", "monospace",
                  "serif-monospace", "casual", "cursive"}
@@ -41,6 +40,7 @@ OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}
 MAX_FONT_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 DOWNLOAD_CAP = 512 * 1024 * 1024
+WEIGHTS = range(100, 1000, 100)
 
 
 def warn(message: str) -> None:
@@ -55,7 +55,7 @@ def sha256(data: bytes) -> str:
 
 def fetch(url: str, destination: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "Selffont-builder"})
-    with urllib.request.urlopen(request, timeout=120) as response, destination.open("wb") as out:
+    with urllib.request.urlopen(request, timeout=300) as response, destination.open("wb") as out:
         remaining = DOWNLOAD_CAP
         while remaining:
             chunk = response.read(min(1024 * 1024, remaining))
@@ -79,11 +79,43 @@ def resolve(spec: str | None, kind: str, cache: Path, refresh: bool) -> Path:
     print(f"[{kind}] 下载 {spec}")
     fetch(spec, cache)
     if spec == default["url"] and default.get("sha256"):
+        # ponytail: 默认源哈希只警告不拦截——来源自由是特性;升级:想要严格模式再加 --strict。
         digest = hashlib.file_digest(cache.open("rb"), "sha256").hexdigest()
         if digest != default["sha256"]:
-            # ponytail: 默认源哈希只警告不拦截——来源自由是特性;升级:想要严格模式再加 --strict。
             warn(f"默认源 {kind} 哈希变化:期望 {default['sha256'][:12]}…,实际 {digest[:12]}…。继续构建。")
     return cache
+
+
+def resolve_font_file(entry: dict, cache: Path, refresh: bool) -> Path:
+    """主字体/扩展的单个文件:本地路径(相对路径按仓库根)或 URL,按 installed 名缓存。"""
+    dest = cache / entry["installed"]
+    url = entry.get("url")
+    if url is None:
+        raise ValueError(f"{entry['installed']} 无 url:主字体请用 --font 提供生成产物(见 README 生成步骤)")
+    if not url.startswith(("http://", "https://")):
+        path = Path(url)
+        return path if path.is_absolute() else ROOT / path
+    if dest.exists() and not refresh:
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if entry.get("archive") == "7z":
+        import py7zr  # 只在真用到 7z 源时导入
+        archive_path = cache / (entry["installed"] + ".7z")
+        if not archive_path.exists() or refresh:
+            print(f"[extra] 下载 {entry['url']}")
+            fetch(entry["url"], archive_path)
+        with py7zr.SevenZipFile(archive_path) as archive:
+            matches = [n for n in archive.getnames() if n.endswith(entry["pick"])]
+        if len(matches) != 1:
+            raise ValueError(f"7z 包里 {entry['pick']!r} 匹配到 {len(matches)} 个文件")
+        with py7zr.SevenZipFile(archive_path) as archive:
+            archive.extract(targets=matches, path=dest.parent)
+        extracted = dest.parent / matches[0]
+        shutil.move(extracted, dest)
+    else:
+        print(f"[font] 下载 {entry['url']}")
+        fetch(entry["url"], dest)
+    return dest
 
 
 # ---------------------------------------------------------------- 字体读取(现场检测)
@@ -100,7 +132,7 @@ def layout_metrics(font: TTFont) -> dict:
 
 
 def read_font(data: bytes) -> dict:
-    """家族名、轴、覆盖全部现场读取;解析失败才失败。"""
+    """家族名、字重、轴、覆盖全部现场读取;解析失败才失败。"""
     with TTFont(io.BytesIO(data)) as font:
         axes = {a.axisTag: (a.minValue, a.defaultValue, a.maxValue) for a in font["fvar"].axes} if "fvar" in font else {}
         cmap = font.getBestCmap() or {}
@@ -115,6 +147,7 @@ def read_font(data: bytes) -> dict:
                     digits[character] = pen.bounds
         return {
             "family": font["name"].getDebugName(1) or "",
+            "weight": font["OS/2"].usWeightClass,
             "axes": axes,
             "mappedCodepoints": len(cmap),
             "layoutMetrics": layout_metrics(font),
@@ -122,19 +155,34 @@ def read_font(data: bytes) -> dict:
         }
 
 
-def weight_ladder(axes: dict) -> list[dict]:
-    """把字体实际支持的轴翻译成 fonts.xml 的字重阶梯;越界值夹取,不报错。"""
-    wght, ital = axes.get("wght"), axes.get("ital")
-    if not wght:
-        # 静态字体:同一文件声明全字重,粗体/斜体由系统合成。
-        return [{"weight": w, "italic": False, "axes": []} for w in range(100, 1000, 100)]
-    lo, _, hi = wght
-    # ponytail: 轴越界值夹取不拒绝;升级:需要字体审计模式时改为报错。
-    weights = [w for w in range(100, 1000, 100) if lo <= w <= hi] or [round(min(max(400, lo), hi))]
-    ladder = [{"weight": w, "italic": False, "axes": [("wght", w)]} for w in weights]
-    if ital and ital[0] <= 1 <= ital[2]:
-        ladder += [{"weight": w, "italic": True, "axes": [("wght", w), ("ital", 1)]} for w in weights]
-    return ladder
+def map_weights(files: list[dict]) -> list[dict]:
+    """静态多字重:100..900 每档映射到最近声明字重(并列取较重)。"""
+    if not files:
+        return []
+    return [
+        {"weight": weight, "italic": italic, "file": min(
+            files, key=lambda f: (abs(f["weight"] - weight), -f["weight"]))["installed"]}
+        for italic in (False, True) for weight in WEIGHTS
+    ]
+
+
+def ladder_for(primary: dict, axes: dict | None = None) -> list[dict]:
+    """主字体阶梯。vf=True 走可变轴(单文件);否则静态多文件映射。"""
+    if primary.get("vf"):
+        # ponytail: 轴越界值夹取不拒绝;升级:需要字体审计模式时改为报错。
+        filename = primary["files"][0]["installed"]
+        weights = list(WEIGHTS)
+        if axes and "wght" in axes:
+            lo, _, hi = axes["wght"]
+            weights = [w for w in WEIGHTS if lo <= w <= hi] or [round(min(max(400, lo), hi))]
+        upright = [{"weight": w, "italic": False, "file": filename,
+                    "axes": [("wght", w)]} for w in weights]
+        ital = axes.get("ital") if axes else None
+        if ital and ital[0] <= 1 <= ital[2]:
+            upright += [{"weight": w, "italic": True, "file": filename,
+                         "axes": [("wght", w), ("ital", 1)]} for w in weights]
+        return upright
+    return map_weights(primary["files"])
 
 
 # ---------------------------------------------------------------- 度量归一(真机验证,保留)
@@ -234,22 +282,21 @@ def assert_glyphs_preserved(original: bytes, packaged: bytes) -> None:
 
 # ---------------------------------------------------------------- fonts.xml 生成
 
-def primary_fonts(family: ET.Element, filename: str, ladder: list[dict]) -> None:
+def family_fonts(family: ET.Element, ladder: list[dict]) -> None:
     for child in list(family):
         if child.tag == "font":
             family.remove(child)
     for entry in ladder:
         node = ET.SubElement(family, "font", weight=str(entry["weight"]),
                              style="italic" if entry["italic"] else "normal")
-        node.text = filename
-        for tag, value in entry["axes"]:
+        node.text = entry["file"]
+        for tag, value in entry.get("axes", []):
             ET.SubElement(node, "axis", tag=tag, stylevalue=str(value))
 
 
-def configure_fonts(source: bytes, filename: str, ladder: list[dict], carrier: str | None) -> bytes:
-    """把主字体注入全部主家族;空壳度量家族保留原位;旧数字主字体整体替换。"""
-    if "/" in filename or "\\" in filename:
-        raise ValueError("安装文件名必须是纯文件名")
+def configure_fonts(source: bytes, primary_ladder: list[dict],
+                    extra_ladder: list[dict], carrier: str | None) -> bytes:
+    """主字体接管全部主家族;空壳度量家族保留原位;旧数字主字体整体替换。"""
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
     root = ET.fromstring(source, parser=parser)
     if root.tag != "familyset":
@@ -263,11 +310,12 @@ def configure_fonts(source: bytes, filename: str, ladder: list[dict], carrier: s
             root.remove(family)
         elif name in METRIC_FAMILIES and files == {INPUT_CARRIER}:
             if carrier is None:
-                primary_fonts(family, filename, ladder)
+                family_fonts(family, primary_ladder)
         elif name in PRIMARY_NAMES or files & OLD_PRIMARY:
-            primary_fonts(family, filename, ladder)
+            family_fonts(family, primary_ladder)
     fallback = ET.Element("family")
-    primary_fonts(fallback, filename, ladder)
+    family_fonts(fallback, primary_ladder + extra_ladder)
+    # 匿名字形回退:主字体在前,扩展字库随后,再往后是输入配置里的其他补充家族。
     root.insert(list(root).index(default) + 1, fallback)
     ET.indent(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
@@ -306,22 +354,33 @@ def render_module_prop(fields: dict) -> str:
 
 # ---------------------------------------------------------------- 组装
 
-def build(font: Path, base: Path, output: Path, revision: str | None = None, refresh: bool = False) -> dict:
-    font, output = Path(font), Path(output)
-    if output.resolve() in (font.resolve(), Path(base).resolve()):
+def build(base: Path, output: Path, revision: str | None = None,
+          font_override: Path | None = None, refresh: bool = False) -> dict:
+    base, output = Path(base), Path(output)
+    if output.resolve() == base.resolve():
         raise ValueError("输出不能覆盖输入")
-    original_data = font.read_bytes()
-    info = read_font(original_data)
+    cache = ROOT / "build/cache"
+    primary = SOURCES["primary"]
     warnings: list[str] = []
-    if not info["axes"]:
-        warnings.append("主字体不是可变字体:按静态字体打包,全部字重指向同一文件,由系统合成。")
-    if info["family"] != DEFAULT_FAMILY:
-        warnings.append(f"家族名 {info['family']!r} 与 Xposed 模块内置的 {DEFAULT_FAMILY!r} 不同;"
-                        "Gecko/Firefox 适配需同步修改 xposed 的 Policy.kt。")
-    ladder = weight_ladder(info["axes"])
 
-    with Path(base).open("rb") as base_stream:
-        base_sha256 = hashlib.file_digest(base_stream, "sha256").hexdigest()
+    # 主字体文件:现场读取家族/字重/轴;vf 单文件或静态多文件。
+    if font_override is None and any("url" not in f for f in primary["files"]):
+        raise ValueError("主字体未配置 url:先按 README 生成 Selffont Round 字库,再用 --font <目录> 构建")
+    primary_data: dict[str, bytes] = {}
+    for entry in primary["files"]:
+        path = font_override / entry["installed"] if font_override else resolve_font_file(entry, cache, refresh)
+        primary_data[entry["installed"]] = Path(path).read_bytes()
+    regular_name = next((f["installed"] for f in primary["files"] if f["weight"] == 400),
+                        primary["files"][0]["installed"])
+    regular_info = read_font(primary_data[regular_name])
+    primary_ladder = ladder_for(primary, regular_info.get("axes"))
+    extra_ladder = map_weights(SOURCES["extras"])
+    if regular_info["family"] != primary["family"]:
+        warnings.append(f"主字体实际家族名 {regular_info['family']!r} 与配置 {primary['family']!r} 不同;"
+                        "Gecko/Firefox 适配需同步修改 xposed 的 Policy.kt。")
+    if any(read_font(data)["axes"] for data in primary_data.values()):
+        warnings.append("主字体含 fvar 但配置为静态多字重;如需可变轴请设 primary.vf=true。")
+
     with zipfile.ZipFile(base) as source:
         members = font_members(source)
         names = {PurePosixPath(e.filename).name for e in members}
@@ -333,31 +392,58 @@ def build(font: Path, base: Path, output: Path, revision: str | None = None, ref
         else:
             warnings.append("基础包没有 Roboto 度量空壳;跳过度量归一,角标/通知计数可能回退到修复前表现。")
 
-        if carrier:
-            font_data, metric_report = normalize_metrics(original_data, carrier["layoutMetrics"])
-            assert_glyphs_preserved(original_data, font_data)
-        else:
-            font_data, metric_report = original_data, None
-        xml = configure_fonts(FONTS_XML.read_bytes(), INSTALLED_FILE, ladder, INPUT_CARRIER if carrier else None)
+        # 扩展字库:解析到实际字节;缺源警告不拦截。
+        extras_data: dict[str, bytes] = {}
+        for entry in SOURCES["extras"]:
+            try:
+                path = resolve_font_file(entry, cache, refresh)
+                extras_data[entry["installed"]] = Path(path).read_bytes()
+            except (OSError, ValueError) as error:
+                warnings.append(f"扩展字库 {entry['installed']} 获取失败,跳过:{error}")
+        extra_ladder = [e for e in extra_ladder
+                        if e["file"] in extras_data or e["file"] in primary_data]
+        xml = configure_fonts((FONTS_XML).read_bytes(), primary_ladder, extra_ladder,
+                              INPUT_CARRIER if carrier else None)
 
         referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
-        bundled = [e for e in members
-                   if PurePosixPath(e.filename).name in referenced or PurePosixPath(e.filename).name == INSTALLED_FILE]
+        bundled = [e for e in members if PurePosixPath(e.filename).name in referenced]
         dropped = sorted({PurePosixPath(e.filename).name for e in members} - {PurePosixPath(e.filename).name for e in bundled})
-        unbundled = sorted(referenced - names - {INSTALLED_FILE} - (set() if carrier else {INPUT_CARRIER}))
+        unbundled = sorted(referenced - names - set(primary_data) - set(extras_data) - (set() if carrier else {INPUT_CARRIER}))
         if unbundled:
             warnings.append(f"fonts.xml 引用但基础包没有的字体(不打包):{', '.join(unbundled)}")
 
+        # 主字体逐文件度量归一 + 字形守卫;扩展字库不归一(只兜生僻字,不进紧凑槽)。
+        normalized: dict[str, bytes] = {}
+        metric_reports = {}
+        if carrier:
+            for name, data in primary_data.items():
+                normalized[name], metric_reports[name] = normalize_metrics(data, carrier["layoutMetrics"])
+                assert_glyphs_preserved(data, normalized[name])
+        else:
+            normalized = primary_data
+
+        with Path(base).open("rb") as base_stream:
+            base_sha256 = hashlib.file_digest(base_stream, "sha256").hexdigest()
         report = {
             "revision": revision or "UNSPECIFIED",
-            "font": {**{k: v for k, v in info.items() if k != "digitInkY"},
-                     "sha256": sha256(original_data),
-                     "normalizedSha256": sha256(font_data)},
-            "metricNormalization": metric_report,
+            "primary": {
+                "family": regular_info["family"],
+                "configuredFamily": primary["family"],
+                "files": [{"installed": name, "sha256": sha256(primary_data[name]),
+                           "normalizedSha256": sha256(normalized[name]),
+                           **{k: v for k, v in read_font(primary_data[name]).items()
+                              if k in ("family", "weight", "mappedCodepoints")}}
+                          for name in primary_data],
+                "weightMap": {str(w): [e["file"] for e in primary_ladder
+                                       if e["weight"] == w and not e["italic"]][0] for w in WEIGHTS},
+            },
+            "extras": [{"installed": name, "sha256": sha256(data),
+                        **{k: v for k, v in read_font(data).items() if k in ("family", "weight")}}
+                       for name, data in extras_data.items()],
+            "metricNormalization": metric_reports,
             "androidMetricsCarrier": carrier,
             "baseArchiveSha256": base_sha256,
-            "weightLadder": [entry["weight"] for entry in ladder if not entry["italic"]],
-            "bundledSupplementalFonts": sorted({PurePosixPath(e.filename).name for e in bundled} - {INSTALLED_FILE}),
+            "bundledSupplementalFonts": sorted({PurePosixPath(e.filename).name for e in bundled}),
             "unreferencedFontsDropped": dropped,
             "unbundledFontReferences": unbundled,
             "warnings": warnings,
@@ -369,9 +455,11 @@ def build(font: Path, base: Path, output: Path, revision: str | None = None, ref
             staged = Path(tmp) / "module.zip"
             with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as dest:
                 for entry in bundled:
-                    if PurePosixPath(entry.filename).name != INSTALLED_FILE:
-                        dest.writestr(entry.filename, source.read(entry))
-                dest.writestr(f"system/fonts/{INSTALLED_FILE}", font_data)
+                    dest.writestr(entry.filename, source.read(entry))
+                for name, data in normalized.items():
+                    dest.writestr(f"system/fonts/{name}", data)
+                for name, data in extras_data.items():
+                    dest.writestr(f"system/fonts/{name}", data)
                 dest.writestr("fonts.xml", xml)
                 dest.writestr("module.prop", render_module_prop(SOURCES["module"]))
                 for path in sorted(MODULE_DIR.rglob("*")):
@@ -389,13 +477,16 @@ def build(font: Path, base: Path, output: Path, revision: str | None = None, ref
             with zipfile.ZipFile(staged) as final:
                 if final.testzip():
                     raise ValueError("输出 zip 损坏")
-                if sha256(final.read(f"system/fonts/{INSTALLED_FILE}")) != sha256(font_data):
-                    raise ValueError("包内主字体与归一结果不一致")
+                for name, data in normalized.items():
+                    if sha256(final.read(f"system/fonts/{name}")) != sha256(data):
+                        raise ValueError(f"包内主字体与归一结果不一致:{name}")
             staged.replace(output)
     print(f"\n构建完成:{output}")
-    print(f"  家族 {info['family']!r}  字重 {report['weightLadder']}  补充字体 {len(report['bundledSupplementalFonts'])} 个")
-    if metric_report:
-        print(f"  度量归一 hhea {metric_report['original']['hhea']} → {metric_report['normalized']['hhea']}")
+    print(f"  主字体 {regular_info['family']!r}({len(primary_data)} 文件)  扩展 {len(extras_data)} 文件  "
+          f"补充 {len(report['bundledSupplementalFonts'])} 个")
+    if metric_reports:
+        first = next(iter(metric_reports.values()))
+        print(f"  度量归一 hhea {first['original']['hhea']} → {first['normalized']['hhea']}(共 {len(metric_reports)} 文件)")
     else:
         print("  度量归一:跳过(无载体)")
     for message in warnings:
@@ -405,15 +496,14 @@ def build(font: Path, base: Path, output: Path, revision: str | None = None, ref
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--font", help="主字体 TTF/OTF:本地路径或 URL(默认按 sources.json 下载并缓存)")
     parser.add_argument("--base", help="基础包 ZIP:本地路径或 URL(默认按 sources.json 下载并缓存)")
+    parser.add_argument("--font", type=Path, help="主字体目录:按 sources.json 的 installed 名提供文件,跳过下载")
     parser.add_argument("--output", type=Path, default=ROOT / "build/Selffont.zip")
     parser.add_argument("--revision", help="记入 report.json 的来源版本")
     parser.add_argument("--refresh", action="store_true", help="忽略缓存重新下载默认源")
     args = parser.parse_args()
-    font = resolve(args.font, "font", ROOT / "build/cache/font.ttf", args.refresh)
-    base = resolve(args.base, "base", ROOT / "build/cache/base.zip", args.refresh)
-    build(font, base, args.output, args.revision, args.refresh)
+    build(resolve(args.base, "base", ROOT / "build/cache/base.zip", args.refresh),
+          args.output, args.revision, args.font, args.refresh)
 
 
 if __name__ == "__main__":

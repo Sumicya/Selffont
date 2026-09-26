@@ -1,26 +1,35 @@
 {
-  "_comment": "默认来源与提示性哈希——不是闸门。--font/--base 可指向任意本地文件或 URL;哈希不匹配只警告,不拦截。",
+  "_comment": "默认来源与提示性哈希——不是闸门。primary 无 url:主字体由 tools/round.py 从 Noto Sans SC(OFL)生成(README 生成步骤),构建时 --font <目录> 提供。extras 为空:自研字库已覆盖简体全部常用与扩展A;绝版符号由基础包补充。base 只提供 fonts.xml 引用的补充字体与 Roboto 度量空壳。",
   "module": {
     "id": "MFGA",
     "name": "Selffont",
-    "version": "v2.0.0",
-    "versionCode": "2026092600",
+    "version": "v2.2.0",
+    "versionCode": "2026092620",
     "author": "Selffont",
-    "description": "系统级字体家族统一(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
+    "description": "Selffont Round SC 自研圆体(端头圆·接口锐)接管系统主家族(原生 fonts.xml 挂载 + 可选 LSPosed 应用内替换)。无平台闸门:装在未测试设备上自担风险。"
   },
-  "font": {
-    "project": "takushun-wu/WenYuanFonts",
-    "version": "v1.010",
-    "family": "WenYuan Rounded SC VF",
-    "installedFile": "Selffont-primary.ttf",
-    "bytes": 48755224,
-    "sha256": "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122",
-    "url": "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf"
+  "primary": {
+    "family": "Selffont Round SC",
+    "derivedFrom": "Noto Sans SC (SIL OFL 1.1, Reserved Font Name 'Noto')——衍生物已改名发布",
+    "engine": "tools/round.py",
+    "source": {
+      "repo": "notofonts/noto-cjk",
+      "ref": "main",
+      "files": "Sans/SubsetOTF/SC/NotoSansSC-{Light,Regular,Medium,Bold,Black}.otf"
+    },
+    "vf": false,
+    "files": [
+      { "installed": "Selffont-RoundSC-Light.ttf", "weight": 300 },
+      { "installed": "Selffont-RoundSC-Regular.ttf", "weight": 400 },
+      { "installed": "Selffont-RoundSC-Medium.ttf", "weight": 500 },
+      { "installed": "Selffont-RoundSC-Bold.ttf", "weight": 700 },
+      { "installed": "Selffont-RoundSC-Black.ttf", "weight": 900 }
+    ]
   },
+  "extras": [],
   "base": {
     "project": "Numbersf/MakeFontsGreatAgain",
     "version": "1717180003",
-    "bytes": 153978003,
     "sha256": "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b",
     "url": "https://github.com/Numbersf/MakeFontsGreatAgain/releases/download/1717180003/MFGA-SELFUSE-17.0.1.08-31-alpha2.1717180003.zip"
   }
