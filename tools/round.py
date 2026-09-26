@@ -176,7 +176,8 @@ def _is_straight_wrap(contour, i, j, n):
     return all(not contour[k][2] for k in list(range(i + 1, n)) + list(range(0, j)))
 
 
-WEIGHT_STYLE = {300: "Light", 400: "Regular", 500: "Medium", 700: "Bold", 900: "Black"}
+WEIGHT_STYLE = {100: "Thin", 300: "Light", 400: "Regular", 500: "Medium",
+                600: "SemiBold", 700: "Bold", 900: "Heavy"}
 
 
 def rename_family(font: TTFont, family: str) -> None:
