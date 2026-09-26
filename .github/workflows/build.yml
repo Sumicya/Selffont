@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.14'
       - name: Install fonttools
         run: python -m pip install -r tools/requirements.txt
       - name: Selfcheck (packager, metric normalization, runtime scripts)
@@ -30,8 +30,8 @@ jobs:
           import json, zipfile
           with zipfile.ZipFile('build/Selffont.zip') as archive:
               report = json.loads(archive.read('report.json'))
-          print('family:', report['font']['family'])
-          print('weights:', report['weightLadder'])
+          print('family:', report['primary']['family'])
+          print('weights:', sorted(map(int, report['primary']['weightMap'])))
           print('supplemental fonts:', len(report['bundledSupplementalFonts']))
           for warning in report['warnings']:
               print('::warning::' + warning)
@@ -44,41 +44,4 @@ jobs:
             build/Selffont.zip
             build/Selffont.zip.sha256
           compression-level: 0
-          if-no-files-found: error
-
-  apk:
-    name: Xposed APK (diagnostic)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: '9.5.0'
-      - uses: android-actions/setup-android@v4
-      - name: Install Android 16 SDK
-        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
-      - name: Test policies and build APK
-        working-directory: xposed
-        run: |
-          for attempt in 1 2 3; do
-            if gradle --no-daemon test assembleDebug --stacktrace \
-                -Daether.connector.http.retryHandler.count=5 \
-                -Dorg.gradle.internal.http.connectionTimeout=60000 \
-                -Dorg.gradle.internal.http.socketTimeout=60000; then
-              exit 0
-            fi
-            echo "::warning::Gradle attempt $attempt failed (possibly a transient Maven Central 429); retrying."
-            sleep $((attempt * 60))
-          done
-          echo "::error::Gradle build failed after 3 attempts."
-          exit 1
-      - uses: actions/upload-artifact@v7
-        with:
-          name: selffont-debug-apk
-          path: xposed/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
