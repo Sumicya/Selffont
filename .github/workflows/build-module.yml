@@ -4,11 +4,7 @@ on:
   push:
     paths:
       - 'config/**'
-      - 'tools/prepare_base.py'
-      - 'tools/prepare_font.py'
-      - 'tools/build_module.py'
-      - 'tools/font_config.py'
-      - 'tools/requirements.txt'
+      - 'tools/**'
       - 'script/**'
       - 'lang/**'
       - 'webroot/**'
@@ -36,30 +32,24 @@ jobs:
       - name: Download and verify pinned original resources
         run: |
           python tools/prepare_font.py
+          python tools/prepare_reference.py
           python tools/prepare_base.py
+      - name: Extend the faces and apply the handwriting patches
+        run: |
+          python tools/extend_font.py --reference chillroundm --charset gb2312
+          python tools/edit_font.py
+          python tools/glyph_audit.py --font-dir build/fonts-patched | tail -3
       - name: Assemble and verify KSU font module
         run: |
           python tools/build_module.py --base build/base/MFGA-base.zip --revision "$GITHUB_SHA"
-          python - <<'PY'
-          import json
-          import pathlib
-          import zipfile
-          with zipfile.ZipFile('build/Selffont-phase1.zip') as archive:
-              report = archive.read('module-report.json')
-              pathlib.Path('build/module-report.json').write_bytes(report)
-              data = json.loads(report)
-              print('Primary font SHA-256:', data['primaryFont']['sha256'])
-              print('Supplemental font count:', data['supplementalFontCount'])
-              print('Unbundled configuration references:', len(data['unbundledFontReferences']))
-              print('Device installation and rendering: NOT TESTED')
-          PY
-          (cd build && sha256sum Selffont-phase1.zip > Selffont-phase1.zip.sha256)
+          python tools/module_report.py --module build/Selffont-Maru.zip
+          (cd build && sha256sum Selffont-Maru.zip > Selffont-Maru.zip.sha256)
       - uses: actions/upload-artifact@v7
         with:
-          name: selffont-phase1-font-module
+          name: selffont-maru-font-module
           path: |
-            build/Selffont-phase1.zip
-            build/Selffont-phase1.zip.sha256
+            build/Selffont-Maru.zip
+            build/Selffont-Maru.zip.sha256
             build/module-report.json
           compression-level: 0
           if-no-files-found: error
