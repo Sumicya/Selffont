@@ -1,5 +1,22 @@
 # 更新日志
 
+## v4.1.0(2026-09-28)· 火狐做回来:换成原生机制,断言换成数据
+
+火狐那条路 v3.0.0 被删掉时留了句话——"Firefox 修复疑似失效"。重新查 Gecko 源码后,那句和 README 的"不可修"都站不住:问题不在能不能修,在于**Gecko 根本不按 `fonts.xml` 选家族**。
+
+**机制**(源码为证,不是猜):
+
+- Gecko 的字体清单在 Android API 29+ 走 `AndroidSystemFontIterator`(即系统字体配置),但**选谁**取决于 `font.name-list.*` 里硬编码的家族名(`all.js` 的 Android 段)。所以只要家族名对得上,文渊就会被用;对不上,Gecko 就回到自己的默认名单——字体装了也没用。
+- 老实现(LSPosed hook `RuntimeSettings.getPrefsMap`)做的正是这件事,但代价是整条 Kotlin/Gradle/APK/LSPosed 产线;而且 `font.name.*`/`font.name-list.*` 名单它动了,`font.name-list.emoji` 它没碰。
+- GeckoView **官方**支持从 `/data/local/tmp/<包名>-geckoview-config.yaml` 读启动首选项,前提是该应用是 Android「调试应用」(`Settings.Global.DEBUG_APP`)。root 一句 `am set-debug-app --persistent org.mozilla.firefox` 就能给它这个身份,重启后仍在。
+
+**改动**:
+
+- `module/firefox.sh`(约 40 行 shell):`install` 写配置 + 设调试应用 + 回读 `debug_app` 验证;`remove` 全撤。零 Kotlin、零 Gradle、零 APK、零 LSPosed——同一条 LSPosed 路线在 v3.0.0 被判定"过度建造",现在用原生机制把能力做回来,而不是把代码搬回来。
+- `module/geckoview-config.yaml`:默认名单逐条抄自 Gecko 的 `all.js`(Android 段),每条**前置**文渊、后面原样保留。emoji 也进了名单(Gecko 对 emoji 表现字符优先选带彩色的字体,前置不会挡彩色 emoji)——旧实现当年特意回避的那一项,现在有源码依据地补上。
+- 断言换成数据:`report.json` 新增 `emojiCoverage`,逐个读包内字体 cmap 的 emoji 段上限并排序。以后再出现"只有火狐豆腐",先看包里到底有没有那个码位,再谈 Gecko。README 删掉"属 Gecko 限制,不可修"。
+- 自检 6 → 7 项:`firefox_bridge` 盯着"只前置不截断"和 install/remove 行为(`am`/`settings` 用 PATH 替身),家族名与 `tools/build.py` 的 `RENAME` 不一致时报错。
+
 ## v4.0.0(2026-09-28)· 四化重写 III(ponytail):先提问,再删
 
 按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)逐件质问现有设计,砍到只剩"设备真的需要的文件 + 让它们正确所需的代码"。留下的没变:原生 `fonts.xml` 挂载、无平台闸门、任意来源、真机验证的度量归一。
