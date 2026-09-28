@@ -216,6 +216,7 @@ def build_end_to_end():
         with zipfile.ZipFile(output) as archive:
             members = set(archive.namelist())
             for expected in ("module.prop", "fonts.xml", "report.json", "LICENSES.md", "customize.sh", "action.sh",
+                             "firefox.sh", "geckoview-config.yaml",
                              "system/fonts/P-Light.ttf", "system/fonts/P-Regular.ttf",
                              "system/fonts/Roboto-Regular.ttf", "system/fonts/NotoSansPro.otf",
                              "licenses/MFGA-base-LICENSES.md"):
@@ -232,6 +233,7 @@ def build_end_to_end():
         assert sorted(map(int, report["primary"]["weightMap"])) == list(builder.WEIGHTS)
         assert report["metricCarrier"]["file"] == builder.CARRIER
         assert report["unreferencedFontsDropped"] == ["DeadWeight.ttf"]
+        assert report["emojiCoverage"] == [], "测试字体没有 emoji 段覆盖"
         assert len(report["metricNormalization"]) == 2 and "P-Regular.ttf" in xml
 
         # 归一 + 改名之后:轮廓/cmap/轴不动,家族名换成 RENAME。
@@ -291,6 +293,48 @@ def build_end_to_end():
             pass
 
 
+# ---------------------------------------------------------------- 火狐(Gecko)接入
+
+@check
+def firefox_bridge():
+    """火狐接入:首选项只前置不清空 + install/remove 行为(PATH 上的 am/settings 用替身)。"""
+    config = (ROOT / "module/geckoview-config.yaml").read_text(encoding="utf-8")
+    assert config.startswith("prefs:\n") or "\nprefs:\n" in config, "Gecko 配置必须只有 prefs 段"
+    lines = [line.strip() for line in config.splitlines() if line.strip().startswith("font.name-list.")]
+    assert len(lines) >= 20, f"首选项太少:{len(lines)}"
+    for line in lines:  # 只前置:每条都必须以本模块家族名开头,后面原样保留 Gecko 默认回退链
+        value = line.split(":", 1)[1].strip().strip('"')
+        assert value.startswith(builder.RENAME + ","), f"未前置或家族名不符:{line}"
+    assert config.count('"') % 2 == 0, "引号不配对"
+    assert builder.emoji_ceiling({0x41: "A", 0x1F600: "grin"}) == 0x1F600
+    assert builder.emoji_ceiling({0x41: "A"}) is None
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        shim, calls = tmp / "bin", tmp / "calls"
+        shim.mkdir()
+        (shim / "am").write_text(f'#!/bin/sh\necho "am $*" >> {calls}\n')
+        (shim / "settings").write_text('#!/bin/sh\necho "$SELFFONT_TEST_DEBUG_APP"\n')
+        for name in ("am", "settings"):
+            (shim / name).chmod(0o755)
+        data = tmp / "local/tmp"
+        env = {**os.environ, "PATH": f"{shim}:{os.environ['PATH']}", "FIREFOX_DATA_DIR": str(data),
+               "FIREFOX_PACKAGE": "org.mozilla.firefox", "SELFFONT_TEST_DEBUG_APP": "org.mozilla.firefox"}
+
+        result = sh([str(ROOT / "module/firefox.sh")], env)
+        assert result.returncode == 0, result.stderr
+        target = data / "org.mozilla.firefox-geckoview-config.yaml"
+        assert target.read_bytes() == (ROOT / "module/geckoview-config.yaml").read_bytes(), "配置没原样落地"
+        assert "am set-debug-app --persistent org.mozilla.firefox" in calls.read_text()
+        assert "debug_app = org.mozilla.firefox" in result.stdout, result.stdout
+
+        result = sh([str(ROOT / "module/firefox.sh"), "remove"], env)
+        assert result.returncode == 0 and not target.exists(), result
+        assert "am clear-debug-app" in calls.read_text()
+
+        assert sh([str(ROOT / "module/firefox.sh"), "wat"], env).returncode == 2, "未知参数应报用法错"
+
+
 # ---------------------------------------------------------------- 模块运行时脚本
 
 def sh(args, env):
@@ -308,8 +352,9 @@ def runtime_scripts():
         (modpath / "module.prop").write_text((ROOT / "module/module.prop").read_text())
         (modpath / "fonts.xml").write_bytes(b"<familyset/>")
         (modpath / "system/fonts/Any-Name.ttf").write_bytes(b"font")
-        for script in ("customize.sh", "action.sh"):
-            shutil.copy(ROOT / "module" / script, modpath / script)
+        for path in sorted((ROOT / "module").iterdir()):  # 模块目录照打包后的样子铺开
+            if path.is_file():
+                shutil.copy(path, modpath / path.name)
         system = tmp / "sysroot"
         for directory in ("etc", "system_ext/etc", "product/etc"):
             (system / directory).mkdir(parents=True)
@@ -337,6 +382,7 @@ def runtime_scripts():
         result = sh([str(modpath / "action.sh")], env)
         assert result.returncode == 0 and "[Selffont]" in result.stdout, result
         assert "unknown" in result.stdout and "Bundled fonts: 1" in result.stdout
+        assert "Firefox: firefox.sh 可接入" in result.stdout
 
 
 # ---------------------------------------------------------------- 仓库自身的数据与常量

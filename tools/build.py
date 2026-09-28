@@ -50,6 +50,8 @@ BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 MAX_DOWNLOAD = 512 * 1024 * 1024
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
+# emoji 区段(U+2600 杂项符号 + U+1F000 起的主平面),用来量包内字体的 emoji 覆盖上限
+EMOJI_RANGES = ((0x2600, 0x27BF), (0x1F000, 0x1FBFF))
 
 
 def warn(message: str) -> None:
@@ -133,6 +135,31 @@ def ink_bounds(font: TTFont, characters: str) -> tuple[int, int] | None:
             if pen.bounds is not None:
                 bounds.append(pen.bounds)
     return (min(b[1] for b in bounds), max(b[3] for b in bounds)) if bounds else None
+
+
+def emoji_ceiling(cmap: dict) -> int | None:
+    """cmap 里 emoji 区段的最高码位;一个都没有就是 None。"""
+    hits = [codepoint for codepoint in cmap
+            if any(low <= codepoint <= high for low, high in EMOJI_RANGES)]
+    return max(hits) if hits else None
+
+
+def emoji_coverage(fonts: list[tuple[str, object]]) -> list[dict]:
+    """(名字, 取字节的可调用对象) 逐个过 cmap,报告 emoji 覆盖上限,高的在前。
+
+    只读 cmap 表,不碰字形;坏了就跳过,不影响构建。用途:火狐豆腐这类问题先看
+    「包里到底有没有那个码位」,再谈 Gecko。给 firefox.sh 注入名单时也是这份数据。
+    """
+    rows = []
+    for name, load in fonts:
+        try:
+            with TTFont(io.BytesIO(load()), lazy=True) as font:
+                ceiling = emoji_ceiling(font.getBestCmap() or {})
+        except Exception:  # 不是字体或结构损坏:跳过
+            continue
+        if ceiling:
+            rows.append({"file": name, "highest": f"U+{ceiling:04X}"})
+    return sorted(rows, key=lambda row: int(row["highest"][2:], 16), reverse=True)
 
 
 def carrier_metrics(data: bytes) -> dict | None:
@@ -392,6 +419,11 @@ def build(base: str | None = None, font: list[str] | None = None,
         if unbundled:
             warnings.append(f"fonts.xml 引用但基础包没有的字体(不打包):{'、'.join(unbundled)}")
 
+        coverage = emoji_coverage(
+            [(PurePosixPath(member.filename).name, lambda member=member: archive.read(member))
+             for member in bundled]
+            + [(name, lambda data=data: data) for name, data in packaged.items()])
+
         report = {
             "revision": revision or "UNSPECIFIED",
             "primary": {
@@ -406,6 +438,7 @@ def build(base: str | None = None, font: list[str] | None = None,
             "baseArchiveSha256": digest(base_path),
             "bundledSupplementalFonts": sorted({PurePosixPath(m.filename).name for m in bundled}),
             "unreferencedFontsDropped": dropped,
+            "emojiCoverage": coverage,
             "warnings": warnings,
         }
 
@@ -423,6 +456,9 @@ def build(base: str | None = None, font: list[str] | None = None,
         print(f"  度量归一 hhea {first['original']['hhea']} → {first['normalized']['hhea']}(共 {len(metrics)} 文件)")
     else:
         print("  度量归一:跳过(无空壳)")
+    if coverage:
+        print(f"  emoji 覆盖上限:{coverage[0]['file']} {coverage[0]['highest']}"
+              f"(共 {len(coverage)} 个字体有 emoji 段覆盖)")
     for message in warnings:
         warn(message)
     return report
