@@ -15,3 +15,6 @@ for font in "$MODPATH"/system/fonts/*; do
 done
 echo "Bundled fonts: $count"
 [ -f "$MODPATH/fonts.xml" ] && echo 'fonts.xml: present' || echo 'fonts.xml: MISSING'
+if [ -f "$MODPATH/geckoview-config.yaml" ]; then
+    echo 'Firefox: firefox.sh 可接入(Gecko 原生配置)'
+fi
