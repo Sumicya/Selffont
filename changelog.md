@@ -1,5 +1,28 @@
 # 更新日志
 
+## v4.0.0(2026-09-28)· 四化重写 III(ponytail):先提问,再删
+
+按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)逐件质问现有设计,砍到只剩"设备真的需要的文件 + 让它们正确所需的代码"。留下的没变:原生 `fonts.xml` 挂载、无平台闸门、任意来源、真机验证的度量归一。
+
+**提出的问题与答案**(每条都落到了代码里):
+
+- `config/sources.json` 比命令行多给了什么?——只有两个默认值。默认值就是 `tools/build.py` 顶部的常量,**删文件**,少一层 JSON 解析和键错误面。
+- `--font` 为什么要一个目录加固定文件名?——没理由。改成"文件或 URL,可重复",安装名取文件名本身。
+- `extras` 机制谁在用?——自 v2.7.0 起恒为空。**删**;要加兜底字体就换 `--base`。
+- `module.prop` 为什么要生成?——生成器只是把数据从 JSON 搬到字符串。KSU 惯例是静态文件,**删生成器**:版本号在 `module/module.prop` 里直接改。
+- `--refresh` 谁用?——没人。`rm -rf build/cache` 就是 refresh,**删**。
+- `action.sh` 需要一个子命令分发器吗?——它只有一个动作,**删分发器**;诊断改成文件名无关的计数(主字体安装名现在是自由的)。
+- `report.json` 的消费方是谁?——CI 的四个键。压成 `revision`/`primary`/`metricCarrier`/`bundledSupplementalFonts`/`unreferencedFontsDropped`/`warnings`,删掉装饰性字段。
+- 度量空壳(Roboto carrier)还需要吗?——**需要,而且是这次唯一"问完不删"的东西**:Minikin 用集合首字体(默认家族)的名义度量排版,虽然主字体已被归一到同一组数值,但删空壳等于拿渲染赌一次重构。真机校准不属于 ponytail 的删减范围。
+- `--revision` 还要吗?——要,CI 靠它把 zip 钉到 commit。
+- 静态多字重支持还要吗?——要(自由化),但去掉"目录 + 文件名约定"这层框架,静态单文件也直接可用。
+- ChillRound 的 OFL 为什么在包里?——那字体自 v2.7.0 起不在产线,**删文件**。
+- 测试测够了但测在了已删的机制上?——删掉对 extras/配置漂移的测试,保留 6 项会真失败的行为检查。
+
+**净变化**:`tools/build.py` 564 → 473 行、`tests/selfcheck.py` 409 → 379 行;仓库文件 14 → 13(删 `config/sources.json`、`module/licenses/ChillRound-OFL.txt`,增静态 `module/module.prop`)。原生化:模块布局回到 KSU 惯例(静态 module.prop + install 脚本 + action 按钮)。现代化:丢掉 `from __future__ import annotations`,CI 仍是 Python 3.14 + fontTools 4.66.0。
+
+**CI 无需改动即可跑通**:`report.json` 里 CI 读的四个键形状不变。更精简的工作流(去掉重复的 report 解析,45 → 15 行)需要 GitHub `workflows` 权限,agent 推不了,命令见 PR 描述。
+
 ## v3.0.0(2026-09-26)· 四化重写 II(ponytail):纯原生,纯 Python
 
 先回退:v2.8.0/v2.8.1 圆头化产线(前分支 PR #2)整条作废,树回到 v2.7.0 基线。再按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)重写:
