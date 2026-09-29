@@ -1,5 +1,15 @@
 # 更新日志
 
+## v4.2.0(2026-09-29)· 版本带日期与构建数,CI 回到零警告
+
+三件事,每一件都先查清再动手:
+
+**1. 版本日期 / 构建数**:`module.prop` 以前只有 `v4.1.0` 加一串看不出规则的 `2026092801`。现在 `version=v4.2.0 (2026-09-29)`、`versionCode=2026092901`(`YYYYMMDD` + 当日两位构建序号),自检核对两者日期一致——版本号一改而 versionCode 忘改,CI 直接失败。
+
+**2. 上游领先的那一个提交**:本仓库是 `Numbersf/MakeFontsGreatAgain` 的 fork,GitHub 上显示 fork 的 main 落后上游 1 个提交——就是 `32c0ed6 "fix: some basics"`(2026-09-15,168 行),**只改它自己的 Xposed 模块**(`mfga-xposed/**` 的 Java/Kotlin/Gradle + `scope.list`)。`fonts/` 与 `fonts.xml` 自 release `1717180003` 起没有任何改动,我们的 `fonts.xml` 与上游 main 逐字节相同(sha256 `dd15902a…`)。所以不追平:合并它会把我们早已删掉的 Xposed 目录再拖回来,而我们的模块只取字体资源。README 边界里记下了这条判断。
+
+**3. 警告**:CI 上唯一一条警告是 `fonts.xml 引用但基础包没有的字体(不打包):…` 两百多个名字。它不是问题:基础包只带设备没有的补充字库,Noto 全套与 OEM 字体(如 MiSansL3、NotoColorEmojiLegacy/Flags)本来就在设备上;引用两边都没有的字体只会让该条目失效,不中断渲染,而设备字体集在构建期不可知——所以它没法变成"可行动"的警告,只会训练人忽略警告。改法:警告降级——日志里一行摘要(`fonts.xml 引用 N 个字体名:模块带 M 个,其余 K 个由设备自带`),完整名单留在 `report.json` 的 `unbundledFontReferences` 里备查。CI 注释随之归零(只剩 GitHub 自己的 ubuntu-latest 迁移提示)。
+
 ## v4.1.0(2026-09-28)· 火狐做回来:换成原生机制,断言换成数据
 
 火狐那条路 v3.0.0 被删掉时留了句话——"Firefox 修复疑似失效"。重新查 Gecko 源码后,那句和 README 的"不可修"都站不住:问题不在能不能修,在于**Gecko 根本不按 `fonts.xml` 选家族**。

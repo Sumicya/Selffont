@@ -6,6 +6,7 @@
 """
 import io
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -395,7 +396,13 @@ def repo_constants():
     assert builder.PRIMARY_NAME.endswith(".ttf") and builder.RENAME == "Selffont Rounded SC VF"
     prop = (ROOT / "module/module.prop").read_text()
     assert all(f"{key}=" in prop for key in builder.MODULE_KEYS), prop
-    assert "version=v" in prop
+    # 版本号带日期,versionCode = YYYYMMDD + 当日两位构建序号;两者日期必须一致(发布前抓错)。
+    version, code = (re.search(rf"^{key}=(.+)$", prop, re.M) for key in ("version", "versionCode"))
+    assert version and code and version.group(1).startswith("v"), prop
+    date = re.search(r"\((\d{4})-(\d{2})-(\d{2})\)", version.group(1))
+    assert date, f"版本号应带日期:v4.2.0 (YYYY-MM-DD)"
+    assert len(code.group(1)) == 10 and code.group(1)[:8] == "".join(date.groups()), \
+        f"versionCode 的日期部分应与版本日期一致:{version.group(1)} / {code.group(1)}"
     # configure_fonts 的前置条件:真实 fonts.xml 的默认家族必须正好是度量空壳。
     root = builder.ET.fromstring((ROOT / "fonts.xml").read_bytes())
     assert {node.text.strip() for node in root.find("family[@name='sans-serif']").findall("font")} == {builder.CARRIER}

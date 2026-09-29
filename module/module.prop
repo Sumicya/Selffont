@@ -1,6 +1,6 @@
 id=MFGA
 name=Selffont
-version=v4.1.0
-versionCode=2026092801
+version=v4.2.0 (2026-09-29)
+versionCode=2026092901
 author=Selffont
 description=文渊圆体(可变字体,100-900 真字重)接管系统字体家族,原生 fonts.xml 挂载;火狐走 Gecko 原生配置(firefox.sh)。无平台闸门:装在未测试设备上自担风险。

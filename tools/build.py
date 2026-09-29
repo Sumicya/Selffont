@@ -414,10 +414,11 @@ def build(base: str | None = None, font: list[str] | None = None,
         referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
         bundled = [member for member in members if PurePosixPath(member.filename).name in referenced]
         dropped = sorted({PurePosixPath(m.filename).name for m in members} - {PurePosixPath(m.filename).name for m in bundled})
+        # ponytail: fonts.xml 的字体名是「设备自带 + 基础包补充」的并集(Noto 全套、OEM 字体在设备上),
+        # 基础包只带设备没有的补充字库;引用一个两边都没有的字体只会让该条目失效,不中断渲染,
+        # 也没法在构建期判断——所以这是数据(report.json),不是警告。升级:真遇到设备缺字体再按设备侧检查。
         unbundled = sorted(referenced - {PurePosixPath(m.filename).name for m in members}
                            - set(primary) - {CARRIER})
-        if unbundled:
-            warnings.append(f"fonts.xml 引用但基础包没有的字体(不打包):{'、'.join(unbundled)}")
 
         coverage = emoji_coverage(
             [(PurePosixPath(member.filename).name, lambda member=member: archive.read(member))
@@ -438,6 +439,7 @@ def build(base: str | None = None, font: list[str] | None = None,
             "baseArchiveSha256": digest(base_path),
             "bundledSupplementalFonts": sorted({PurePosixPath(m.filename).name for m in bundled}),
             "unreferencedFontsDropped": dropped,
+            "unbundledFontReferences": unbundled,
             "emojiCoverage": coverage,
             "warnings": warnings,
         }
@@ -451,6 +453,8 @@ def build(base: str | None = None, font: list[str] | None = None,
     print(f"\n构建完成:{output}")
     print(f"  主字体 {faces[regular]['family']!r}({len(primary)} 文件,{len(ladder)} 档)"
           f"  补充 {len(report['bundledSupplementalFonts'])} 个  丢弃 {len(dropped)} 个")
+    print(f"  fonts.xml 引用 {len(referenced)} 个字体名:模块带 {len(referenced) - len(unbundled)} 个,"
+          f"其余 {len(unbundled)} 个由设备自带(Noto/OEM,不打包)")
     if metrics:
         first = metrics[regular]
         print(f"  度量归一 hhea {first['original']['hhea']} → {first['normalized']['hhea']}(共 {len(metrics)} 文件)")

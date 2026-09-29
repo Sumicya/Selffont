@@ -20,7 +20,9 @@ python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
 .venv/bin/python tools/build.py     # --font 文件或 URL(可重复) / --base 本地 ZIP 或 URL
 ```
 
-产物 `build/Selffont.zip`(内含 `report.json` 构建报告),CI(`.github/workflows/build.yml`)跑同一条流水线。默认来源与提示性哈希钉在 `tools/build.py` 顶部(哈希漂移只警告,不拦构建);下载缓存在 `build/cache/`,删掉即重新下载。版本号在 `module/module.prop`(KSU 静态惯例)。
+产物 `build/Selffont.zip`(内含 `report.json` 构建报告),CI(`.github/workflows/build.yml`)跑同一条流水线。默认来源与提示性哈希钉在 `tools/build.py` 顶部(哈希漂移只警告,不拦构建);下载缓存在 `build/cache/`,删掉即重新下载。
+
+版本号是静态的 `module/module.prop`(KSU 惯例):`version=v4.2.0 (YYYY-MM-DD)`,`versionCode=YYYYMMDD+当日两位构建序号`。自检核对两者日期一致,发布前抓错。
 
 ## 安装 / 卸载
 
@@ -44,6 +46,8 @@ emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Col
 ## 边界
 
 - 真机验证过:Android 16 / OnePlus / KernelSU 一台,其他平台自担风险。
+- 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork,上游领先的提交只动它自己的 Xposed 侧与文档(`fonts/`、`fonts.xml` 从 1717180003 起未变,已逐字节比对),所以不追平上游;我们只取它的字体资源(见 `LICENSES.md`)。
+- `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集:基础包只带设备没有的补充字库(Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等),Noto 全套与 OEM 字体(如 MiSans)由设备提供,不打包。构建报告 `report.json` 的 `unbundledFontReferences` 记录这些名字;引用两边都没有的字体只会让该条目失效,不中断渲染、也没法在构建期判断,所以它不算警告。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`(Android 段),随 Firefox 版本可能变;名单变了 `firefox.sh install` 重放一次即可,不匹配时 Gecko 只是回到自己的默认字体。
 - emoji 新码位能不能显示,取决于包内字体覆盖(`emojiCoverage`)与 Gecko 的渲染,不写"不可修"这种断言。
 - MFGA 基础包只取字体资源,绝不执行其代码(归属见 `LICENSES.md`)。
