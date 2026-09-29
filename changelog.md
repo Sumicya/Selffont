@@ -1,5 +1,19 @@
 # 更新日志
 
+## 2026-09-29 · 版本 = 日期 + 总构建数;上游同步;CI 提示清零
+
+**1. 版本号换成 `vYY.M.D.<总构建数>`,versionCode = 总构建数**。构建时盖戳(`SELFFONT_BUILD=<n>` 或 `--build <n>`,CI 传 `github.run_number`),日期按 UTC+8 取;仓库里的 `module.prop` 是未盖戳的本地默认(`versionCode=0`),不再是"上次发布"的残留。自检核对版本号末尾的构建数与 versionCode 一致——只改一处就失败。
+
+**2. 拿到 `workflows` 权限后的 CI 改动**:
+
+- `runs-on: ubuntu-24.04`:不再用 `ubuntu-latest`,顺带消掉 GitHub 那条"ubuntu-latest 将于 10 月迁移"的提示;
+- 构建步骤带 `SELFFONT_BUILD: ${{ github.run_number }}`;
+- 新增 Report 步骤:把版本、主字体家族、补充字体数、emoji 覆盖上限前三名写进 GitHub Step Summary(emoji 数据第一次出现在 UI 里,不用下 100 MiB 的包才能看),构建警告同时转成 `::warning::` 注释。
+
+结果:CI 运行页的注释从 1 条 warning + 1 条 notice → **0 条**。
+
+**3. 上游同步**。fork 之前显示"落后上游 1 个提交"(`32c0ed6`,只改它自己的 `mfga-xposed/**` 与文档)。用 `git merge -s ours upstream/main` 记录祖先关系:fork 的"落后"提示消失,而它的 Xposed 代码一行没进来(我们只取字体资源)。要上游的补充字库,换 `--base` 即可。
+
 ## v4.2.0(2026-09-29)· 版本带日期与构建数,CI 回到零警告
 
 三件事,每一件都先查清再动手:

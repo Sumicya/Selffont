@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -212,7 +213,8 @@ def build_end_to_end():
         base, output = tmp / "base.zip", tmp / "out" / "Selffont.zip"
         base_zip(base, {"Roboto-Regular.ttf": make_carrier(), "NotoSansPro.otf": b"supplemental",
                         "DeadWeight.ttf": b"dead"})
-        report = builder.build(base=str(base), font=[str(light), str(regular)], output=output, revision="selfcheck")
+        report = builder.build(base=str(base), font=[str(light), str(regular)], output=output,
+                                   revision="selfcheck", build="9")
 
         with zipfile.ZipFile(output) as archive:
             members = set(archive.namelist())
@@ -223,13 +225,14 @@ def build_end_to_end():
                              "licenses/MFGA-base-LICENSES.md"):
                 assert expected in members, f"缺成员 {expected}"
             assert "system/fonts/DeadWeight.ttf" not in members, "死重未丢弃"
-            assert archive.read("module.prop") == (ROOT / "module/module.prop").read_bytes()
+            installed_prop = archive.read("module.prop").decode()
+            assert "version=v26." in installed_prop and "\nversionCode=9\n" in installed_prop, installed_prop
             assert (archive.getinfo("customize.sh").external_attr >> 16) == stat.S_IFREG | 0o755
             assert (archive.getinfo("system/fonts/P-Regular.ttf").external_attr >> 16) == stat.S_IFREG | 0o644
             packaged = archive.read("system/fonts/P-Regular.ttf")
             xml = archive.read("fonts.xml").decode()
 
-        assert report["revision"] == "selfcheck"
+        assert report["revision"] == "selfcheck" and report["moduleVersion"].endswith(".9")
         assert report["primary"]["family"] == "Test Primary" and report["primary"]["installedFamily"] == builder.RENAME
         assert sorted(map(int, report["primary"]["weightMap"])) == list(builder.WEIGHTS)
         assert report["metricCarrier"]["file"] == builder.CARRIER
@@ -290,6 +293,23 @@ def build_end_to_end():
         try:
             builder.build(base=str(base), font=[str(regular)], output=base)
             raise AssertionError("输出覆盖了输入")
+        except ValueError:
+            pass
+
+
+# ---------------------------------------------------------------- 版本盖戳
+
+@check
+def version_stamp():
+    """CI 盖戳:version = vYY.M.D.<构建数>,versionCode = <构建数>;没给构建数就原样不动。"""
+    prop = (ROOT / "module/module.prop").read_text()
+    stamped = builder.stamp_version(prop, "42", now=datetime(2026, 9, 29, 12, 0, tzinfo=builder.CLOCK))
+    assert "version=v26.9.29.42" in stamped and "versionCode=42" in stamped, stamped
+    assert builder.stamp_version(prop, None) == prop and builder.stamp_version(prop, "") == prop
+    for bad in ("abc", "4 2", "9."):
+        try:
+            builder.stamp_version(prop, bad)
+            raise AssertionError(f"非数字构建数未被拒绝:{bad!r}")
         except ValueError:
             pass
 
@@ -396,13 +416,12 @@ def repo_constants():
     assert builder.PRIMARY_NAME.endswith(".ttf") and builder.RENAME == "Selffont Rounded SC VF"
     prop = (ROOT / "module/module.prop").read_text()
     assert all(f"{key}=" in prop for key in builder.MODULE_KEYS), prop
-    # 版本号带日期,versionCode = YYYYMMDD + 当日两位构建序号;两者日期必须一致(发布前抓错)。
+    # 版本号 = vYY.M.D.<总构建数>,versionCode = <总构建数>;两处的构建数必须一致(发布前抓错)。
     version, code = (re.search(rf"^{key}=(.+)$", prop, re.M) for key in ("version", "versionCode"))
-    assert version and code and version.group(1).startswith("v"), prop
-    date = re.search(r"\((\d{4})-(\d{2})-(\d{2})\)", version.group(1))
-    assert date, f"版本号应带日期:v4.2.0 (YYYY-MM-DD)"
-    assert len(code.group(1)) == 10 and code.group(1)[:8] == "".join(date.groups()), \
-        f"versionCode 的日期部分应与版本日期一致:{version.group(1)} / {code.group(1)}"
+    assert version and code, prop
+    stamp = re.fullmatch(r"v\d{1,2}\.\d{1,2}\.\d{1,2}\.(\d+)", version.group(1))
+    assert stamp, f"版本号应为 vYY.M.D.<总构建数>,实际 {version.group(1)!r}"
+    assert code.group(1) == stamp.group(1), f"versionCode 与版本号里的构建数不一致:{version.group(1)} / {code.group(1)}"
     # configure_fonts 的前置条件:真实 fonts.xml 的默认家族必须正好是度量空壳。
     root = builder.ET.fromstring((ROOT / "fonts.xml").read_bytes())
     assert {node.text.strip() for node in root.find("family[@name='sans-serif']").findall("font")} == {builder.CARRIER}

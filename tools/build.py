@@ -14,6 +14,8 @@ import argparse
 import hashlib
 import io
 import json
+import os
+import re
 import shutil
 import stat
 import sys
@@ -22,6 +24,7 @@ import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -48,6 +51,7 @@ OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}  # 输入配
 WEIGHTS = range(100, 1000, 100)
 BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位类别(空格类、控制类)
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
+CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8(否则 CI 在 UTC 下会差一天)
 MAX_DOWNLOAD = 512 * 1024 * 1024
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
 # emoji 区段(U+2600 杂项符号 + U+1F000 起的主平面),用来量包内字体的 emoji 覆盖上限
@@ -345,6 +349,22 @@ def configure_fonts(template: bytes, ladder: list[dict], carrier: bool) -> bytes
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
+# ---------------------------------------------------------------- 版本盖戳
+
+def stamp_version(prop: str, build: str | None, now: datetime | None = None) -> str:
+    """CI 盖戳:version = vYY.M.D.<总构建数>,versionCode = <总构建数>(KSU 靠它比新旧)。
+
+    没有构建数(本地直接打包)就原样返回——仓库里的 module.prop 就是本地默认值,不猜数。
+    """
+    if not build:
+        return prop
+    if not build.isdigit():
+        raise ValueError(f"构建数必须是纯数字,收到 {build!r}")
+    day = now or datetime.now(CLOCK)
+    prop = re.sub(r"^version=.*$", f"version=v{day.year % 100}.{day.month}.{day.day}.{build}", prop, flags=re.M)
+    return re.sub(r"^versionCode=.*$", f"versionCode={build}", prop, flags=re.M)
+
+
 # ---------------------------------------------------------------- 基础包(只取字体资源)
 
 def font_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
@@ -366,13 +386,15 @@ def font_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 # ---------------------------------------------------------------- 组装
 
-def build(base: str | None = None, font: list[str] | None = None,
-          output: Path | None = None, revision: str | None = None) -> dict:
+def build(base: str | None = None, font: list[str] | None = None, output: Path | None = None,
+          revision: str | None = None, build: str | None = None) -> dict:
     """base/font 是本地路径或 URL(None 用默认源);返回并写出构建报告。"""
     cache = ROOT / "build/cache"
     output = Path(output) if output else ROOT / "build" / "Selffont.zip"
     warnings: list[str] = []
 
+    build = build or os.environ.get("SELFFONT_BUILD") or None
+    prop = stamp_version((ROOT / "module/module.prop").read_text(encoding="utf-8"), build)
     base_path = source(base, BASE_URL, BASE_SHA256, cache / "base.zip")
     if output.resolve() == Path(base_path).resolve():
         raise ValueError("输出不能覆盖输入")
@@ -427,6 +449,8 @@ def build(base: str | None = None, font: list[str] | None = None,
 
         report = {
             "revision": revision or "UNSPECIFIED",
+            "moduleVersion": next(line.split("=", 1)[1] for line in prop.splitlines()
+                                  if line.startswith("version=")),
             "primary": {
                 "family": faces[regular]["family"],   # 上游原家族名,读了才知道装的是谁
                 "installedFamily": RENAME,
@@ -447,10 +471,10 @@ def build(base: str | None = None, font: list[str] | None = None,
         output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
             staged = Path(tmp) / output.name
-            write_module(staged, archive, bundled, packaged, xml, report)
+            write_module(staged, archive, bundled, packaged, xml, report, prop)
             staged.replace(output)
 
-    print(f"\n构建完成:{output}")
+    print(f"\n构建完成:{output}  版本 {report['moduleVersion']}")
     print(f"  主字体 {faces[regular]['family']!r}({len(primary)} 文件,{len(ladder)} 档)"
           f"  补充 {len(report['bundledSupplementalFonts'])} 个  丢弃 {len(dropped)} 个")
     print(f"  fonts.xml 引用 {len(referenced)} 个字体名:模块带 {len(referenced) - len(unbundled)} 个,"
@@ -469,9 +493,8 @@ def build(base: str | None = None, font: list[str] | None = None,
 
 
 def write_module(staged: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
-                 packaged: dict[str, bytes], xml: bytes, report: dict) -> None:
+                 packaged: dict[str, bytes], xml: bytes, report: dict, prop: str) -> None:
     """写模块 zip:基础包里被 fonts.xml 引用的字体 + 主字体 + 原生模块布局。"""
-    prop = (ROOT / "module/module.prop").read_text(encoding="utf-8")
     missing = [key for key in MODULE_KEYS if f"{key}=" not in prop]
     if missing:
         raise ValueError(f"module/module.prop 缺少字段:{missing}")
@@ -481,8 +504,9 @@ def write_module(staged: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         for name, data in packaged.items():
             destination.writestr(f"system/fonts/{name}", data)
         destination.writestr("fonts.xml", xml)
+        destination.writestr("module.prop", prop)
         for path in sorted((ROOT / "module").rglob("*")):
-            if path.is_file():
+            if path.is_file() and path.name != "module.prop":  # 已按盖戳结果写入
                 destination.write(path, path.relative_to(ROOT / "module").as_posix())
         destination.write(ROOT / "LICENSES.md", "LICENSES.md")
         if "LICENSES.md" in archive.namelist():  # 基础包归属说明,只取文本不取代码
@@ -506,6 +530,7 @@ def main() -> None:
                         help="主字体:本地文件或 URL,可重复;默认用内置来源")
     parser.add_argument("--output", type=Path, default=ROOT / "build/Selffont.zip")
     parser.add_argument("--revision", help="记入 report.json 的来源版本")
+    parser.add_argument("--build", help="总构建数:盖戳进 module.prop(默认读 $SELFFONT_BUILD,没有就不盖)")
     build(**vars(parser.parse_args()))
 
 
