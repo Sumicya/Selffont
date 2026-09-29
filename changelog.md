@@ -12,7 +12,11 @@
 
 结果:CI 运行页的注释从 1 条 warning + 1 条 notice → **0 条**。
 
-**3. 上游同步**。fork 之前显示"落后上游 1 个提交"(`32c0ed6`,只改它自己的 `mfga-xposed/**` 与文档)。用 `git merge -s ours upstream/main` 记录祖先关系:fork 的"落后"提示消失,而它的 Xposed 代码一行没进来(我们只取字体资源)。要上游的补充字库,换 `--base` 即可。
+**3. 自由化搬到 Actions UI**:`workflow_dispatch` 多两个输入(`font` / `base`),留空用默认源;要试别的字体,不用本地装 fontTools,网页上填个 URL 就能出包。两个值经 `env` 传入 shell,不参与插值。
+
+**4. README 加了"装完自查"四步**(系统 / 火狐 / emoji / 卸载),省得每次忘记怎么验证。
+
+**5. 上游同步**。fork 之前显示"落后上游 1 个提交"(`32c0ed6`,只改它自己的 `mfga-xposed/**` 与文档)。用 `git merge -s ours upstream/main` 记录祖先关系:fork 的"落后"提示消失,而它的 Xposed 代码一行没进来(我们只取字体资源)。要上游的补充字库,换 `--base` 即可。
 
 ## v4.2.0(2026-09-29)· 版本带日期与构建数,CI 回到零警告
 

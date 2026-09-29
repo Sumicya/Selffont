@@ -3,6 +3,13 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      font:
+        description: 主字体:URL 或仓库内相对路径(留空用内置默认源)
+        required: false
+      base:
+        description: 基础包 ZIP:URL 或仓库内相对路径(留空用内置默认源)
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -25,8 +32,14 @@ jobs:
       - name: Build module (stamp version = vYY.M.D.<run number>)
         env:
           SELFFONT_BUILD: ${{ github.run_number }}   # 总构建数:versionCode 就是它
+          SELFFONT_FONT: ${{ inputs.font }}          # 经 env 传入,不进 shell 插值
+          SELFFONT_BASE: ${{ inputs.base }}
         run: |
-          python tools/build.py --revision "$GITHUB_SHA"
+          args=(--revision "$GITHUB_SHA")
+          # 空值不追加;用 if 而不是 `[ -n ] && ...`——后者在空输入时会让 `bash -e` 直接退出
+          if [ -n "$SELFFONT_FONT" ]; then args+=(--font "$SELFFONT_FONT"); fi
+          if [ -n "$SELFFONT_BASE" ]; then args+=(--base "$SELFFONT_BASE"); fi
+          python tools/build.py "${args[@]}"
           (cd build && sha256sum Selffont.zip > Selffont.zip.sha256)
       - name: Report
         run: |
