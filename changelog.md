@@ -1,5 +1,69 @@
 # 更新日志
 
+## 2026-09-29 · 版本 = 日期 + 总构建数;上游同步;CI 提示清零
+
+**1. 版本号换成 `vYY.M.D.<总构建数>`,versionCode = 总构建数**。构建时盖戳(`SELFFONT_BUILD=<n>` 或 `--build <n>`,CI 传 `github.run_number`),日期按 UTC+8 取;仓库里的 `module.prop` 是未盖戳的本地默认(`versionCode=0`),不再是"上次发布"的残留。自检核对版本号末尾的构建数与 versionCode 一致——只改一处就失败。
+
+**2. 拿到 `workflows` 权限后的 CI 改动**:
+
+- `runs-on: ubuntu-24.04`:不再用 `ubuntu-latest`,顺带消掉 GitHub 那条"ubuntu-latest 将于 10 月迁移"的提示;
+- 构建步骤带 `SELFFONT_BUILD: ${{ github.run_number }}`;
+- 新增 Report 步骤:把版本、主字体家族、补充字体数、emoji 覆盖上限前三名写进 GitHub Step Summary(emoji 数据第一次出现在 UI 里,不用下 100 MiB 的包才能看),构建警告同时转成 `::warning::` 注释。
+
+结果:CI 运行页的注释从 1 条 warning + 1 条 notice → **0 条**。
+
+**3. 上游同步**。fork 之前显示"落后上游 1 个提交"(`32c0ed6`,只改它自己的 `mfga-xposed/**` 与文档)。用 `git merge -s ours upstream/main` 记录祖先关系:fork 的"落后"提示消失,而它的 Xposed 代码一行没进来(我们只取字体资源)。要上游的补充字库,换 `--base` 即可。
+
+## v4.2.0(2026-09-29)· 版本带日期与构建数,CI 回到零警告
+
+三件事,每一件都先查清再动手:
+
+**1. 版本日期 / 构建数**:`module.prop` 以前只有 `v4.1.0` 加一串看不出规则的 `2026092801`。现在 `version=v4.2.0 (2026-09-29)`、`versionCode=2026092901`(`YYYYMMDD` + 当日两位构建序号),自检核对两者日期一致——版本号一改而 versionCode 忘改,CI 直接失败。
+
+**2. 上游领先的那一个提交**:本仓库是 `Numbersf/MakeFontsGreatAgain` 的 fork,GitHub 上显示 fork 的 main 落后上游 1 个提交——就是 `32c0ed6 "fix: some basics"`(2026-09-15,168 行),**只改它自己的 Xposed 模块**(`mfga-xposed/**` 的 Java/Kotlin/Gradle + `scope.list`)。`fonts/` 与 `fonts.xml` 自 release `1717180003` 起没有任何改动,我们的 `fonts.xml` 与上游 main 逐字节相同(sha256 `dd15902a…`)。所以不追平:合并它会把我们早已删掉的 Xposed 目录再拖回来,而我们的模块只取字体资源。README 边界里记下了这条判断。
+
+**3. 警告**:CI 上唯一一条警告是 `fonts.xml 引用但基础包没有的字体(不打包):…` 两百多个名字。它不是问题:基础包只带设备没有的补充字库,Noto 全套与 OEM 字体(如 MiSansL3、NotoColorEmojiLegacy/Flags)本来就在设备上;引用两边都没有的字体只会让该条目失效,不中断渲染,而设备字体集在构建期不可知——所以它没法变成"可行动"的警告,只会训练人忽略警告。改法:警告降级——日志里一行摘要(`fonts.xml 引用 N 个字体名:模块带 M 个,其余 K 个由设备自带`),完整名单留在 `report.json` 的 `unbundledFontReferences` 里备查。CI 注释随之归零(只剩 GitHub 自己的 ubuntu-latest 迁移提示)。
+
+## v4.1.0(2026-09-28)· 火狐做回来:换成原生机制,断言换成数据
+
+火狐那条路 v3.0.0 被删掉时留了句话——"Firefox 修复疑似失效"。重新查 Gecko 源码后,那句和 README 的"不可修"都站不住:问题不在能不能修,在于**Gecko 根本不按 `fonts.xml` 选家族**。
+
+**机制**(源码为证,不是猜):
+
+- Gecko 的字体清单在 Android API 29+ 走 `AndroidSystemFontIterator`(即系统字体配置),但**选谁**取决于 `font.name-list.*` 里硬编码的家族名(`all.js` 的 Android 段)。所以只要家族名对得上,文渊就会被用;对不上,Gecko 就回到自己的默认名单——字体装了也没用。
+- 老实现(LSPosed hook `RuntimeSettings.getPrefsMap`)做的正是这件事,但代价是整条 Kotlin/Gradle/APK/LSPosed 产线;而且 `font.name.*`/`font.name-list.*` 名单它动了,`font.name-list.emoji` 它没碰。
+- GeckoView **官方**支持从 `/data/local/tmp/<包名>-geckoview-config.yaml` 读启动首选项,前提是该应用是 Android「调试应用」(`Settings.Global.DEBUG_APP`)。root 一句 `am set-debug-app --persistent org.mozilla.firefox` 就能给它这个身份,重启后仍在。
+
+**改动**:
+
+- `module/firefox.sh`(约 40 行 shell):`install` 写配置 + 设调试应用 + 回读 `debug_app` 验证;`remove` 全撤。零 Kotlin、零 Gradle、零 APK、零 LSPosed——同一条 LSPosed 路线在 v3.0.0 被判定"过度建造",现在用原生机制把能力做回来,而不是把代码搬回来。
+- `module/geckoview-config.yaml`:默认名单逐条抄自 Gecko 的 `all.js`(Android 段),每条**前置**文渊、后面原样保留。emoji 也进了名单(Gecko 对 emoji 表现字符优先选带彩色的字体,前置不会挡彩色 emoji)——旧实现当年特意回避的那一项,现在有源码依据地补上。
+- 断言换成数据:`report.json` 新增 `emojiCoverage`,逐个读包内字体 cmap 的 emoji 段上限并排序。以后再出现"只有火狐豆腐",先看包里到底有没有那个码位,再谈 Gecko。README 删掉"属 Gecko 限制,不可修"。
+- 自检 6 → 7 项:`firefox_bridge` 盯着"只前置不截断"和 install/remove 行为(`am`/`settings` 用 PATH 替身),家族名与 `tools/build.py` 的 `RENAME` 不一致时报错。
+
+## v4.0.0(2026-09-28)· 四化重写 III(ponytail):先提问,再删
+
+按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)逐件质问现有设计,砍到只剩"设备真的需要的文件 + 让它们正确所需的代码"。留下的没变:原生 `fonts.xml` 挂载、无平台闸门、任意来源、真机验证的度量归一。
+
+**提出的问题与答案**(每条都落到了代码里):
+
+- `config/sources.json` 比命令行多给了什么?——只有两个默认值。默认值就是 `tools/build.py` 顶部的常量,**删文件**,少一层 JSON 解析和键错误面。
+- `--font` 为什么要一个目录加固定文件名?——没理由。改成"文件或 URL,可重复",安装名取文件名本身。
+- `extras` 机制谁在用?——自 v2.7.0 起恒为空。**删**;要加兜底字体就换 `--base`。
+- `module.prop` 为什么要生成?——生成器只是把数据从 JSON 搬到字符串。KSU 惯例是静态文件,**删生成器**:版本号在 `module/module.prop` 里直接改。
+- `--refresh` 谁用?——没人。`rm -rf build/cache` 就是 refresh,**删**。
+- `action.sh` 需要一个子命令分发器吗?——它只有一个动作,**删分发器**;诊断改成文件名无关的计数(主字体安装名现在是自由的)。
+- `report.json` 的消费方是谁?——CI 的四个键。压成 `revision`/`primary`/`metricCarrier`/`bundledSupplementalFonts`/`unreferencedFontsDropped`/`warnings`,删掉装饰性字段。
+- 度量空壳(Roboto carrier)还需要吗?——**需要,而且是这次唯一"问完不删"的东西**:Minikin 用集合首字体(默认家族)的名义度量排版,虽然主字体已被归一到同一组数值,但删空壳等于拿渲染赌一次重构。真机校准不属于 ponytail 的删减范围。
+- `--revision` 还要吗?——要,CI 靠它把 zip 钉到 commit。
+- 静态多字重支持还要吗?——要(自由化),但去掉"目录 + 文件名约定"这层框架,静态单文件也直接可用。
+- ChillRound 的 OFL 为什么在包里?——那字体自 v2.7.0 起不在产线,**删文件**。
+- 测试测够了但测在了已删的机制上?——删掉对 extras/配置漂移的测试,保留 6 项会真失败的行为检查。
+
+**净变化**:`tools/build.py` 564 → 473 行、`tests/selfcheck.py` 409 → 379 行;仓库文件 14 → 13(删 `config/sources.json`、`module/licenses/ChillRound-OFL.txt`,增静态 `module/module.prop`)。原生化:模块布局回到 KSU 惯例(静态 module.prop + install 脚本 + action 按钮)。现代化:丢掉 `from __future__ import annotations`,CI 仍是 Python 3.14 + fontTools 4.66.0。
+
+**CI 无需改动即可跑通**:`report.json` 里 CI 读的四个键形状不变。更精简的工作流(去掉重复的 report 解析,45 → 15 行)需要 GitHub `workflows` 权限,agent 推不了,命令见 PR 描述。
+
 ## v3.0.0(2026-09-26)· 四化重写 II(ponytail):纯原生,纯 Python
 
 先回退:v2.8.0/v2.8.1 圆头化产线(前分支 PR #2)整条作废,树回到 v2.7.0 基线。再按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)重写:

@@ -1,10 +1,7 @@
 .venv/
-.cache/
 __pycache__/
 *.py[cod]
 /build/
-/dist/
-/artifacts/
 # 字体二进制不入 Git:主字体和基础包由 tools/build.py 下载或 --font/--base 提供。
 *.ttf
 *.otf
