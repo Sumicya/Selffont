@@ -5,6 +5,8 @@
 # 用法:module/firefox.sh install 会把它拷成 /data/local/tmp/org.mozilla.firefox-geckoview-config.yaml,
 # 并把 org.mozilla.firefox 设为 Android「调试应用」——GeckoView 只有在这种情况才读这个文件(官方机制)。
 # 改家族名时要和 build.py 的 RENAME 一致;build.py --check 会盯着这一点。
+# 构建时会把模块补充字库的内部家族名(按 fonts.xml 顺序)追加到每条名单末尾:火狐的逐字回退
+# 不读 fonts.xml,同一条链让它和系统选到同一个兜底字体(花体/生僻字符不再两副面孔)。
 prefs:
   # emoji:SamsungColorEmoji / Noto Color Emoji / Noto Color Emoji Flags 是 Gecko 在 Android 上的默认名单。
   # 前置只在缺色字时才落到后面的彩色字体(Gecko 对 emoji 表现字符优先彩色的)。
@@ -22,6 +24,11 @@ prefs:
   # fantasy 在 Android 的 all.js 里一个默认都没有(空字体组直接落平台默认),一并补上。
   font.name-list.fantasy.x-unicode: "Selffont Rounded SC VF, Coming Soon"
   font.name-list.fantasy.x-western: "Selffont Rounded SC VF, Coming Soon"
+  # 数学字母数字区(𝓐𝓑𝓒 这类花体字符的语言组):Gecko 默认名单是桌面数学字体,Android 上几乎全缺,
+  # 逐字回退会乱选——前置 + 构建期尾链(补充字库按 fonts.xml 顺序)补齐。
+  font.name-list.serif.x-math: "Selffont Rounded SC VF, Latin Modern Math, STIX Two Math, XITS Math, Cambria Math, Libertinus Math, DejaVu Math TeX Gyre, TeX Gyre Bonum Math, TeX Gyre Pagella Math, TeX Gyre Schola Math, TeX Gyre Termes Math, STIX Math, Asana Math, STIXGeneral, DejaVu Serif, DejaVu Sans, Charis SIL Compact"
+  font.name-list.sans-serif.x-math: "Selffont Rounded SC VF, Roboto, Google Sans"
+  font.name-list.monospace.x-math: "Selffont Rounded SC VF, Droid Sans Mono"
 
   # 简体
   font.name-list.sans-serif.zh-CN: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans SC, Noto Sans CJK SC, SEC CJK SC, Droid Sans Fallback"

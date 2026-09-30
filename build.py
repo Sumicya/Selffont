@@ -382,8 +382,33 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
         bundled = [member for member in members if PurePosixPath(member.filename).name in referenced]
 
+        # 火狐 pref 尾链:火狐的逐字回退不读 fonts.xml,逐字兜底时全清单乱序扫描,选中的字体和系统
+        # 不同(花体/生僻字符两副面孔)。把补充字库的内部家族名按 fonts.xml 顺序追加到每条名单末尾,
+        # 让它和系统走同一条链。火狐只认字件内部名(优先 typographic),现场从基础包读取。
+        member_by_file = {PurePosixPath(m.filename).name: m for m in members}
+        families, done = [], set()
+        for node in ET.fromstring(xml).iter("font"):
+            fname = (node.text or "").strip()
+            member = member_by_file.get(fname)
+            if not member or fname in (name, CARRIER) or fname in OLD_PRIMARY or fname in done:
+                continue  # 设备自带(读不到内部名)或主字体/空壳:前者交给系统,后者已是名单头部
+            done.add(fname)
+            try:
+                with TTFont(io.BytesIO(archive.read(member)), lazy=True) as font:
+                    family = font["name"].getDebugName(16) or font["name"].getDebugName(1)
+            except Exception:  # 坏字件跳过,不影响构建
+                continue
+            if family and family not in families:
+                families.append(family)
+        config = (ROOT / "module/geckoview-config.yaml").read_text(encoding="utf-8")
+        if families:
+            tail = ", ".join(families)
+            config = re.sub(r'^(  font\.name-list\.[^:]+: ")([^"]*)(")$',
+                            lambda match: f"{match.group(1)}{match.group(2)}, {tail}{match.group(3)}",
+                            config, flags=re.M)
+
         output.parent.mkdir(parents=True, exist_ok=True)
-        write_module(output, archive, bundled, name, packaged, xml, prop)
+        write_module(output, archive, bundled, name, packaged, xml, prop, config)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成:{output}  版本 {version}")
@@ -395,7 +420,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
-                 name: str, packaged: bytes, xml: bytes, prop: str) -> None:
+                 name: str, packaged: bytes, xml: bytes, prop: str, config: str) -> None:
     """写模块 zip:被 fonts.xml 引用的基础包字体 + 主字体 + 原生 KSU 模块布局。"""
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as destination:
         for member in bundled:
@@ -403,8 +428,9 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         destination.writestr(f"system/fonts/{name}", packaged)
         destination.writestr("fonts.xml", xml)
         destination.writestr("module.prop", prop)
+        destination.writestr("geckoview-config.yaml", config)  # 静态模板 + 构建期尾链
         for path in sorted((ROOT / "module").rglob("*")):
-            if path.is_file() and path.name != "module.prop":  # 已按盖戳结果写入
+            if path.is_file() and path.name not in ("module.prop", "geckoview-config.yaml"):
                 destination.write(path, path.relative_to(ROOT / "module").as_posix())
         destination.write(ROOT / "LICENSES.md", "LICENSES.md")
         if "LICENSES.md" in archive.namelist():  # 基础包归属说明,只取文本不取代码
@@ -599,7 +625,8 @@ def build_end_to_end():
         regular = fonts_dir / "P-Regular.ttf"
         regular.write_bytes(make_font())
         base, output = tmp / "base.zip", tmp / "out" / "Selffont.zip"
-        base_zip(base, {"Roboto-Regular.ttf": make_carrier(), "NotoSansPro.otf": b"supplemental",
+        base_zip(base, {"Roboto-Regular.ttf": make_carrier(),
+                        "NotoSansPro.otf": make_font(family="Noto Sans Pro"),  # 真字体:验尾链要读内部家族名
                         "DeadWeight.ttf": b"dead"})
         build(base=str(base), font=str(regular), output=output, build_num="9")
 
@@ -618,6 +645,7 @@ def build_end_to_end():
             assert (archive.getinfo("system/fonts/P-Regular.ttf").external_attr >> 16) == stat.S_IFREG | 0o644
             packaged = archive.read("system/fonts/P-Regular.ttf")
             xml = archive.read("fonts.xml").decode()
+            config = archive.read("geckoview-config.yaml").decode()
 
         # 归一 + 改名之后:轮廓/cmap/轴不动,家族名换成 RENAME,hhea 对齐空壳。
         before, after = glyph_signature(make_font()), glyph_signature(packaged)
@@ -625,6 +653,11 @@ def build_end_to_end():
         assert before["axes"] == after["axes"] and after["family"] == RENAME
         assert TTFont(io.BytesIO(packaged))["hhea"].ascent == 930, "包内字体未归一"
         assert "P-Regular.ttf" in xml
+        # 尾链:补充字库内部家族名按 fonts.xml 顺序拼进每条名单,前置仍是文渊。
+        assert ", Noto Sans Pro\"" in config, "尾链未拼进火狐配置"
+        for line in config.splitlines():
+            if line.strip().startswith("font.name-list."):
+                assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
 
         # 自由化:主字体按自己的文件名安装,不要求固定命名;非字体后缀明确报错。
         custom = fonts_dir / "Weird-Name.ttf"
@@ -712,6 +745,9 @@ def firefox_bridge():
     for generic in ("cursive", "fantasy"):
         for lang in ("x-unicode", "x-western", "zh-CN", "zh-TW", "zh-HK", "ja", "ko"):
             assert f"font.name-list.{generic}.{lang}" in keys, f"{generic}.{lang} 缺失(空字体组)"
+    # 花体 Unicode(𝓐𝓑𝓒)的语言组是 x-math:Gecko 默认名单是桌面数学字体,Android 全缺。
+    for key in ("serif.x-math", "sans-serif.x-math", "monospace.x-math"):
+        assert f"font.name-list.{key}" in keys, f"{key} 缺失(逐字回退乱选)"
     assert config.count('"') % 2 == 0, "引号不配对"
 
     with tempfile.TemporaryDirectory() as tmp:
