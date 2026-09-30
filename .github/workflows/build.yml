@@ -4,7 +4,7 @@ on:
   pull_request:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write   # 直出 release 需要
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -25,14 +25,14 @@ jobs:
       - name: Build module (stamp version = vYY.M.D.<run number>)
         env:
           SELFFONT_BUILD: ${{ github.run_number }}   # 总构建数:versionCode 就是它
+        run: python build.py
+      # 直出:release 附件就是裸 zip,无 sha256 边车、无 artifact 的二次打包(下载即装)。
+      # PR 事件没有写权限,只构建校验不发版。
+      - name: Ship (release 直出)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python build.py
-          (cd build && sha256sum Selffont.zip > Selffont.zip.sha256)
-      - uses: actions/upload-artifact@v7
-        with:
-          name: selffont-module
-          path: |
-            build/Selffont.zip
-            build/Selffont.zip.sha256
-          compression-level: 0
-          if-no-files-found: error
+          tag=$(unzip -p build/Selffont.zip module.prop | sed -n 's/^version=//p')
+          gh release create "$tag" build/Selffont.zip --title "$tag" --notes "$tag" --latest \
+            || gh release upload "$tag" build/Selffont.zip --clobber

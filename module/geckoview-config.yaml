@@ -4,7 +4,7 @@
 #
 # 用法:module/firefox.sh install 会把它拷成 /data/local/tmp/org.mozilla.firefox-geckoview-config.yaml,
 # 并把 org.mozilla.firefox 设为 Android「调试应用」——GeckoView 只有在这种情况才读这个文件(官方机制)。
-# 改家族名时要和 tools/build.py 的 RENAME 一致;tests/selfcheck.py 会盯着这一点。
+# 改家族名时要和 build.py 的 RENAME 一致;build.py --check 会盯着这一点。
 prefs:
   # emoji:SamsungColorEmoji / Noto Color Emoji / Noto Color Emoji Flags 是 Gecko 在 Android 上的默认名单。
   # 前置只在缺色字时才落到后面的彩色字体(Gecko 对 emoji 表现字符优先彩色的)。
@@ -19,27 +19,42 @@ prefs:
   font.name-list.monospace.x-western: "Selffont Rounded SC VF, Droid Sans Mono"
   font.name-list.cursive.x-unicode: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.cursive.x-western: "Selffont Rounded SC VF, Dancing Script"
+  # fantasy 在 Android 的 all.js 里一个默认都没有(空字体组直接落平台默认),一并补上。
+  font.name-list.fantasy.x-unicode: "Selffont Rounded SC VF, Coming Soon"
+  font.name-list.fantasy.x-western: "Selffont Rounded SC VF, Coming Soon"
 
   # 简体
   font.name-list.sans-serif.zh-CN: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans SC, Noto Sans CJK SC, SEC CJK SC, Droid Sans Fallback"
   font.name-list.serif.zh-CN: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK SC, Noto Serif, Droid Serif, Droid Sans Fallback"
   font.name-list.monospace.zh-CN: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK SC, SEC Mono CJK SC, Noto Sans CJK SC, MiSans VF, MiSans, Droid Sans Fallback"
+  # 花体/随意:Gecko 没有 zh/ja/ko 的 cursive/fantasy 默认,空字体组会落到平台默认字体
+  # (清单第一个家族是 Roboto 空壳)——花体行因此不渲染文渊。这里把缺口补齐。
+  font.name-list.cursive.zh-CN: "Selffont Rounded SC VF, Dancing Script"
+  font.name-list.fantasy.zh-CN: "Selffont Rounded SC VF, Coming Soon"
 
   # 繁体
   font.name-list.sans-serif.zh-TW: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans TC, Noto Sans SC, Noto Sans CJK TC, SEC CJK TC, Droid Sans Fallback"
   font.name-list.serif.zh-TW: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK TC, Noto Serif, Droid Serif, Droid Sans Fallback"
   font.name-list.monospace.zh-TW: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK TC, SEC Mono CJK TC, Noto Sans CJK TC, MiSans TC VF, MiSans TC, Droid Sans Fallback"
+  font.name-list.cursive.zh-TW: "Selffont Rounded SC VF, Dancing Script"
+  font.name-list.fantasy.zh-TW: "Selffont Rounded SC VF, Coming Soon"
   font.name-list.sans-serif.zh-HK: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans TC, Noto Sans SC, Noto Sans CJK TC, SEC CJK TC, Droid Sans Fallback"
   font.name-list.serif.zh-HK: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK TC, Noto Serif, Droid Serif, Droid Sans Fallback"
   font.name-list.monospace.zh-HK: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK TC, SEC Mono CJK TC, Noto Sans CJK TC, MiSans TC VF, MiSans TC, Droid Sans Fallback"
+  font.name-list.cursive.zh-HK: "Selffont Rounded SC VF, Dancing Script"
+  font.name-list.fantasy.zh-HK: "Selffont Rounded SC VF, Coming Soon"
 
   # 日文 / 韩文
   font.name-list.sans-serif.ja: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, MotoyaLMaru, MotoyaLCedar, Noto Sans JP, Noto Sans CJK JP, SEC CJK JP, Droid Sans Japanese"
   font.name-list.serif.ja: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK JP, Noto Serif, Droid Serif"
   font.name-list.monospace.ja: "Selffont Rounded SC VF, MotoyaLMaru, MotoyaLCedar, Noto Sans Mono CJK JP, SEC Mono CJK JP, Droid Sans Mono"
+  font.name-list.cursive.ja: "Selffont Rounded SC VF, Dancing Script"
+  font.name-list.fantasy.ja: "Selffont Rounded SC VF, Coming Soon"
   font.name-list.sans-serif.ko: "Selffont Rounded SC VF, Roboto, Google Sans, SmartGothic, NanumGothic, Noto Sans KR, Noto Sans CJK KR, One UI Sans KR VF, SamsungKorean_v2.0, SEC CJK KR, DroidSansFallback, Droid Sans Fallback"
   font.name-list.serif.ko: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK KR, Noto Serif, Droid Serif, HYSerif"
   font.name-list.monospace.ko: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK KR, SEC Mono CJK KR"
+  font.name-list.cursive.ko: "Selffont Rounded SC VF, Dancing Script"
+  font.name-list.fantasy.ko: "Selffont Rounded SC VF, Coming Soon"
 
   # 想要网页强制用它(忽略网页自带字体)就打开下一行——影响所有网站,默认关。
   # browser.display.use_document_fonts: 0

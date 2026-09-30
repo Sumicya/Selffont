@@ -52,7 +52,7 @@ BASE_SHA256 = "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b"
 # ---------------------------------------------------------------- 配置数据
 CARRIER = "Roboto-Regular.ttf"  # 输入 fonts.xml 的默认家族必须保留的度量空壳
 PRIMARY_FAMILIES = {"sans-serif", "sans-serif-condensed", "serif", "monospace",
-                    "serif-monospace", "casual", "cursive"}
+                    "serif-monospace", "casual", "cursive", "sans-serif-smallcaps"}
 METRIC_FAMILIES = {"sans-serif", "sans-serif-condensed"}
 OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}  # 输入配置里的旧数字主字体
 WEIGHTS = range(100, 1000, 100)
@@ -536,6 +536,9 @@ def fonts_xml():
     for family in root.findall("family"):
         for node in family.findall("font"):
             assert (node.text or "").strip() not in OLD_PRIMARY, "残留旧数字主字体"
+    # 小型大写家族也接管:留在清单里的 CarroisGothicSC 会被火狐按文件名解析到。
+    smallcaps = root.findall("family[@name='sans-serif-smallcaps']")[0]
+    assert {node.text.strip() for node in smallcaps.findall("font")} == {"V.ttf"}, "小型大写家族未接管"
     # 静态主字体不生成 axis;可变主字体生成 axis。
     static_root = ET.fromstring(configure_fonts(template, "S.ttf", static, True))
     ours = [node for family in static_root.findall("family") for node in family.findall("font")

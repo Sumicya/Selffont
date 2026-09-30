@@ -47,6 +47,13 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 
 `firefox.sh` 只做两件事:把 `geckoview-config.yaml` 放到 `/data/local/tmp/org.mozilla.firefox-geckoview-config.yaml`,再把 Firefox 设成 Android「调试应用」(`am set-debug-app --persistent`,重启后仍在)——GeckoView 只在这两种情况下读那份配置。配置里每条首选项都是**前置**文渊、后面原样保留 Gecko 自己的回退链;整条覆盖会掐断回退,那才是缺字的来源。
 
+**花体 / 随意 / 小型大写**(源码为证的三个坑,不是玄学):
+
+- Gecko 的字体清单只收**字体文件内部家族名**(harfbuzz 读 name 表),fonts.xml 的别名(`cursive`、`sans-serif-smallcaps`)不在清单里——网页写这些名字时走的是泛型 pref 或默认字体回退。
+- all.js 的 Android 段只有 `cursive.x-unicode/x-western` 两个默认,`fantasy` 一个都没有;zh/ja/ko 语言组下 `font-family: cursive` 解析成**空字体组**,不补默认泛型,直接落 `GetDefaultFont()`(清单第一个家族 = Roboto 空壳)——花体行因此不渲染文渊。配置里把 CJK + 西文的 cursive/fantasy 全部补齐。
+- 小型大写:`sans-serif-smallcaps` 家族系统侧一并接管(原来漏了,CarroisGothicSC 还留在系统清单里可被按文件名解析);CSS `font-variant: small-caps` 由基础字体合成,基础字体是文渊就是文渊小型大写。
+- 边界:网页**自带的 webfont**(站内装饰花体/小型大写)不读系统清单,pref 管不到;要一律压成文渊,打开配置里 `browser.display.use_document_fonts: 0` 那行。
+
 验证:`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`,应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。想让网页忽略自带字体、一律用文渊,把配置里 `browser.display.use_document_fonts: 0` 那行注释去掉。
 
 emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Color Emoji` / `Noto Color Emoji Flags`(对 emoji 表现字符它优先选带彩色的那张,所以前置不挡彩色);包内字体到底覆盖到哪个码位,拿 fontTools 查 cmap 即可——先拿数据,再谈 Gecko。

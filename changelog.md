@@ -1,5 +1,19 @@
 # 更新日志
 
+## 2026-09-30 · CI 直出裸 zip;火狐花体/小型大写按源码根因修复
+
+**1. 直出**:CI 不再产 `upload-artifact`(下载得到的是 zip 套 zip)也不写 sha256 边车——每次推送(非 PR)把裸 `Selffont.zip` 挂到 Release,tag/标题 = 盖戳版本号;重跑同一 run_number 时 `gh release upload --clobber` 覆盖附件。PR 事件只构建校验不发版(没有写权限)。
+
+**2. 火狐花体(fantasy/cursive)与小型大写未修复——三个源码根因,逐个关掉**:
+
+- **Gecko 只认字体文件内部家族名**(`gfxFT2FontList` 经 harfbuzz 读 name 表建清单),fonts.xml 别名(`cursive`/`sans-serif-smallcaps`)不进清单:网页按名调用走泛型 pref 或默认字体回退,不查我们的 fonts.xml。
+- **泛型缺口**:`all.js` Android 段只有 `cursive.x-unicode/x-western` 默认,`fantasy` 一个都没有;zh/ja/ko 下 `font-family: cursive` 的 pref 列表为空,`mFallbackGeneric` 已设导致不再补默认泛型 → 空字体组 → `GetDefaultFont()`(清单第一个家族,Roboto 空壳)→ 花体行不渲染文渊。`geckoview-config.yaml` 补齐 cursive/fantasy ×(x-unicode/x-western/zh-CN/zh-TW/zh-HK/ja/ko),与既有行同规则:前置文渊、原样保留原回退。
+- **小型大写**:`build.py` 的 `PRIMARY_FAMILIES` 漏了 `sans-serif-smallcaps`,CarroisGothicSC 一直留在系统清单里可被按文件名解析。接管后它挤出清单,系统侧与火狐侧(名称回退到默认泛型 → 我们的 sans-serif pref)都是文渊;CSS `font-variant: small-caps` 由基础字体合成,天然文渊。
+- 自检加两条硬断言:真实模板的 `sans-serif-smallcaps` 家族必须被接管;配置里 cursive/fantasy × 7 语言组必须齐全(缺一条就空字体组)。
+- 配置头注释顺带修正:还指着已删除的 `tools/build.py`/`tests/selfcheck.py`。
+
+边界(写进 README):网页自带 webfont 的装饰花体/小型大写不读系统清单,只有 `browser.display.use_document_fonts: 0` 能压。
+
 ## 2026-09-30 · 四化重写 IV(ponytail 激进版):一个 Python 文件,行为逐字节不变
 
 按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)对现存每一件东西重新提问,能删就删。**等价性有证明**:同一输入下,新旧打包器产出的 `fonts.xml` 与包内主字体**逐字节相同**(sha256 比对);模块 zip 的成员差异恰好等于下列删除项。
