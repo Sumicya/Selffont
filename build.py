@@ -705,6 +705,13 @@ def firefox_bridge():
     for line in lines:  # 只前置:每条都必须以本模块家族名开头,后面原样保留 Gecko 默认回退链
         value = line.split(":", 1)[1].strip().strip('"')
         assert value.startswith(RENAME + ","), f"未前置或家族名不符:{line}"
+
+    # 泛型缺口修复:Gecko 在 Android 只有 cursive.x-unicode/x-western 默认、fantasy 一个都没有,
+    # 其余语言组解析成空字体组落到平台默认。CJK 与西文的 cursive/fantasy 必须都在位。
+    keys = {line.split(":", 1)[0].strip() for line in lines}
+    for generic in ("cursive", "fantasy"):
+        for lang in ("x-unicode", "x-western", "zh-CN", "zh-TW", "zh-HK", "ja", "ko"):
+            assert f"font.name-list.{generic}.{lang}" in keys, f"{generic}.{lang} 缺失(空字体组)"
     assert config.count('"') % 2 == 0, "引号不配对"
 
     with tempfile.TemporaryDirectory() as tmp:
