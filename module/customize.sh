@@ -4,9 +4,9 @@
 command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
 command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 
-# 仓库里不存字体二进制:直接压缩仓库(而不是 tools/build.py 的产物)时在这里拦住。
+# 仓库里不存字体二进制:直接压缩仓库(而不是 build.py 的产物)时在这里拦住。
 [ -n "$(ls -A "$MODPATH/system/fonts" 2>/dev/null)" ] ||
-    abort "Selffont: 模块里没有字体文件。请用 tools/build.py 打包,不要直接压缩仓库。"
+    abort "Selffont: 模块里没有字体文件。请用 build.py 打包,不要直接压缩仓库。"
 
 # 整份替换系统全部 font*.xml(familyset 只能有一份;fonts_customization.xml 是用户自选配置,不碰)。
 # ponytail: 整份替换的天花板是非 familyset schema 的 ROM 会显示异常(实机已验证 Oplus 整替可行);

@@ -1,5 +1,27 @@
 # 更新日志
 
+## 2026-09-30 · 四化重写 IV(ponytail 激进版):一个 Python 文件,行为逐字节不变
+
+按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)对现存每一件东西重新提问,能删就删。**等价性有证明**:同一输入下,新旧打包器产出的 `fonts.xml` 与包内主字体**逐字节相同**(sha256 比对);模块 zip 的成员差异恰好等于下列删除项。
+
+**提出的问题与答案**(每条都落到了代码里):
+
+- `action.sh` 谁按过?它自己的注释都承认"不证明渲染结果,只证明模块装上了"——一个自我声明无用的文件。**删**(KSU 模块本就不需要 action 按钮)。
+- `report.json` 谁在读?CI 摘要步骤和 README 里的两处引用;数据要么不可行动(`unbundledFontReferences` 225 个"设备自带"名单),要么无消费者。**随包 report.json 整个删**,CI 的 Report 步骤一并删(38 行工作流,日志即报告),`--revision` 参数随之消失。
+- `emojiCoverage` 防的是哪个 bug?还没人报告过火狐豆腐。真要看覆盖,拿 fontTools 查 cmap 是一行的事。**删**(连同 `EMOJI_RANGES`/`emoji_ceiling`/`emoji_coverage` 与给它们服务的逐字体 cmap 加载管线)。
+- `--font` 为什么要可重复、还带一套静态多文件就近字重映射?产线自 v2.7.0 起恒为单个 VF。**收敛为单字体**:`weight_ladder(axes)` 一个参数;静态字体仍可打包(全档同文件,粗体交给系统合成)。
+- `tests/selfcheck.py` 凭什么是第二个文件?同一份逻辑放两个文件必然漂移。**并进 `build.py --check`**,无框架无夹具的作风不变,8 项检查全保留。
+- `tools/` 目录还剩什么?build.py 和 requirements.txt 两个文件。**挪到仓库根,目录删**。
+- `report` 里的 `metricNormalization`/`weightMap`/`digitInkY`?装饰性数据。**删**;`normalize_metrics` 回归"进 bytes 出 bytes"。
+- `write_module` 里的 MODULE_KEYS 每构建校验、tempfile 原子落盘、包内字体 sha256 回读?静态文件由 `--check` 把关;产物可再生,坏了大不了重跑;`testzip` 已经够。**删**(校验逻辑留在自检里)。
+- `MAX_DOWNLOAD` 512MiB 上限?默认源是钉死的,自选 URL 是用户自己的事(自由化)。**删**。
+- `firefox.sh` 的 `command -v am/settings` 探测与 `debug_app` 回读?Android 必有这两个二进制,`set-debug-app` 失败本身有回显;探测只为在 Linux 上跑测试服务。**删**,55 → 27 行,install/remove 骨架不动。
+- `layout_metrics` 的 `typo`/`win` 键?report 死了之后无消费者。**删**。
+
+**保留的**(问完不删):度量归一(真机校准)、空壳映射剪除、OFL 整体改名、构建期字形守卫、基础包信任边界校验(路径穿越/绝对路径/符号链接/重复成员)、`customize.sh` 整份替换、火狐 GeckoView 原生接入、版本盖戳。
+
+**净变化**:Python 991 行(2 文件)→ 823 行(1 文件);仓库 15 → 13 个文件(`tools/`、`tests/` 目录消失);模块 zip 少 `report.json`、`action.sh` 两个成员;CI 54 → 38 行。CI 路径全部指向根目录 `build.py`。
+
 ## 2026-09-29 · 版本 = 日期 + 总构建数;上游同步;CI 提示清零
 
 **1. 版本号换成 `vYY.M.D.<总构建数>`,versionCode = 总构建数**。构建时盖戳(`SELFFONT_BUILD=<n>` 或 `--build <n>`,CI 传 `github.run_number`),日期按 UTC+8 取;仓库里的 `module.prop` 是未盖戳的本地默认(`versionCode=0`),不再是"上次发布"的残留。自检核对版本号末尾的构建数与 versionCode 一致——只改一处就失败。
