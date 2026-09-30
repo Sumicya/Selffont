@@ -29,4 +29,12 @@ if [ "$copied" -gt 0 ]; then
 else
     ui_print "Selffont: 警告——没找到系统 font*.xml,字体配置未替换(模块只挂载了字体文件)。"
 fi
+
+# 火狐配置是 firefox.sh 装到 /data/local/tmp 的拷贝:模块更新后那份会变旧,字体名单就不再前进。
+# 已接入(那份文件还在)就顺手换新;没接入过(文件不存在)不碰,不做任何推销。
+bridge="${FIREFOX_DATA_DIR:-/data/local/tmp}/${FIREFOX_PACKAGE:-org.mozilla.firefox}-geckoview-config.yaml"
+if [ -f "$bridge" ]; then
+    cp -f "$MODPATH/geckoview-config.yaml" "$bridge" &&
+        ui_print "Selffont: 已刷新火狐配置(重启火狐后生效)。"
+fi
 ui_print "Selffont: 重启即生效。无开机自动干预。"

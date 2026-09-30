@@ -22,7 +22,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py            # --font 文件或 URL / --base 本地 ZIP 或 URL
 ```
 
-产物 `build/Selffont.zip`,CI(`.github/workflows/build.yml`)跑同一条流水线。默认来源与提示性哈希钉在 `build.py` 顶部(哈希漂移只警告,不拦构建);下载缓存在 `build/cache/`,删掉即重新下载。构建 stdout 就是构建报告;没有随包的 report.json。
+模块 zip 由本地 `python build.py` 产出。CI(`.github/workflows/build.yml`)只做校验(自检 + 一次验证性构建),**没有任何产物**:不发版、不出 artifact、不写 sha256 边车。默认来源与提示性哈希钉在 `build.py` 顶部(哈希漂移只警告,不拦构建);下载缓存在 `build/cache/`,删掉即重新下载。构建 stdout 就是构建报告;没有随包的 report.json。
 
 版本号由构建时盖戳:**`version=vYY.M.D.<总构建数>`、`versionCode=<总构建数>`**(KSU 靠 versionCode 比新旧,所以它单调递增)。CI 传 `github.run_number`:
 

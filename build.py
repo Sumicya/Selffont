@@ -774,6 +774,20 @@ def runtime_scripts():
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "ABORT" in result.stderr, result
 
+        # 模块更新刷新火狐配置拷贝:未接入(文件不在)不碰;已接入(文件在)换新。
+        (modpath / "system/fonts/Any-Name.ttf").write_bytes(b"font")
+        bridge_dir = tmp / "bridge"
+        bridge_dir.mkdir()
+        env = {**env, "FIREFOX_DATA_DIR": str(bridge_dir)}
+        result = sh([str(harness)], env)
+        assert result.returncode == 0 and "已刷新火狐配置" not in result.stdout, "未接入不该刷新"
+        bridge = bridge_dir / "org.mozilla.firefox-geckoview-config.yaml"
+        bridge.write_text("stale\n")
+        result = sh([str(harness)], env)
+        assert result.returncode == 0 and "已刷新火狐配置" in result.stdout, result.stdout
+        refreshed = bridge.read_text(encoding="utf-8")
+        assert refreshed != "stale\n" and "font.name-list" in refreshed, "配置没换成新版"
+
 
 # ---------------------------------------------------------------- 仓库自身的数据与常量
 

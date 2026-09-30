@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-09-30 · CI 收回纯校验(无产物);模块更新自动刷新火狐配置
+
+**1. CI 无产物**:直出的本意是 CI 不该产出任何东西——收掉上一版误加的 Release 发布,以及更早的 upload-artifact / sha256 边车。CI 只跑自检 + 一次验证性构建(产物随 runner 丢弃);模块 zip 一律本地 `build.py` 产出。
+
+**2. 火狐配置陈旧坑(真 bug)**:`firefox.sh` 装进 `/data/local/tmp` 的是配置**拷贝**,模块更新不会自动换新——更新模块后没重跑 `firefox.sh`,火狐用的还是旧名单,怎么改配置都"未修复"。`customize.sh` 现在在安装/更新时检测:那份拷贝存在(= 用户已接入)就顺手刷新;不存在不碰。自检覆盖两种情形(未接入不碰 / 已接入换新)。
+
+**3. 火狐花体/小型大写排查记录**(全部源码为证):确认 Gecko 的 `AndroidFont` 包装只有 `GetFontFilePath()`(`AndroidSystemFontIterator.h`)——字体清单 = 字件内部家族名,fonts.xml 别名永远进不去。带引号家族名(`"cursive"`/`"sans-serif-smallcaps"`)与泛型关键字走不同路径,pref 只覆盖泛型;把别名做成真实字体文件可修,但主字体 48.7MB ×4 份不可行,待确认具体测试写法再定(带引号名 / 泛型 / Unicode 花体字符 / webfont,修法各不相同)。
+
 ## 2026-09-30 · CI 直出裸 zip;火狐花体/小型大写按源码根因修复
 
 **1. 直出**:CI 不再产 `upload-artifact`(下载得到的是 zip 套 zip)也不写 sha256 边车——每次推送(非 PR)把裸 `Selffont.zip` 挂到 Release,tag/标题 = 盖戳版本号;重跑同一 run_number 时 `gh release upload --clobber` 覆盖附件。PR 事件只构建校验不发版(没有写权限)。
