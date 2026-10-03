@@ -64,6 +64,13 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 
 emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Color Emoji` / `Noto Color Emoji Flags`(对 emoji 表现字符它优先选带彩色的那张,所以前置不挡彩色);包内字体到底覆盖到哪个码位,拿 fontTools 查 cmap 即可——先拿数据,再谈 Gecko。
 
+## 装完自查(约一分钟)
+
+1. 系统:设置里随便看几行字——字形变圆即生效;通知栏角标数字不再偏低/切下沿(度量归一修复的目标)。
+2. 火狐:`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 应有两行;没有就先跑 `firefox.sh`。
+3. emoji:拿一个较新的 emoji 看是否彩色;想看包内覆盖上限,用 fontTools 查 cmap(没有随包报告——查 cmap 是一行的事)。
+4. 复原:卸载 = KSU 删模块 + 重启,一切回到系统自带字体。
+
 ## 边界
 
 - 真机验证过:Android 16 / OnePlus / KernelSU 一台,其他平台自担风险。
