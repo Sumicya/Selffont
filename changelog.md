@@ -1,5 +1,58 @@
 # 更新日志
 
+## 2026-09-30 · 火狐花体/小型大写确认根因:Unicode 逐字回退,修链对齐 fonts.xml
+
+拿到测试数据(花体/小型大写是 **Unicode 字符本身**,表现是"渲染成了别的字体",且上次测的可能是旧配置拷贝),根因闭环:
+
+- 这类字符(𝓐𝓑𝓒 数学字母数字区、ᴀʙᴄ 小型大写区)不选字体,走 Gecko 的**逐字回退**:先按字符语言组查 `font.name-list.*`,再全清单乱序扫描——**不读 fonts.xml 顺序**,选中的兜底字体和系统(Minikin 按 fonts.xml 链)不同,同一字符两副面孔。
+- 数学区的语言组是 `x-math`,Gecko 在 Android 的默认名单全是桌面数学字体(设备上没有)→ 直接乱序扫描。
+- 修复:① 配置补 `x-math` 三条(默认名单逐条抄自 all.js Android 段,前置文渊);② **构建期尾链**——`build.py` 把模块补充字库的内部家族名(优先 typographic,现场从基础包读)按 fonts.xml 出现顺序追加到每条 `font.name-list.*` 末尾,火狐逐字兜底从此与系统同序、选中同一个字体;③ 配置拷贝在模块更新时自动刷新(见下),配合 `firefox.sh` 重放。
+- 自检:e2e 用真字体验尾链(内部家族名拼进每条名单、前置仍是文渊),firefox_bridge 断言 x-math 三条在位。
+
+## 2026-09-30 · CI 收回纯校验(无产物);模块更新自动刷新火狐配置
+
+**1. CI 无产物**:直出的本意是 CI 不该产出任何东西——收掉上一版误加的 Release 发布,以及更早的 upload-artifact / sha256 边车。CI 只跑自检 + 一次验证性构建(产物随 runner 丢弃);模块 zip 一律本地 `build.py` 产出。
+
+**2. 火狐配置陈旧坑(真 bug)**:`firefox.sh` 装进 `/data/local/tmp` 的是配置**拷贝**,模块更新不会自动换新——更新模块后没重跑 `firefox.sh`,火狐用的还是旧名单,怎么改配置都"未修复"。`customize.sh` 现在在安装/更新时检测:那份拷贝存在(= 用户已接入)就顺手刷新;不存在不碰。自检覆盖两种情形(未接入不碰 / 已接入换新)。
+
+**3. 火狐花体/小型大写排查记录**(全部源码为证):确认 Gecko 的 `AndroidFont` 包装只有 `GetFontFilePath()`(`AndroidSystemFontIterator.h`)——字体清单 = 字件内部家族名,fonts.xml 别名永远进不去。带引号家族名(`"cursive"`/`"sans-serif-smallcaps"`)与泛型关键字走不同路径,pref 只覆盖泛型;把别名做成真实字体文件可修,但主字体 48.7MB ×4 份不可行,待确认具体测试写法再定(带引号名 / 泛型 / Unicode 花体字符 / webfont,修法各不相同)。
+
+## 2026-09-30 · CI 直出裸 zip;火狐花体/小型大写按源码根因修复
+
+**1. 直出**:CI 不再产 `upload-artifact`(下载得到的是 zip 套 zip)也不写 sha256 边车——每次推送(非 PR)把裸 `Selffont.zip` 挂到 Release,tag/标题 = 盖戳版本号;重跑同一 run_number 时 `gh release upload --clobber` 覆盖附件。PR 事件只构建校验不发版(没有写权限)。
+
+**2. 火狐花体(fantasy/cursive)与小型大写未修复——三个源码根因,逐个关掉**:
+
+- **Gecko 只认字体文件内部家族名**(`gfxFT2FontList` 经 harfbuzz 读 name 表建清单),fonts.xml 别名(`cursive`/`sans-serif-smallcaps`)不进清单:网页按名调用走泛型 pref 或默认字体回退,不查我们的 fonts.xml。
+- **泛型缺口**:`all.js` Android 段只有 `cursive.x-unicode/x-western` 默认,`fantasy` 一个都没有;zh/ja/ko 下 `font-family: cursive` 的 pref 列表为空,`mFallbackGeneric` 已设导致不再补默认泛型 → 空字体组 → `GetDefaultFont()`(清单第一个家族,Roboto 空壳)→ 花体行不渲染文渊。`geckoview-config.yaml` 补齐 cursive/fantasy ×(x-unicode/x-western/zh-CN/zh-TW/zh-HK/ja/ko),与既有行同规则:前置文渊、原样保留原回退。
+- **小型大写**:`build.py` 的 `PRIMARY_FAMILIES` 漏了 `sans-serif-smallcaps`,CarroisGothicSC 一直留在系统清单里可被按文件名解析。接管后它挤出清单,系统侧与火狐侧(名称回退到默认泛型 → 我们的 sans-serif pref)都是文渊;CSS `font-variant: small-caps` 由基础字体合成,天然文渊。
+- 自检加两条硬断言:真实模板的 `sans-serif-smallcaps` 家族必须被接管;配置里 cursive/fantasy × 7 语言组必须齐全(缺一条就空字体组)。
+- 配置头注释顺带修正:还指着已删除的 `tools/build.py`/`tests/selfcheck.py`。
+
+边界(写进 README):网页自带 webfont 的装饰花体/小型大写不读系统清单,只有 `browser.display.use_document_fonts: 0` 能压。
+
+## 2026-09-30 · 四化重写 IV(ponytail 激进版):一个 Python 文件,行为逐字节不变
+
+按 ponytail 梯子(YAGNI → 复用 → stdlib → 原生 → 已有依赖 → 一行 → 最小实现)对现存每一件东西重新提问,能删就删。**等价性有证明**:同一输入下,新旧打包器产出的 `fonts.xml` 与包内主字体**逐字节相同**(sha256 比对);模块 zip 的成员差异恰好等于下列删除项。
+
+**提出的问题与答案**(每条都落到了代码里):
+
+- `action.sh` 谁按过?它自己的注释都承认"不证明渲染结果,只证明模块装上了"——一个自我声明无用的文件。**删**(KSU 模块本就不需要 action 按钮)。
+- `report.json` 谁在读?CI 摘要步骤和 README 里的两处引用;数据要么不可行动(`unbundledFontReferences` 225 个"设备自带"名单),要么无消费者。**随包 report.json 整个删**,CI 的 Report 步骤一并删(38 行工作流,日志即报告),`--revision` 参数随之消失。
+- `emojiCoverage` 防的是哪个 bug?还没人报告过火狐豆腐。真要看覆盖,拿 fontTools 查 cmap 是一行的事。**删**(连同 `EMOJI_RANGES`/`emoji_ceiling`/`emoji_coverage` 与给它们服务的逐字体 cmap 加载管线)。
+- `--font` 为什么要可重复、还带一套静态多文件就近字重映射?产线自 v2.7.0 起恒为单个 VF。**收敛为单字体**:`weight_ladder(axes)` 一个参数;静态字体仍可打包(全档同文件,粗体交给系统合成)。
+- `tests/selfcheck.py` 凭什么是第二个文件?同一份逻辑放两个文件必然漂移。**并进 `build.py --check`**,无框架无夹具的作风不变,8 项检查全保留。
+- `tools/` 目录还剩什么?build.py 和 requirements.txt 两个文件。**挪到仓库根,目录删**。
+- `report` 里的 `metricNormalization`/`weightMap`/`digitInkY`?装饰性数据。**删**;`normalize_metrics` 回归"进 bytes 出 bytes"。
+- `write_module` 里的 MODULE_KEYS 每构建校验、tempfile 原子落盘、包内字体 sha256 回读?静态文件由 `--check` 把关;产物可再生,坏了大不了重跑;`testzip` 已经够。**删**(校验逻辑留在自检里)。
+- `MAX_DOWNLOAD` 512MiB 上限?默认源是钉死的,自选 URL 是用户自己的事(自由化)。**删**。
+- `firefox.sh` 的 `command -v am/settings` 探测与 `debug_app` 回读?Android 必有这两个二进制,`set-debug-app` 失败本身有回显;探测只为在 Linux 上跑测试服务。**删**,55 → 27 行,install/remove 骨架不动。
+- `layout_metrics` 的 `typo`/`win` 键?report 死了之后无消费者。**删**。
+
+**保留的**(问完不删):度量归一(真机校准)、空壳映射剪除、OFL 整体改名、构建期字形守卫、基础包信任边界校验(路径穿越/绝对路径/符号链接/重复成员)、`customize.sh` 整份替换、火狐 GeckoView 原生接入、版本盖戳。
+
+**净变化**:Python 991 行(2 文件)→ 823 行(1 文件);仓库 15 → 13 个文件(`tools/`、`tests/` 目录消失);模块 zip 少 `report.json`、`action.sh` 两个成员;CI 54 → 38 行。CI 路径全部指向根目录 `build.py`。
+
 ## 2026-09-29 · 版本 = 日期 + 总构建数;上游同步;CI 提示清零
 
 **1. 版本号换成 `vYY.M.D.<总构建数>`,versionCode = 总构建数**。构建时盖戳(`SELFFONT_BUILD=<n>` 或 `--build <n>`,CI 传 `github.run_number`),日期按 UTC+8 取;仓库里的 `module.prop` 是未盖戳的本地默认(`versionCode=0`),不再是"上次发布"的残留。自检核对版本号末尾的构建数与 versionCode 一致——只改一处就失败。
