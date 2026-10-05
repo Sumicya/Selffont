@@ -27,12 +27,6 @@
 - 下载与安装：不发 Release。安装 = KernelSU 装本地构建的 zip + 重启；卸载 = KSU 删模块 + 重启；火狐接入 = `su -c 'sh /data/adb/modules/MFGA/firefox.sh'`。
 - 术语表：模块 zip = KernelSU 模块包；基础包 = MFGA 补充字库 ZIP（`build.py` 现场读取）；主字体 = 文渊圆体 VF；别名字件 = 只有家族名、没有字形的极小字体；网页字体开关 = 火狐的 `browser.display.use_document_fonts`（压 = 0，放行 = 加 `Selffont:keep` 标记注释）；pref 尾链 = 构建期把补充字库内部家族名按 fonts.xml 顺序追加到火狐 `font.name-list.*` 末尾。
 
-## 三条硬规则（2026-10-05，主人定）
-
-- **只做新包**：配置只出新语法（`supportedAxes`），只投放 `font_fallback*.xml`；不做 legacy 逐档展开、不替换库存 `fonts.xml`。没有目标文件的设备中止安装，不为兼容再开旧路径。
-- **先查证再动手**：动到平台行为（Android 字体管线、Gecko、KernelSU）之前先查上游源码或官方文档（googlesource / gerrit、searchfox、官方文档），依据写进 changelog / PR；只有间接证据的必须标「未验证」并留回退开关。
-- **不做冗余降级**：能明确失败的直接失败（静态主字体、缺空壳、模板缺关键行、系统没有目标文件都报错/中止），不静默产出半成品；删降级路径前先确认最坏失败模式不是不可恢复（优先「功能不生效」而不是「系统损坏」）。
-
 ## CI 权限与清理
 
 - `build.yml`:`contents: read` + `actions: read`（只为读本工作流运行历史算版本号），无写权限；版本号在该 job 一处算定后写进产物元数据，构建配置只读它。
@@ -44,4 +38,5 @@
 
 - 本项目没有发布型 CI（CI 只校验、无产物），因此「在发布工作流一处算定」落在唯一构建工作流 `Build Selffont` 上：日期与两个序号由 `build.py --query-github` 现场查运行历史一次取齐；本地打包可手工传 `--build` / `--day` / `--date`，或直接 `--query-github`。
 - 火狐别名字件与网页字体默认压属激进修复：**未在真机验证**，装机核对清单在 README「未验证项的真机清单」。别名字件只有构建期开关 `--no-alias-fonts`；网页自带字体是构建期默认值（`--keep-web-fonts` 放行）+ 运行时覆盖（KernelSU 管理器「操作」按钮 = `module/action.sh`，等价 `web-fonts.sh keep|block|toggle`，状态文件在 `/data/local/tmp/selffont-web-fonts.state`），`customize.sh` / `firefox.sh` 重生成配置副本时按状态走，不覆盖运行时的选择。
+- 第十七版的「只做新包与不做降级」在本仓库落成：只投放 `font_fallback*.xml`（新语法 `supportedAxes`），静态主字体、缺空壳的基础包、模板缺关键行都直接失败，设备没有 `font_fallback*.xml` 时中止安装；改平台行为前先查上游并留证据（近例：`font_fallback.xml` 有 AOSP 15 分支与官方文档佐证，未真机验证的改动在 changelog 标「未验证」并留回退开关）。
 - 边界与限制以 README 为准；本文件的清单与 README 冲突时，先按 README 的事实改本文件。
