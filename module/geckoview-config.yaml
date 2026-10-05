@@ -1,18 +1,18 @@
-# Gecko(Firefox)启动首选项。Gecko 不读系统的 fonts.xml 选定家族,只按家族名认字体
-# (字体清单来自 Android 系统字体 API,名单在 Firefox 的 font.name-list.* 里硬编码),
-# 所以这里把文渊前置到 Firefox 自己的名单最前面 —— 只前置、不清空,缺字仍走原回退链。
+# Gecko（Firefox）启动首选项。Gecko 不读系统的 fonts.xml 选定家族，只按家族名认字体
+# （字体清单来自 Android 系统字体 API，名单在 Firefox 的 font.name-list.* 里硬编码），
+# 所以这里把文渊前置到 Firefox 自己的名单最前面 —— 只前置、不清空，缺字仍走原回退链。
 #
-# 用法:module/firefox.sh install 会把它拷成 /data/local/tmp/org.mozilla.firefox-geckoview-config.yaml,
-# 并把 org.mozilla.firefox 设为 Android「调试应用」——GeckoView 只有在这种情况才读这个文件(官方机制)。
-# 改家族名时要和 build.py 的 RENAME 一致;build.py --check 会盯着这一点。
-# 构建时会把模块补充字库的内部家族名(按 fonts.xml 顺序)追加到每条名单末尾:火狐的逐字回退
-# 不读 fonts.xml,同一条链让它和系统选到同一个兜底字体(花体/生僻字符不再两副面孔)。
+# 用法：module/firefox.sh install 会把它拷成 /data/local/tmp/org.mozilla.firefox-geckoview-config.yaml,
+# 并把 org.mozilla.firefox 设为 Android「调试应用」——GeckoView 只有在这种情况才读这个文件（官方机制）。
+# 改家族名时要和 build.py 的 RENAME 一致；build.py --check 会盯着这一点。
+# 构建时会把模块补充字库的内部家族名（按 fonts.xml 顺序）追加到每条名单末尾：火狐的逐字回退
+# 不读 fonts.xml，同一条链让它和系统选到同一个兜底字体（花体/生僻字符不再两副面孔）。
 prefs:
   # emoji:SamsungColorEmoji / Noto Color Emoji / Noto Color Emoji Flags 是 Gecko 在 Android 上的默认名单。
-  # 前置只在缺色字时才落到后面的彩色字体(Gecko 对 emoji 表现字符优先彩色的)。
+  # 前置只在缺色字时才落到后面的彩色字体（Gecko 对 emoji 表现字符优先彩色的）。
   font.name-list.emoji: "Selffont Rounded SC VF, SamsungColorEmoji, Noto Color Emoji, Noto Color Emoji Flags"
 
-  # 西文 / 通用(默认名单来自 Gecko 的 all.js,Android 段)
+  # 西文 / 通用（默认名单来自 Gecko 的 all.js,Android 段）
   font.name-list.sans-serif.x-unicode: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans"
   font.name-list.sans-serif.x-western: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans"
   font.name-list.serif.x-unicode: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif, Droid Serif"
@@ -21,11 +21,11 @@ prefs:
   font.name-list.monospace.x-western: "Selffont Rounded SC VF, Droid Sans Mono"
   font.name-list.cursive.x-unicode: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.cursive.x-western: "Selffont Rounded SC VF, Dancing Script"
-  # fantasy 在 Android 的 all.js 里一个默认都没有(空字体组直接落平台默认),一并补上。
+  # fantasy 在 Android 的 all.js 里一个默认都没有（空字体组直接落平台默认），一并补上。
   font.name-list.fantasy.x-unicode: "Selffont Rounded SC VF, Coming Soon"
   font.name-list.fantasy.x-western: "Selffont Rounded SC VF, Coming Soon"
-  # 数学字母数字区(𝓐𝓑𝓒 这类花体字符的语言组):Gecko 默认名单是桌面数学字体,Android 上几乎全缺,
-  # 逐字回退会乱选——前置 + 构建期尾链(补充字库按 fonts.xml 顺序)补齐。
+  # 数学字母数字区（𝓐𝓑𝓒 这类花体字符的语言组）：Gecko 默认名单是桌面数学字体，Android 上几乎全缺，
+  # 逐字回退会乱选——前置 + 构建期尾链（补充字库按 fonts.xml 顺序）补齐。
   font.name-list.serif.x-math: "Selffont Rounded SC VF, Latin Modern Math, STIX Two Math, XITS Math, Cambria Math, Libertinus Math, DejaVu Math TeX Gyre, TeX Gyre Bonum Math, TeX Gyre Pagella Math, TeX Gyre Schola Math, TeX Gyre Termes Math, STIX Math, Asana Math, STIXGeneral, DejaVu Serif, DejaVu Sans, Charis SIL Compact"
   font.name-list.sans-serif.x-math: "Selffont Rounded SC VF, Roboto, Google Sans"
   font.name-list.monospace.x-math: "Selffont Rounded SC VF, Droid Sans Mono"
@@ -34,8 +34,8 @@ prefs:
   font.name-list.sans-serif.zh-CN: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans SC, Noto Sans CJK SC, SEC CJK SC, Droid Sans Fallback"
   font.name-list.serif.zh-CN: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK SC, Noto Serif, Droid Serif, Droid Sans Fallback"
   font.name-list.monospace.zh-CN: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK SC, SEC Mono CJK SC, Noto Sans CJK SC, MiSans VF, MiSans, Droid Sans Fallback"
-  # 花体/随意:Gecko 没有 zh/ja/ko 的 cursive/fantasy 默认,空字体组会落到平台默认字体
-  # (清单第一个家族是 Roboto 空壳)——花体行因此不渲染文渊。这里把缺口补齐。
+  # 花体/随意：Gecko 没有 zh/ja/ko 的 cursive/fantasy 默认，空字体组会落到平台默认字体
+  # （清单第一个家族是 Roboto 空壳）——花体行因此不渲染文渊。这里把缺口补齐。
   font.name-list.cursive.zh-CN: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.fantasy.zh-CN: "Selffont Rounded SC VF, Coming Soon"
 
@@ -63,5 +63,8 @@ prefs:
   font.name-list.cursive.ko: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.fantasy.ko: "Selffont Rounded SC VF, Coming Soon"
 
-  # 想要网页强制用它(忽略网页自带字体)就打开下一行——影响所有网站,默认关。
-  # browser.display.use_document_fonts: 0
+  # Selffont:web-fonts 网页自带字体（站内装饰字体）不读系统清单，字体 pref 管不到它，
+  # 只有下面这条能压：生效 = 全系统同一副面孔，代价是图标字体（FontAwesome 等）可能显示异常。
+  # 放行两条路：打包时 build.py --keep-web-fonts（默认值烧进 zip），
+  # 或运行时用管理器按钮 / `sh web-fonts.sh keep`（状态存在配置副本旁边，模块更新不覆盖）。
+  browser.display.use_document_fonts: 0
