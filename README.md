@@ -14,7 +14,7 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 
 模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。安装时把它投放到系统里存在的每份 `font_fallback*.xml`（含厂商的 `font_fallback_cjkvf.xml`）上；**库存 `fonts.xml` 不再替换**（Google 已废弃它，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备没有 `font_fallback*.xml`（Android 15 以下）时安装直接中止，不会留下半套配置。
 
-另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 15 KB）：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
+另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 4 KB（实测 6 枚共 4136 字节））：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
 
 ## 构建
 
@@ -78,7 +78,7 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 **泛型与家族名的坑**（CSS 写法不同，路径完全不同）：
 
 - 泛型关键字（`font-family: cursive/fantasy`，不带引号）：all.js 的 Android 段只有 `cursive.x-unicode/x-western` 默认、`fantasy` 一个都没有，zh/ja/ko 下解析成空字体组落平台默认——配置把 cursive/fantasy × 7 语言组补齐。
-- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 清单只收**字体文件内部家族名**，fonts.xml 别名进不去。本轮改成给这些别名各发一枚**别名字件**（家族名 = 别名、无字形，合计约 15 KB）：Gecko 命中后逐字回退，按上面的名单落到文渊。**未在真机验证**；要退回旧行为，打包时加 `--no-alias-fonts`。
+- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 清单只收**字体文件内部家族名**，fonts.xml 别名进不去。本轮改成给这些别名各发一枚**别名字件**（家族名 = 别名、无字形，合计约 4 KB（实测 6 枚共 4136 字节））：Gecko 命中后逐字回退，按上面的名单落到文渊。**未在真机验证**；要退回旧行为，打包时加 `--no-alias-fonts`。
 - 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成文渊**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/MFGA/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是文渊；`web-fonts.sh status` 看当前状态。
 - CSS `font-variant: small-caps` 由基础字体合成：基础字体是文渊，小型大写就是文渊。
 
