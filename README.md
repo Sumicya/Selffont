@@ -32,7 +32,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 产物名跟版本走：`build/Selffont-<版本>.zip`；没盖戳的非发行版本叫 `build/Selffont.zip`。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
-**版本号（五段，展示不含 `v`）**:`yy.m.d.当日序号.总序号`（第四段 = 当日序号，第五段 = 总序号），`versionCode` = 第五段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
+**版本号（五段，展示不含 `v`）**：`yy.m.d.当日序号.总序号`（第四段 = 当日序号，第五段 = 总序号），`versionCode` = 第五段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
 - 计数对象 = 仓库唯一构建工作流 `Build Selffont`（`.github/workflows/build.yml`）的运行历史，现场查、不写死现值；取数在这一次运行里算定，构建只用算出的三个值。
 - 总序号 = 该工作流最近一次运行的 `run_number`；当日序号 = 当天（Asia/Shanghai）该工作流 `push` / 手动触发且已开始的运行数，**PR 检查不计入**。
@@ -60,7 +60,7 @@ KSU 装 zip，重启（模块 ID `MFGA`；安装脚本只替换系统的 `font_f
 
 ## 火狐
 
-Gecko 不读系统的 `fonts.xml` 选家族：字体清单来自 Android 系统字体 API，选谁看它自己 `font.name-list.*` 里硬编码的**家族名**。所以字体装好了，Firefox 也不一定用——要单独接一次，走 GeckoView 官方的原生机制，不需要 LSPosed、不改 APK:
+Gecko 不读系统的 `fonts.xml` 选家族：字体清单来自 Android 系统字体 API，选谁看它自己 `font.name-list.*` 里硬编码的**家族名**。所以字体装好了，Firefox 也不一定用——要单独接一次，走 GeckoView 官方的原生机制，不需要 LSPosed、不改 APK：
 
 ```sh
 su -c 'sh /data/adb/modules/MFGA/firefox.sh'          # 接入
@@ -71,20 +71,20 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 
 **花体 / 小型大写（Unicode 字符本身，如 𝓐𝓑𝓒、ᴀʙᴄ）**——这类字符不选字体，走逐字回退，而 Gecko 的逐字回退**不读 fonts.xml 顺序**（先按字符语言组查 `font.name-list.*`，再全清单乱序扫描），选中的兜底字体和系统不同 → 同一字符两副面孔。修法 = 让火狐的回退链与 fonts.xml 同序：
 
-- 数学字母数字区（𝓐𝓑𝓒）的语言组是 `x-math`,Gecko 在 Android 的默认名单全是桌面数学字体（设备上没有）——配置补上 x-math 三条（前置文渊）；
+- 数学字母数字区（𝓐𝓑𝓒）的语言组是 `x-math`，Gecko 在 Android 的默认名单全是桌面数学字体（设备上没有）——配置补上 x-math 三条（前置文渊）；
 - 其余语言组的名单，构建时把模块补充字库的**内部家族名按 fonts.xml 顺序**追加到每条 `font.name-list.*` 末尾（火狐只认字件内部名，构建期现场从基础包读取）；
 - 配置是 `firefox.sh` 装的拷贝：**模块更新时 `customize.sh` 检测到已接入就按当前开关状态重生成**，不用记得重放 `firefox.sh`，也不会把你切过的网页字体开关覆盖掉。
 
 **泛型与家族名的坑**（CSS 写法不同，路径完全不同）：
 
 - 泛型关键字（`font-family: cursive/fantasy`，不带引号）：all.js 的 Android 段只有 `cursive.x-unicode/x-western` 默认、`fantasy` 一个都没有，zh/ja/ko 下解析成空字体组落平台默认——配置把 cursive/fantasy × 7 语言组补齐。
-- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 清单只收**字体文件内部家族名**,fonts.xml 别名进不去。本轮改成给这些别名各发一枚**别名字件**（家族名 = 别名、无字形，合计约 15 KB）：Gecko 命中后逐字回退，按上面的名单落到文渊。**未在真机验证**；要退回旧行为，打包时加 `--no-alias-fonts`。
+- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 清单只收**字体文件内部家族名**，fonts.xml 别名进不去。本轮改成给这些别名各发一枚**别名字件**（家族名 = 别名、无字形，合计约 15 KB）：Gecko 命中后逐字回退，按上面的名单落到文渊。**未在真机验证**；要退回旧行为，打包时加 `--no-alias-fonts`。
 - 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成文渊**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/MFGA/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是文渊；`web-fonts.sh status` 看当前状态。
 - CSS `font-variant: small-caps` 由基础字体合成：基础字体是文渊，小型大写就是文渊。
 
 验证：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`，应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。别名字件的真机验证：开一个用 `font-family: "sans-serif-smallcaps"` 的测试页，字形应是文渊而非 Roboto；若出现豆腐块，加 `--no-alias-fonts` 重新打包即可回到旧行为。
 
-emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Color Emoji` / `Noto Color Emoji Flags`（对 emoji 表现字符它优先选带彩色的那张，所以前置不挡彩色）；包内字体到底覆盖到哪个码位，拿 fontTools 查 cmap 即可——先拿数据，再谈 Gecko。
+emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Color Emoji` / `Noto Color Emoji Flags`（对 emoji 表现字符它优先选带彩色的那张，所以前置不挡彩色）；包内字体到底覆盖到哪个码位，拿 fontTools 查 cmap 即可——先拿数据，再谈 Gecko。
 
 ## 装完自查（约一分钟）
 
@@ -107,7 +107,7 @@ emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Col
 ## 边界
 
 - 只支持带 `font_fallback*.xml` 的设备（Android 15+）：装在没有该文件的机器上会中止安装。真机验证过：Android 16 / OnePlus / KernelSU 一台，其他平台自担风险。本轮的别名字件与网页字体默认压是**未验证**改动：装机核对清单见「未验证项的真机清单」。
-- 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork。上游领先的提交只动它自己的 Xposed 侧与文档（`fonts/`、`fonts.xml` 从 1717180003 起未变，已逐字节比对）：用 `-s ours` 记录了祖先关系（不再显示"落后"），但**不取它的代码**，只取字体资源（见 `LICENSES.md`）。
+- 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork。上游领先的提交只动它自己的 Xposed 侧与文档（`fonts/`、`fonts.xml` 从 1717180003 起未变，已逐字节比对）：用 `-s ours` 记录了祖先关系（不再显示「落后」），但**不取它的代码**，只取字体资源（见 `LICENSES.md`）。
 - `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与 OEM 字体（如 MiSans）由设备提供，不打包。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
 - MFGA 基础包只取字体资源，绝不执行其代码（归属见 `LICENSES.md`）。

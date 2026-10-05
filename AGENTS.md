@@ -19,17 +19,17 @@
 - 默认分支：`main`；会话固定在工作分支上提交并推送，不直接推 `main`。
 - 构建方式：本地 `python3 build.py`（唯一构建链，自检内建）。产物只带一份字体配置 `font_fallback.xml`（新语法 `supportedAxes`，Android 15+ 运行时实例化）；安装脚本只替换系统的 `font_fallback*.xml`，库存 `fonts.xml` 不碰，没有该文件的设备中止安装。输入侧不降级：静态主字体、缺空壳的基础包都直接拒绝。CI（`.github/workflows/build.yml`）只跑自检 + 一次验证性构建，**不发版、不上传 artifact、不写 Release**。
 - 产物：模块 zip `Selffont-<版本>.zip`（约 100 MB）；非发行版本叫 `Selffont.zip`。产物只由本地构建产出；仓库未启用 Release，文档里不写 Release 下载入口。
-- Actions artifact:CI 不再上传产物；`cleanup.yml` 手动触发清理，保留最近 **5** 个，按 `selffont-` 前缀筛选、完整分页、结构化字段，只删 artifact（详见"CI 权限与清理"）。
+- Actions artifact：CI 不再上传产物；`cleanup.yml` 手动触发清理，保留最近 **5** 个，按 `selffont-` 前缀筛选、完整分页、结构化字段，只删 artifact（详见「CI 权限与清理」）。
 - 允许写权限的工作流：cleanup.yml(actions) —— 只手动触发、只删 Actions artifact，不碰 Release、tag 与历史 tag。（这行同时是 `spec-check.yml` 的写权限白名单来源。）
-- 版本来源：五段 `yy.m.d.当日序号.总序号`，展示版本不含 `v`,`versionCode` = 总序号。取数在仓库唯一构建工作流的运行历史里现场查（`build.py --query-github` 或 README 给的 `gh api` 查法），不在文档/代码里写死现值；仓库里的 `module/module.prop` 默认是**非发行版本** `version=dev` / `versionCode=0`。
+- 版本来源：五段 `yy.m.d.当日序号.总序号`，展示版本不含 `v`，`versionCode` = 总序号。取数在仓库唯一构建工作流的运行历史里现场查（`build.py --query-github` 或 README 给的 `gh api` 查法），不在文档/代码里写死现值；仓库里的 `module/module.prop` 默认是**非发行版本** `version=dev` / `versionCode=0`。
 - 计数口径：总序号 = 该工作流最近一次运行的 `run_number`（含 PR 运行，单调递增）；当日序号 = 当天（Asia/Shanghai）该工作流 `push` / `workflow_dispatch` 且已开始的运行数，PR 检查不计入。**取不到当日序号时退化写四段 `yy.m.d.总序号`**，原因见 README。
-- 历史 tag:`v3.0.0`（0d9ba81,2026-09-26）、`v26.9.30.39`（215cf25,2026-09-29）属已下线的旧发版链，按规范默认保留，不追溯改名、不改写历史。
+- 历史 tag：`v3.0.0`（0d9ba81，2026-09-26）、`v26.9.30.39`（215cf25，2026-09-29）属已下线的旧发版链，按规范默认保留，不追溯改名、不改写历史。
 - 下载与安装：不发 Release。安装 = KernelSU 装本地构建的 zip + 重启；卸载 = KSU 删模块 + 重启；火狐接入 = `su -c 'sh /data/adb/modules/MFGA/firefox.sh'`。
 - 术语表：模块 zip = KernelSU 模块包；基础包 = MFGA 补充字库 ZIP（`build.py` 现场读取）；主字体 = 文渊圆体 VF；别名字件 = 只有家族名、没有字形的极小字体；网页字体开关 = 火狐的 `browser.display.use_document_fonts`（压 = 0，放行 = 加 `Selffont:keep` 标记注释）；pref 尾链 = 构建期把补充字库内部家族名按 fonts.xml 顺序追加到火狐 `font.name-list.*` 末尾。
 
 ## CI 权限与清理
 
-- `build.yml`:`contents: read` + `actions: read`（只为读本工作流运行历史算版本号），无写权限；版本号在该 job 一处算定后写进产物元数据，构建配置只读它。
+- `build.yml`：`contents: read` + `actions: read`（只为读本工作流运行历史算版本号），无写权限；版本号在该 job 一处算定后写进产物元数据，构建配置只读它。
 - `cleanup.yml`：唯一有写权限的工作流（`actions: write`），只手动触发（`workflow_dispatch`），默认干跑（`apply=false` 只打印清单），不与 PR 触发器共存；删除前校验 KEEP 为正整数、按 `selffont-` 前缀过滤、完整分页、按 `created_at` 倒序。
 - `spec-check.yml`：只读（`contents: read`），静态检查规范版本与 AGENTS.md 指针、关键 CI 权限、自动发版禁令；不拥有任何发布写权限。
 - 发版与清理分离：本仓库没有 CI 发版流程；清理授权不等于发版授权，发版仍需主人对项目、版本、触发条件的明确允许。
