@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-05 · 收尾：火狐开关真机生效；体积维持现状（不减覆盖）；建 TODO（自制圆体，下个会话）
+
+- 真机（一加 / ColorOS 16 / Android 16 / KernelSU）补测：**火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效**；系统字体生效此前已验证。剩余未验证项收窄为「别名字件」与「纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径」。
+- 体积决策：**不为体积牺牲字库覆盖**（主人 2026-10-05 决定），102 MiB 的 zip 维持现状；构成与三条可选减重路线（减字库 / 换主字体 / 换 OTF）记在 README「产物构成」，仅备查、不执行。
+- 新增 `TODO.md`：下个会话做「自制圆体主字体（类筑紫 A 丸ゴシック）」——含硬约束（VF 且含 `wght` 轴、OFL 合规、度量归一、不减覆盖）、历史线索（v2.x 曾自研 Selffont Round SC、圆角化脚本 `tools/round.py` 已删）、五个待确认问题与「只做方案 + 试点」的范围；`AGENTS.md` 加了指向。
+- 本会话至此具备收尾条件：本地 = 远端、工作树干净、CI 双绿、artifact 出包正常。PR #6 保持 OPEN 等主人合并。
+
 ## 2026-10-05 · 真机验证成功（ColorOS 16 / 一加）：字体生效，三份配置全部替换
 
 - 设备实测（2026-10-05，OnePlus / ColorOS 16 / Android 16 / KernelSU，`MFGA` 版本 `26.10.5.23.86`）：`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml` 三份 `grep -c Selffont` 均为 7，系统字形变圆——**「只做新包 + 按设备实际配置替换」路线在真机成立**。

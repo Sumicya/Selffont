@@ -123,12 +123,12 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 未验证项的真机清单
 
-**系统字体生效已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`。别名字件与网页字体默认压**仍无真机数据**。装上一分钟后按顺序看四条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效。**仍无真机数据**：别名字件、纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径。装上一分钟后按顺序看四条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
-3. 别名字件：开一个测试页写 `font-family: "sans-serif-smallcaps"`（或 `"cursive"`），字形应是文渊的圆体；若出现豆腐块或方框，改用 `--no-alias-fonts` 重新打包。
-4. 网页字体：开一个图标站点（如 FontAwesome 示例页）——**默认压掉**时图标会显示成方块/异常，这是预期代价；点管理器里模块的「操作」按钮切成「放行」（`web-fonts.sh status` 可核对），再重启火狐，图标应恢复。两种表现都算「按设计工作」，选哪种看你要全系统同一副面孔还是保图标。
+3. 别名字件（**仍未测**）：开一个测试页写 `font-family: "sans-serif-smallcaps"`（或 `"cursive"`），字形应是文渊的圆体；若出现豆腐块或方框，改用 `--no-alias-fonts` 重新打包。
+4. 网页字体（**已真机验证**）：开一个图标站点（如 FontAwesome 示例页）——**默认压掉**时图标会显示成方块/异常，这是预期代价；点管理器里模块的「操作」按钮切成「放行」（`web-fonts.sh status` 可核对），再重启火狐，图标恢复。两种表现都算「按设计工作」，选哪种看你要全系统同一副面孔还是保图标。
 
 回退都不用卸载：开关随时可切；要回到旧行为就重新打包（`--no-alias-fonts` / `--keep-web-fonts`）→ KSU 装新 zip → 重启。
 
