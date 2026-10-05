@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2026-10-05 · README 安装命令修正（Termux 路径坑：先 cp 到 /data/local/tmp 再 ksud install）
+
+- 现象：按 README 在 Termux 里 `su -c 'ksud module install /sdcard/Download/….zip'` 报 `No such file or directory`——解出的 zip 在 Termux 家目录，`/sdcard/Download/` 下没有；`ksud` 本身正常（打了 KernelSU 横幅）。
+- 修法：安装命令改为「用 `ls -t "$PWD"/Selffont-*.zip | head -1` 定位 → `unzip -l` 验根有 `module.prop` → `su -c cp` 到 `/data/local/tmp` → `su -c ksud module install` → 删副本 → 重启」，并给 SELinux 拦截时的共享存储回退；下载与解压命令不变（实测：100.2 MB、解出 `Selffont-26.10.5.20.80.zip` 105567199 字节）。
+- 未验证：本次修正后的命令尚未在真机重跑（等主人重试）。
+
 ## 2026-10-05 · 同步规范第二十一版：CI 出包必传（push 与 PR）+ 滚动清理默认启用 + 禁旧
 
 - 按第二十一版把「CI 出包」与「CI 发版」彻底分开：`build.yml` 的 push 与 PR 构建都上传 `build/Selffont-<版本>.zip` 为 Actions artifact（`name=Selffont-<版本>`、`retention-days: 5`、`if-no-files-found: error`）；上传不需要写权限，Release / 正式 tag / 正式 asset 一概不碰。

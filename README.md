@@ -66,7 +66,23 @@ gh api -X DELETE repos/Sumicya/Selffont/actions/artifacts/<id>
 
 ## 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `MFGA`；安装脚本只替换系统的 `font_fallback*.xml`，库存 `fonts.xml` 与 `fonts_customization.xml` 都不碰；没有前者的设备会中止安装）。卸载 = KSU 删模块 + 重启。仓库不发 Release：zip 来自本地 `build.py` 或 CI 的 Actions artifact。命令行安装（需 root）等价于管理器：`su -c 'ksud module install <zip 路径>'`。
+KSU 装 zip，重启（模块 ID `MFGA`；安装脚本只替换系统的 `font_fallback*.xml`，库存 `fonts.xml` 与 `fonts_customization.xml` 都不碰；没有前者的设备会中止安装）。卸载 = KSU 删模块 + 重启。仓库不发 Release：zip 来自本地 `build.py` 或 CI 的 Actions artifact。
+
+管理器安装：KernelSU → 模块 → 从存储安装 → 选解压出的 zip → 重启。
+
+命令行安装（Termux / adb，需 root）：先把 zip 搬到 `/data/local/tmp` 再装——`ksud` 直接读 Termux 家目录或 `/sdcard` 路径常因挂载命名空间 / SELinux 报 `No such file or directory`：
+
+```sh
+ZIP=$(ls -t "$PWD"/Selffont-*.zip | head -1)            # 定位刚解出的模块 zip
+ls -l "$ZIP" && unzip -l "$ZIP" | head -5               # 约 100 MB；根部有 module.prop 才对
+su -c "cp '$ZIP' /data/local/tmp/selffont-module.zip"   # 搬进 root 能读的 /data/local/tmp
+su -c 'ls -l /data/local/tmp/selffont-module.zip'       # 字节数应与上一步一致
+su -c 'ksud module install /data/local/tmp/selffont-module.zip'
+su -c 'rm -f /data/local/tmp/selffont-module.zip'
+su -c reboot                                            # 或手动重启
+```
+
+若 `cp` 被 SELinux 拦：先在 Termux 里 `cp "$ZIP" ~/storage/downloads/`（`termux-setup-storage` 给的软链），再 `su -c 'cp /sdcard/Download/<文件名> /data/local/tmp/'` 后照上装。
 
 ## 火狐
 
