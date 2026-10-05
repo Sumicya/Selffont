@@ -29,8 +29,8 @@ jobs:
           text = agents.read_text(encoding="utf-8")
           required = [
               "全局规范同步",
-              "第十五版",
-              "本仓库上次同步 = 第 15 版",
+              "第十六版",
+              "本仓库上次同步 = 第 16 版",
               "Sumicya/selfs",
               "任何本轮本地改动必须最终提交并推送",
               "CI 不得自动创建 Release",
@@ -63,7 +63,7 @@ jobs:
               if path.name == "spec-check.yml":
                   continue  # 它自己的写权限在上面单独查过;下面的禁令字样就写在它源码里,不能自我匹配
               if forbidden.search(source):
-                  raise SystemExit(f"{path} 包含自动创建 Release 的实现;第十五版规范禁止 CI 自动发版")
+                  raise SystemExit(f"{path} 包含自动创建 Release 的实现;第十六版规范禁止 CI 自动发版")
               if "pull_request_target" in source:
                   raise SystemExit(f"{path} 使用了 pull_request_target;写权限 job 不得跑未信任 PR 代码")
               permissions = set(write_permission.findall(source))
@@ -71,4 +71,4 @@ jobs:
                   raise SystemExit(f"{path} 有写权限 {sorted(permissions)},但没在 AGENTS.md 的写权限白名单里声明")
               if permissions and re.search(r"^\s{2,}pull_request:", source, re.M):
                   raise SystemExit(f"{path} 同时有写权限和 pull_request 触发;写权限 job 不得跑未信任 PR 代码")
-          print(f"第十五版全局规范检查通过(检查 {len(workflows)} 个工作流)")
+          print(f"第十六版全局规范检查通过(检查 {len(workflows)} 个工作流)")

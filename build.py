@@ -1087,7 +1087,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path,
                         help="产物路径（默认跟版本走：build/Selffont-<版本>.zip，非发行版本用 build/Selffont.zip）")
     parser.add_argument("--build", help="总序号：盖戳进 module.prop（默认读 $SELFFONT_BUILD，没有就不盖）")
-    parser.add_argument("--day", help="当日序号：五段版本号第三段（默认读 $SELFFONT_DAY，没有就退化成四段）")
+    parser.add_argument("--day", help="当日序号：五段版本号第四段（默认读 $SELFFONT_DAY，没有就退化成四段）")
     parser.add_argument("--date", help="版本日期 YY.M.D（默认读 $SELFFONT_DATE，没有取当天 UTC+8）")
     parser.add_argument("--query-github", action="store_true",
                         help="用 gh 现场查仓库唯一工作流的运行历史，取齐日期与两个序号（CI 用；失败只警告）")

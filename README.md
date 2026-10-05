@@ -26,7 +26,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 产物名跟版本走：`build/Selffont-<版本>.zip`；没盖戳的非发行版本叫 `build/Selffont.zip`。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
-**版本号（五段，展示不含 `v`）**:`yy.m.d.当日序号.总序号`,`versionCode` = 总序号（KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
+**版本号（五段，展示不含 `v`）**:`yy.m.d.当日序号.总序号`（第四段 = 当日序号，第五段 = 总序号），`versionCode` = 第五段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
 - 计数对象 = 仓库唯一构建工作流 `Build Selffont`（`.github/workflows/build.yml`）的运行历史，现场查、不写死现值；取数在这一次运行里算定，构建只用算出的三个值。
 - 总序号 = 该工作流最近一次运行的 `run_number`；当日序号 = 当天（Asia/Shanghai）该工作流 `push` / 手动触发且已开始的运行数，**PR 检查不计入**。
