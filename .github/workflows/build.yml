@@ -5,42 +5,98 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  actions: read
+  actions: read          # 只为读本工作流的运行历史算版本号,不写
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  module:
-    name: Checks (selfcheck + build verification)
-    runs-on: ubuntu-24.04
+  build:
+    name: Selfcheck / build / upload artifact
+    runs-on: ubuntu-24.04   # 钉住版本,不用 ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
       - name: Install fonttools
         run: python -m pip install -r requirements.txt
       - name: Selfcheck (packager, metric normalization, module scripts)
         run: python build.py --check
+      # 版本号在这一处算定(build.py --query-github 现场查本工作流的运行历史),产物名跟着版本走。
       - name: Build (version stamped)
         env:
           GH_TOKEN: ${{ github.token }}
         run: python build.py --query-github
-      # 非 PR 运行把 zip 传成 Actions artifact(规范认可的真实下载入口;上传不需要写权限),
-      # 名 = <项目名>-<版本>,留 5 天兜底;PR 运行只校验,不发版、不写 Release。
-      - name: Stage module zip name (non-PR)
-        if: github.event_name != 'pull_request'
+      - name: Stage artifact name (Selffont-<版本>)
         run: |
           zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont*.zip' -print -quit)")
           test -n "$zip_file"
           ls -l "build/$zip_file"
-          echo "MODULE_ZIP=${zip_file%.zip}" >> "$GITHUB_ENV"
-      - name: Upload module zip (non-PR)
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+          echo "ARTIFACT_NAME=${zip_file%.zip}" >> "$GITHUB_ENV"
+      # CI 出包(不是发版):push 与 PR 都照传,名 = <项目名>-<版本>,留 5 天兜底;
+      # 上传用 runner 自带令牌,不需要写权限。Release / tag / 正式 asset 一概不碰。
+      - name: Upload module zip (Actions artifact)
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.MODULE_ZIP }}
+          name: ${{ env.ARTIFACT_NAME }}
           path: build/Selffont*.zip
           retention-days: 5
           if-no-files-found: error
+  cleanup:
+    name: Keep newest 5 artifacts
+    needs: build
+    if: github.event_name != 'pull_request'   # 写权限 job 不跑未信任 PR 的代码
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write        # 只删 Actions artifact;contents 保持只读,不碰 Release / tag
+    concurrency:
+      group: selffont-artifacts
+      cancel-in-progress: false
+    steps:
+      - name: Delete old Selffont artifacts (full pagination, keep newest 5)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: "5"
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          keep_raw = os.environ["KEEP"].strip()
+          if not keep_raw.isdigit() or int(keep_raw) < 1:
+              sys.exit(f"KEEP 必须是正整数,收到 {keep_raw!r}")
+          keep = int(keep_raw)
+          repo = os.environ["REPO"]
+
+          def api(path, jq=None, method=None):
+              command = ["gh", "api"] + (["--jq", jq] if jq else []) + (["-X", method] if method else []) + [path]
+              result = subprocess.run(command, capture_output=True, text=True)
+              if result.returncode != 0:
+                  sys.exit(f"gh api {path} 失败:{result.stderr.strip()}")
+              return result.stdout
+
+          # 完整分页 + 结构化字段;只认本项目标识(项目名 + 短横线,不分大小写),
+          # 旧积压 selffont-module 与新名 Selffont-<版本> 都命中,别的对象不碰。
+          rows, page = [], 1
+          while True:
+              batch = [json.loads(line) for line in
+                       api(f"repos/{repo}/actions/artifacts?per_page=100&page={page}",
+                           jq=".artifacts[]|{id,name,created_at,size_in_bytes}").splitlines() if line.strip()]
+              if not batch:
+                  break
+              rows += [row for row in batch if row["name"].lower().startswith("selffont-")]
+              page += 1
+
+          rows.sort(key=lambda row: row["created_at"], reverse=True)
+          print(f"匹配到 {len(rows)} 个本项目 artifact,保留最近 {keep} 个;完整清单:")
+          for row in rows:
+              print(f"  {row['created_at']} {row['name']} {row['size_in_bytes']} 字节 id={row['id']}")
+          victims = rows[keep:]
+          for row in victims:
+              print(f"DELETE {row['created_at']} {row['name']} {row['size_in_bytes']} 字节 id={row['id']}")
+              api(f"repos/{repo}/actions/artifacts/{row['id']}", method="DELETE")
+          print(f"已删 {len(victims)} 个,保留 {min(len(rows), keep)} 个"
+                f"(Release / tag 不在本 job 范围内:历史 tag 默认保留)")
+          PY

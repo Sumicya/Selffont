@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-05 · 同步规范第二十一版：CI 出包必传（push 与 PR）+ 滚动清理默认启用 + 禁旧
+
+- 按第二十一版把「CI 出包」与「CI 发版」彻底分开：`build.yml` 的 push 与 PR 构建都上传 `build/Selffont-<版本>.zip` 为 Actions artifact（`name=Selffont-<版本>`、`retention-days: 5`、`if-no-files-found: error`）；上传不需要写权限，Release / 正式 tag / 正式 asset 一概不碰。
+- 滚动清理自第二十一版起默认启用、不需逐仓批准：`build.yml` 新增 `cleanup` job（`actions: write`、`needs: build`、非 PR 才跑、`concurrency` 串行），保留最近 5 个 artifact，按 `selffont-` 前缀（不分大小写，含旧积压 `selffont-module`）完整分页筛选，删除前打印完整清单；出包与清理同流，不新增工作流。
+- 禁旧：`actions/setup-python` 从 v6 升 v7、`actions/upload-artifact` 用 v7（`actions/checkout@v7` 保持）；runner 继续钉 `ubuntu-24.04`。
+- 规范自检不设工作流（第二十一版：由 agent 在会话中完成），`spec-check.yml` 不恢复；`AGENTS.md` 版本戳升到「本仓库上次同步 = 第二十一版」并补记第十八至二十一版要点（含 Arena 会话检讨条款）。
+- 未验证：沙箱内无法下载 artifact（资产域被拦），下载命令只核到元数据（id / 名字 / 字节数）；清理 job 的实际删除效果以合并后 main 运行为准。
+
 ## 2026-10-05 · CI 出包：非 PR 运行上传 Actions artifact；按主人精简去掉 spec-check / cleanup
 
 - 读规范更正：规范禁的是自动建 Release、自动建正式 tag、自动上传正式 Release asset；Actions artifact 本身是规范点名的真实下载入口。此前「CI 不上传」把两者混为一谈，产物没有下载入口——本轮更正。

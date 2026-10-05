@@ -46,7 +46,7 @@ gh api --paginate 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_p
 
 - 取不到当日序号时**退化写四段** `yy.m.d.总序号`（规范允许；本项目没有发布型 CI，当日序号只能在运行历史里查，查不到就不编数）。两个数都取不到就不盖戳：`module/module.prop` 是**非发行默认** `version=dev` / `versionCode=0`，自检核对盖戳格式与 versionCode 一致。
 
-CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**非 PR 运行**（push / 手动触发）把 `build/Selffont-<版本>.zip` 传成 Actions artifact（名 = 产物名去 `.zip`，`retention-days: 5`），PR 运行只校验；**不发版、不写 Release**，版本号由 `actions: read` 现场查运行历史算定。
+CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**push 与 PR 都上传** `build/Selffont-<版本>.zip` 为 Actions artifact（名 = `Selffont-<版本>`，`retention-days: 5`）；出包成功后自动滚动清理旧 artifact（保留最近 5 个，按 `selffont-` 前缀不分大小写筛选）。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset；版本号由 `actions: read` 现场查运行历史算定。
 
 ```sh
 # 最近一次非 PR 运行的 artifact 就是模块 zip(算 id、验字节数、清下载残留)
@@ -58,7 +58,7 @@ curl -fL -H "Authorization: token $(gh auth token)" -o selffont.zip \
 unzip -o selffont.zip && ls -l Selffont-*.zip      # 约 100 MB 量级才正常
 rm -f selffont.zip
 
-# 不设清理工作流:artifact 5 天后自动过期;要提前删(凭据需含 actions: write):
+# 滚动清理已自动执行(保留最近 5 个);要提前删(凭据需含 actions: write):
 gh api --paginate repos/Sumicya/Selffont/actions/artifacts \
   --jq '.artifacts[] | "\(.created_at) \(.id) \(.name) \(.size_in_bytes)"'
 gh api -X DELETE repos/Sumicya/Selffont/actions/artifacts/<id>
