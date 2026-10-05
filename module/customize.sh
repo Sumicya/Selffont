@@ -9,16 +9,22 @@ command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
     abort "Selffont: 模块里没有字体文件。请用 build.py 打包，不要直接压缩仓库。"
 
 # 整份替换系统全部 font*.xml（familyset 只能有一份；fonts_customization.xml 是用户自选配置，不碰）。
-# ponytail: 整份替换的天花板是非 familyset schema 的 ROM 会显示异常（实机已验证 Oplus 整替可行）；
-# 升级：遇到异 schema 实机再按 schema 分支，不预先建框架。
+# 按目标文件名选语法：font_fallback*.xml 是 Android 15+ 的新配置，放新语法（supportedAxes，
+# 主字体由系统按 wght/ital 运行时实例化）；其余 font*.xml 是 legacy 解析目标，放展开好的静态阶梯。
+# 官方要求两个文件保持同步，包里两份内容同源（都由 build.py 从同一棵家族树生成）。
 SYSTEM_ROOT=${SELFFONT_SYSTEM_ROOT:-/system}
 copied=0
 for base in "$SYSTEM_ROOT/system_ext/etc" "$SYSTEM_ROOT/product/etc" "$SYSTEM_ROOT/etc"; do
     [ -d "$base" ] || continue
     for source in "$base"/font*.xml; do
         [ -f "$source" ] || continue
-        case "${source##*/}" in fonts_customization.xml) continue ;; esac
-        mkdir -p "$MODPATH$base" && cp -f "$MODPATH/fonts.xml" "$MODPATH$base/${source##*/}" ||
+        case "${source##*/}" in
+            fonts_customization.xml) continue ;;
+            font_fallback*.xml) from=font_fallback.xml ;;
+            *) from=fonts.xml ;;
+        esac
+        [ -f "$MODPATH/$from" ] || abort "Selffont: 包里缺少 $from，无法替换 $source"
+        mkdir -p "$MODPATH$base" && cp -f "$MODPATH/$from" "$MODPATH$base/${source##*/}" ||
             abort "Selffont: 替换 $source 失败"
         copied=$((copied + 1))
     done

@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2026-10-05 · 跟上新语法：font_fallback.xml（supportedAxes，Android 15+ 运行时实例化）
+
+- `fonts.xml` 已废弃但仍必须与 `font_fallback.xml` 保持同步（AOSP 官方说明），且设备上跑的仍是 XML——AOSP 的 JSON 作者层（`font_config.json` / `alias.json` / `fallback_order.json` + `script/generate_fonts_xml_main.py`）是**构建期**管线，不上设备，模块没有 JSON 入口可挂。
+- 新语法只有一处：字件节点可写 `supportedAxes`（AOSP 校验器枚举仅 `wght` / `wght,ital`，带它时可省 `weight`/`style`），由系统运行时按请求的字重 / 斜体现场实例化。
+- `build.py` 现在生成两份同源配置：`fonts.xml` 维持 legacy 逐档展开（18 条带 `axis`），`font_fallback.xml` 主字体只出一条 `supportedAxes="wght,ital"`（静态主字体没有该轴，两侧都退回逐档展开）。
+- `customize.sh` 按目标文件名投放：`font_fallback*.xml` → 新语法，其余 `font*.xml` → legacy；`fonts_customization.xml` 仍不碰。
+- 顺带修正认知：设备 dump 的 `fonts.xml` 里 Roboto 空壳本来就带 `supportedAxes`，说明 Android 15/16 接受该语法；别名字件与主字体在两边写法不同、接管家族集合一致（自检断言）。
+- 自检：`fonts_xml` 覆盖新语法节点（一条、无 weight/style/axis）、静态退化、`supported_axes` 枚举边界；`build_end_to_end` 断言两文件同源且接管家族一致；`runtime_scripts` 断言 5 份配置按名字分别拿到 legacy / 新语法。
+- 真机未验证（无 Android 15+ 装机数据）；现网表现与旧版一致（legacy 文件仍照旧投放）。
+
 ## 2026-10-05 · 网页字体开关做成管理器按钮（运行时覆盖）+ 构建期默认值
 
 - 新增 `module/web-fonts.sh`：`status` / `keep` / `block` / `toggle` / `refresh`，状态存 `FIREFOX_DATA_DIR`（默认 `/data/local/tmp/selffont-web-fonts.state`，在模块目录之外，模块更新不丢）。

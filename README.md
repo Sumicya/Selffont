@@ -10,7 +10,14 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 2. 剪除映射到空白字形的码位（上游声称覆盖但字形空白，会吞掉回退链）；
 3. 按 OFL 保留名规则把内部家族名改成 **Selffont Rounded SC VF**。
 
-字重阶梯现场从字体的 `wght`/`ital` 轴读取（越界夹取）；静态字体也能打包（全档同文件，粗体交给系统合成）。另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 15 KB）：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
+字重阶梯现场从字体的 `wght`/`ital` 轴读取（越界夹取）；静态字体也能打包（全档同文件，粗体交给系统合成）。
+
+模块带**两份同源的字体配置**，安装时按目标文件名投放：
+
+- `fonts.xml`（legacy 解析目标）：主字体逐档展开成 18 条静态条目（每档一条 `axis` 子节点）；
+- `font_fallback.xml`（Android 15+ 的新配置）：主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档；
+- `font_fallback*.xml`（含厂商的 `font_fallback_cjkvf.xml` 等）一律放新语法，其余 `font*.xml` 放 legacy 展开；官方要求两个文件保持同步，所以它们由 `build.py` 从同一棵家族树生成（自检断言两边的接管家族集合一致）。
+- 静态主字体没有 `wght`/`ital` 轴：新语法这一侧也退回逐档展开（`supportedAxes` 只认 `wght` / `wght,ital`）。另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 15 KB）：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
 
 ## 构建
 

@@ -16,7 +16,7 @@
 ## 项目核对清单
 
 - 默认分支：`main`；会话固定在工作分支上提交并推送，不直接推 `main`。
-- 构建方式：本地 `python3 build.py`（唯一构建链，自检内建）。CI（`.github/workflows/build.yml`）只跑自检 + 一次验证性构建，**不发版、不上传 artifact、不写 Release**。
+- 构建方式：本地 `python3 build.py`（唯一构建链，自检内建）。产物带两份同源字体配置：`fonts.xml`（legacy 逐档展开）与 `font_fallback.xml`（新语法 `supportedAxes`，Android 15+ 运行时实例化），安装脚本按目标文件名投放。CI（`.github/workflows/build.yml`）只跑自检 + 一次验证性构建，**不发版、不上传 artifact、不写 Release**。
 - 产物：模块 zip `Selffont-<版本>.zip`（约 100 MB）；非发行版本叫 `Selffont.zip`。产物只由本地构建产出；仓库未启用 Release，文档里不写 Release 下载入口。
 - Actions artifact:CI 不再上传产物；`cleanup.yml` 手动触发清理，保留最近 **5** 个，按 `selffont-` 前缀筛选、完整分页、结构化字段，只删 artifact（详见"CI 权限与清理"）。
 - 允许写权限的工作流：cleanup.yml(actions) —— 只手动触发、只删 Actions artifact，不碰 Release、tag 与历史 tag。（这行同时是 `spec-check.yml` 的写权限白名单来源。）
