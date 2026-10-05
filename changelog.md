@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-05 · 网页字体开关做成管理器按钮（运行时覆盖）+ 构建期默认值
+
+- 新增 `module/web-fonts.sh`：`status` / `keep` / `block` / `toggle` / `refresh`，状态存 `FIREFOX_DATA_DIR`（默认 `/data/local/tmp/selffont-web-fonts.state`，在模块目录之外，模块更新不丢）。
+- 新增 `module/action.sh`：KernelSU 管理器里模块的「操作」按钮，点一下在「压 / 放行」之间切换；只改火狐配置副本与状态文件，不动系统字体。
+- `firefox.sh install` 与 `customize.sh` 的更新刷新都改走 `web-fonts.sh refresh`：按当前状态重新生成配置副本，不再用模板默认硬覆盖；`web-fonts.sh` 不可用时退回旧行为（cp 模板）。
+- 表示法与构建期统一：生效 = pref 行原样（压），放行 = 该行加 `Selffont:keep` 标记注释；`build.py` 的 `apply_web_font_switch` 幂等，并改用同一套标记（原来整块替换的写法废弃）。
+- 自检：`runtime_scripts` 覆盖 status / 幂等 / 按钮 toggle / 更新与重接入不覆盖运行时选择 / 开关行缺失报错；端到端构建断言 `web-fonts.sh`、`action.sh` 进包且配置标记正确。
+
 ## 2026-10-05 · 网页字体开关做成构建期开关（--keep-web-fonts）+ 真机核对清单
 
 - `--keep-web-fonts`：默认仍把网页自带字体压成文渊；传了这个开关，打包时整块替换配置里的开关块（模板标记 `Selffont:web-fonts`，标记不在就报错，不静默出一个没开关的包）。选择烧进 zip——`customize.sh` 刷新配置拷贝时也跟着走，不会再被覆盖。

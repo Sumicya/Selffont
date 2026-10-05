@@ -13,9 +13,9 @@ MODPATH=${0%/*}; [ "$MODPATH" = "$0" ] && MODPATH=.
 
 case "${1:-install}" in
     install)
-        [ -r "$MODPATH/geckoview-config.yaml" ] || { echo "读不到 $MODPATH/geckoview-config.yaml" >&2; exit 1; }
-        mkdir -p "${CONFIG%/*}" && cp -f "$MODPATH/geckoview-config.yaml" "$CONFIG" ||
-            { echo "写入 $CONFIG 失败" >&2; exit 1; }
+        # 用 web-fonts.sh refresh 生成副本：它会带上运行时的网页字体开关状态
+        # （没有状态文件就用模板默认），所以接入 / 重放不会覆盖你在管理器里切过的选择。
+        sh "$MODPATH/web-fonts.sh" refresh || { echo "写入 $CONFIG 失败" >&2; exit 1; }
         am set-debug-app --persistent "$PKG" || echo "am set-debug-app 失败（重启后可能失效）"
         echo "已接入。重启火狐后验证：logcat -s GeckoRuntime GeckoDebugConfig | grep -i config"
         echo "应看到 'Adding debug configuration from: $CONFIG'。退出：firefox.sh remove"

@@ -63,8 +63,8 @@ prefs:
   font.name-list.cursive.ko: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.fantasy.ko: "Selffont Rounded SC VF, Coming Soon"
 
-  # Selffont:web-fonts 下面是「网页自带字体」开关：默认压掉（全系统同一副面孔）。
-  # 打包时用 --keep-web-fonts 会整块替换成放行说明（图标字体 FontAwesome 等需要它）。
-  # 网页自带的 webfont（站内装饰字体）不读系统清单，字体 pref 管不到它，只有下面这条能压：
-  # 关掉文档字体 → 所有网页一律按上面的名单渲染成文渊；代价是图标字体可能显示异常。
+  # Selffont:web-fonts 网页自带字体（站内装饰字体）不读系统清单，字体 pref 管不到它，
+  # 只有下面这条能压：生效 = 全系统同一副面孔，代价是图标字体（FontAwesome 等）可能显示异常。
+  # 放行两条路：打包时 build.py --keep-web-fonts（默认值烧进 zip），
+  # 或运行时用管理器按钮 / `sh web-fonts.sh keep`（状态存在配置副本旁边，模块更新不覆盖）。
   browser.display.use_document_fonts: 0

@@ -83,21 +83,21 @@ ALIAS_FAMILIES = ("cursive", "fantasy", "casual", "serif-monospace",
                   "sans-serif-smallcaps", "sans-serif-condensed")
 ALIAS_PREFIX = "Selffont-Alias-"
 
-# 网页自带字体开关:模板里默认压掉(全系统同一副面孔);--keep-web-fonts 放开(图标字体等要它)。
+# 网页自带字体开关:模板默认压掉(全系统同一副面孔);--keep-web-fonts 放开(图标字体等要它)。
+# 表示法与 module/web-fonts.sh 完全一致:生效 = pref 行原样,放行 = 该行加 Selffont:keep 标记注释。
 WEB_FONT_PREF = "browser.display.use_document_fonts: 0"
-WEB_FONT_BLOCK = re.compile(r"^  # Selffont:web-fonts.*?^  browser\.display\.use_document_fonts: 0[ \t]*$\n?",
-                            re.M | re.S)
-WEB_FONT_KEEP = "  # Selffont:web-fonts 本次打包用了 --keep-web-fonts：网页自带 webfont（图标字体等）放行。\n"
+WEB_FONT_ACTIVE = f"  {WEB_FONT_PREF}"
+WEB_FONT_KEPT = f"  # Selffont:keep {WEB_FONT_PREF}"
 
 
 def apply_web_font_switch(config: str, keep: bool) -> str:
-    """按 --keep-web-fonts 决定配置里是压掉还是放行网页自带字体;模板标记不在就报错,不静默。"""
-    if not keep:
+    """把配置置成目标状态(幂等):keep 注释掉 pref 行(放行),否则还原(压掉);找不到那一行就报错。"""
+    wanted, other = (WEB_FONT_KEPT, WEB_FONT_ACTIVE) if keep else (WEB_FONT_ACTIVE, WEB_FONT_KEPT)
+    if re.search(rf"^{re.escape(wanted)}$", config, re.M):
         return config
-    switched, count = WEB_FONT_BLOCK.subn(WEB_FONT_KEEP, config)
-    if count != 1:
-        raise ValueError(f"模板里找不到网页字体开关块（{WEB_FONT_PREF}）:请检查 module/geckoview-config.yaml")
-    return switched
+    if not re.search(rf"^{re.escape(other)}$", config, re.M):
+        raise ValueError(f"模板里找不到网页字体开关行（{WEB_FONT_PREF}）:请检查 module/geckoview-config.yaml")
+    return re.sub(rf"^{re.escape(other)}$", wanted, config, count=1, flags=re.M)
 
 
 def warn(message: str) -> None:
@@ -796,12 +796,13 @@ def build_end_to_end():
         with zipfile.ZipFile(output) as archive:
             members = set(archive.namelist())
             for expected in ("module.prop", "fonts.xml", "LICENSES.md", "customize.sh",
-                             "firefox.sh", "geckoview-config.yaml", "licenses/WenYuan-OFL.txt",
+                             "firefox.sh", "web-fonts.sh", "action.sh", "geckoview-config.yaml",
+                             "licenses/WenYuan-OFL.txt",
                              "system/fonts/P-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
                              "system/fonts/NotoSansPro.otf", "licenses/MFGA-base-LICENSES.md",
                              *alias_members()):
                 assert expected in members, f"缺成员 {expected}"
-            for absent in ("report.json", "action.sh", "system/fonts/DeadWeight.ttf"):
+            for absent in ("report.json", "system/fonts/DeadWeight.ttf"):
                 assert absent not in members, f"不该有的成员 {absent}"
             installed_prop = archive.read("module.prop").decode()
             assert "version=26.9.30.2.9" in installed_prop and "\nversionCode=9\n" in installed_prop, installed_prop
@@ -826,13 +827,14 @@ def build_end_to_end():
             if line.strip().startswith("font.name-list."):
                 assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
 
-        # 关掉别名字件时包里不该有；--keep-web-fonts 时配置里不该有压网页字体的那行。
+        # 关掉别名字件时包里不该有；--keep-web-fonts 时那一行应带 Selffont:keep 标记。
         build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30",
               alias=False, keep_web_fonts=True)
         with zipfile.ZipFile(output) as archive:
             assert not any(ALIAS_PREFIX in name for name in archive.namelist()), "别名字件未关闭"
             kept = archive.read("geckoview-config.yaml").decode()
-            assert WEB_FONT_PREF not in kept and "Selffont:web-fonts" in kept, "网页字体未放行"
+            assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", kept, re.M), "网页字体未放行"
+            assert not re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", kept, re.M), "放行后 pref 仍生效"
             for line in kept.splitlines():  # 放行后名单本身仍完整、仍前置文渊
                 if line.strip().startswith("font.name-list."):
                     assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
@@ -982,15 +984,18 @@ def firefox_bridge():
     for key in ("serif.x-math", "sans-serif.x-math", "monospace.x-math"):
         assert f"font.name-list.{key}" in keys, f"{key} 缺失（逐字回退乱选）"
     assert config.count('"') % 2 == 0, "引号不配对"
-    # 网页自带 webfont 不读系统清单：默认压掉文档字体（激进设定）；--keep-web-fonts 时才放行。
-    assert WEB_FONT_PREF in config, "文档字体未默认压掉"
+    # 网页自带 webfont 不读系统清单：默认压掉（激进设定）；--keep-web-fonts / 管理器按钮才放行。
+    assert re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", config, re.M), "文档字体未默认压掉"
     kept = apply_web_font_switch(config, True)
-    assert WEB_FONT_PREF not in kept and "Selffont:web-fonts" in kept, "--keep-web-fonts 未生效"
+    assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", kept, re.M), "--keep-web-fonts 未生效"
+    assert not re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", kept, re.M), "放行后 pref 仍生效"
+    assert apply_web_font_switch(kept, True) == kept, "置 keep 不幂等"
+    assert re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", apply_web_font_switch(kept, False), re.M), "变不回压"
     assert apply_web_font_switch(config, False) == config, "默认路径不该改动配置"
-    for template in ("prefs:\n" + WEB_FONT_KEEP, config.replace(WEB_FONT_PREF, "# 丢了标记")):
-        try:  # 模板标记不在时必须报错，不许静默出一个没开关的包
+    for template in ("prefs:\n  # 开关行丢了\n", config.replace(WEB_FONT_ACTIVE, "  # 丢了标记")):
+        try:  # 开关行不在时必须报错，不许静默出一个没开关的包
             apply_web_font_switch(template, True)
-            raise AssertionError("开关块缺失未被拒绝")
+            raise AssertionError("开关行缺失未被拒绝")
         except ValueError:
             pass
 
@@ -1067,6 +1072,42 @@ def runtime_scripts():
         assert result.returncode == 0 and "已刷新火狐配置" in result.stdout, result.stdout
         refreshed = bridge.read_text(encoding="utf-8")
         assert refreshed != "stale\n" and "font.name-list" in refreshed, "配置没换成新版"
+
+        # 管理器按钮 / web-fonts.sh：状态文件记选择、副本立刻刷新、更新时不被覆盖。
+        web, action = modpath / "web-fonts.sh", modpath / "action.sh"
+        for script in (web, action):
+            assert sh(["-n", str(script)], os.environ).returncode == 0, f"{script.name} 语法错误"
+        state = bridge_dir / "selffont-web-fonts.state"
+        assert sh([str(web), "status"], env).stdout.strip().startswith("网页自带字体 = 压成文渊")
+        assert sh([str(web), "wat"], env).returncode == 2, "未知参数应报用法错"
+        result = sh([str(web), "keep"], env)
+        assert result.returncode == 0 and state.read_text().strip() == "keep", result
+        assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", bridge.read_text(encoding="utf-8"), re.M), \
+            "keep 没写进配置副本"
+        assert sh([str(web), "keep"], env).returncode == 0 and \
+            state.read_text().strip() == "keep", "keep 不幂等"
+        result = sh([str(action)], env)  # 管理器按钮 = toggle：keep → block
+        assert result.returncode == 0 and state.read_text().strip() == "block", result
+        assert re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", bridge.read_text(encoding="utf-8"), re.M), \
+            "toggle 没变回压"
+        # 模块更新（customize.sh）刷新副本时按状态走：先在管理器里选 keep，再跑一次安装脚本。
+        assert sh([str(action)], env).returncode == 0 and state.read_text().strip() == "keep"
+        result = sh([str(harness)], env)
+        assert result.returncode == 0 and "保留网页字体开关状态" in result.stdout, result.stdout
+        assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", bridge.read_text(encoding="utf-8"), re.M), \
+            "模块更新把网页字体开关覆盖了"
+        # 重新接入（firefox.sh install）同样按状态生成，不退回模板默认。
+        assert sh([str(ROOT / "module/firefox.sh")], {**env, "PATH": os.environ["PATH"]}).returncode == 0
+        assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", bridge.read_text(encoding="utf-8"), re.M), \
+            "重新接入把开关覆盖了"
+        # 开关行缺失的模板必须报错，不许静默放行（把脚本放到坏模板旁边跑，MODPATH 才指向它）。
+        broken = tmp / "broken"
+        broken.mkdir()
+        (broken / "geckoview-config.yaml").write_text("prefs:\n  # 没有开关行\n")
+        shutil.copy(web, broken / "web-fonts.sh")
+        result = sh([str(broken / "web-fonts.sh"), "keep"], {**env, "FIREFOX_DATA_DIR": str(broken)})
+        assert result.returncode != 0 and "找不到网页字体开关行" in result.stderr, result
+        (modpath / "harness.sh").unlink()
 
 
 # ---------------------------------------------------------------- 仓库自身的数据与常量

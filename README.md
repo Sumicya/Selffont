@@ -69,13 +69,13 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 
 - 数学字母数字区（𝓐𝓑𝓒）的语言组是 `x-math`,Gecko 在 Android 的默认名单全是桌面数学字体（设备上没有）——配置补上 x-math 三条（前置文渊）；
 - 其余语言组的名单，构建时把模块补充字库的**内部家族名按 fonts.xml 顺序**追加到每条 `font.name-list.*` 末尾（火狐只认字件内部名，构建期现场从基础包读取）；
-- 配置是 `firefox.sh` 装的拷贝：**模块更新时 `customize.sh` 检测到已接入就自动换新**，不用记得重放 `firefox.sh`。
+- 配置是 `firefox.sh` 装的拷贝：**模块更新时 `customize.sh` 检测到已接入就按当前开关状态重生成**，不用记得重放 `firefox.sh`，也不会把你切过的网页字体开关覆盖掉。
 
 **泛型与家族名的坑**（CSS 写法不同，路径完全不同）：
 
 - 泛型关键字（`font-family: cursive/fantasy`，不带引号）：all.js 的 Android 段只有 `cursive.x-unicode/x-western` 默认、`fantasy` 一个都没有，zh/ja/ko 下解析成空字体组落平台默认——配置把 cursive/fantasy × 7 语言组补齐。
 - 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 清单只收**字体文件内部家族名**,fonts.xml 别名进不去。本轮改成给这些别名各发一枚**别名字件**（家族名 = 别名、无字形，合计约 15 KB）：Gecko 命中后逐字回退，按上面的名单落到文渊。**未在真机验证**；要退回旧行为，打包时加 `--no-alias-fonts`。
-- 网页**自带的 webfont**（站内装饰字体）不读系统清单，pref 管不到：配置里 `browser.display.use_document_fonts: 0` **默认开**，网页字体一律压成文渊。代价是图标字体（如 FontAwesome）会显示异常；要放行就用 `--keep-web-fonts` 重新打包（这是构建期开关：选择烧进 zip，模块更新刷新配置拷贝也不会被覆盖）。
+- 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成文渊**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/MFGA/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是文渊；`web-fonts.sh status` 看当前状态。
 - CSS `font-variant: small-caps` 由基础字体合成：基础字体是文渊，小型大写就是文渊。
 
 验证：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`，应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。别名字件的真机验证：开一个用 `font-family: "sans-serif-smallcaps"` 的测试页，字形应是文渊而非 Roboto；若出现豆腐块，加 `--no-alias-fonts` 重新打包即可回到旧行为。
@@ -96,9 +96,9 @@ emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Col
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（旧结论，先确认这条）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
 3. 别名字件：开一个测试页写 `font-family: "sans-serif-smallcaps"`（或 `"cursive"`），字形应是文渊的圆体；若出现豆腐块或方框，改用 `--no-alias-fonts` 重新打包。
-4. 网页字体：开一个图标站点（如 FontAwesome 示例页）——**默认压掉**时图标会显示成方块/异常，这是预期代价；要正常显示图标就 `--keep-web-fonts` 重新打包。两种表现都算「按设计工作」，选哪种看你要全系统同一副面孔还是保图标。
+4. 网页字体：开一个图标站点（如 FontAwesome 示例页）——**默认压掉**时图标会显示成方块/异常，这是预期代价；点管理器里模块的「操作」按钮切成「放行」（`web-fonts.sh status` 可核对），再重启火狐，图标应恢复。两种表现都算「按设计工作」，选哪种看你要全系统同一副面孔还是保图标。
 
-回退都不用卸载：重新打包 → KSU 装新 zip → 重启。
+回退都不用卸载：开关随时可切；要回到旧行为就重新打包（`--no-alias-fonts` / `--keep-web-fonts`）→ KSU 装新 zip → 重启。
 
 ## 边界
 

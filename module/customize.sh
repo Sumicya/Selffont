@@ -34,7 +34,12 @@ fi
 # 已接入（那份文件还在）就顺手换新；没接入过（文件不存在）不碰，不做任何推销。
 bridge="${FIREFOX_DATA_DIR:-/data/local/tmp}/${FIREFOX_PACKAGE:-org.mozilla.firefox}-geckoview-config.yaml"
 if [ -f "$bridge" ]; then
-    cp -f "$MODPATH/geckoview-config.yaml" "$bridge" &&
-        ui_print "Selffont: 已刷新火狐配置（重启火狐后生效）。"
+    # 走 web-fonts.sh refresh：按运行时开关状态生成，不覆盖你在管理器里切过的选择。
+    if sh "$MODPATH/web-fonts.sh" refresh; then
+        ui_print "Selffont: 已刷新火狐配置（保留网页字体开关状态，重启火狐后生效）。"
+    else
+        cp -f "$MODPATH/geckoview-config.yaml" "$bridge" &&
+            ui_print "Selffont: 已刷新火狐配置（开关脚本不可用，退回模板默认）。"
+    fi
 fi
 ui_print "Selffont: 重启即生效。无开机自动干预。"
