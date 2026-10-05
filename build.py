@@ -358,6 +358,10 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> byte
     fallback = ET.Element("family")
     replace_fonts(fallback, font_name, ladder)
     root.insert(list(root).index(default) + 1, fallback)
+    # 输出文件的根节点只能是不带属性的 <familyset>（AOSP font_fallback.xml 头注：
+    # 「No attributes are allowed to familyset node」，官方生成器也不写任何属性）；
+    # 模板从 fonts.xml 带来的 version 属性在这里去掉——带属性可能整份配置被拒。
+    root.attrib.pop("version", None)
     ET.indent(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
@@ -743,6 +747,9 @@ def fonts_xml():
 
     template = (ROOT / "fonts.xml").read_bytes()
     root = ET.fromstring(configure_fonts(template, "V.ttf", ladder))
+    assert not root.attrib, "font_fallback.xml 根节点不该带属性（AOSP：No attributes are allowed）"
+    assert re.search(r"<familyset>", configure_fonts(template, "V.ttf", ladder).decode()), \
+        "根节点应是不带属性的裸 <familyset>"
     default = root.find("family[@name='sans-serif']")
     assert {node.text.strip() for node in default.findall("font")} == {CARRIER}, "默认家族应保留度量空壳"
     fallback = list(root)[list(root).index(default) + 1]
@@ -1106,12 +1113,14 @@ def runtime_scripts():
         (modpath / "font_fallback.xml").write_bytes(b"<familyset modern/>")
         (modpath / "system/fonts/Any-Name.ttf").write_bytes(b"font")
         system = tmp / "sysroot"
-        for directory in ("etc", "system_ext/etc", "product/etc"):
+        for directory in ("system/etc", "system_ext/etc", "product/etc", "my_product/etc"):
             (system / directory).mkdir(parents=True)
             (system / directory / "fonts.xml").write_text("<familyset>stock-legacy</familyset>")
-        (system / "etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
-        (system / "etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
-        (system / "etc/fonts_customization.xml").write_text("<other-schema/>")
+        (system / "system/etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
+        (system / "system/etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
+        (system / "system/etc/fonts_customization.xml").write_text("<other-schema/>")
+        # 厂商分区（ColorOS 系走 my_product）也有一份：只换 /system 那份，框架读的是没换的。
+        (system / "my_product/etc/font_fallback.xml").write_text("<familyset>old-oem</familyset>")
         env = {**os.environ, "MODPATH": str(modpath), "SELFFONT_SYSTEM_ROOT": str(system)}
         harness = modpath / "harness.sh"
         harness.write_text('ui_print() { echo "$@"; }\n'
@@ -1120,23 +1129,27 @@ def runtime_scripts():
 
         result = sh([str(harness)], env)
         assert result.returncode == 0, result.stderr
-        # 只投放 font_fallback*.xml（新语法）；库存 fonts.xml 与 fonts_customization.xml 都不碰。
-        for name in ("font_fallback.xml", "font_fallback_cjkvf.xml"):
-            target = modpath / system.relative_to("/") / "etc" / name
-            assert target.read_text() == "<familyset modern/>", f"{name} 应放新语法"
-        for directory in ("etc", "system_ext/etc", "product/etc"):
-            assert not (modpath / system.relative_to("/") / directory / "fonts.xml").exists(), \
+        # 只投放 font_fallback*.xml（新语法），且覆盖所有装着它的分区；
+        # 库存 fonts.xml 与 fonts_customization.xml 都不碰。
+        for relative in ("system/etc/font_fallback.xml", "system/etc/font_fallback_cjkvf.xml",
+                         "my_product/etc/font_fallback.xml"):
+            target = modpath / relative
+            assert target.read_text() == "<familyset modern/>", f"{relative} 应放新语法"
+        for directory in ("system/etc", "system_ext/etc", "product/etc", "my_product/etc"):
+            assert not (modpath / directory / "fonts.xml").exists(), \
                 f"{directory} 的库存 fonts.xml 不该被替换"
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
-        assert "已替换 2 份 font_fallback 配置" in result.stdout, "应报告替换数量：" + result.stdout
+        assert "已替换 3 份 font_fallback 配置" in result.stdout, "应报告替换数量：" + result.stdout
 
         # 设备没有 font_fallback*.xml（Android 15 以下）→ 中止安装，不假装成功。
-        (system / "etc/font_fallback.xml").unlink()
-        (system / "etc/font_fallback_cjkvf.xml").unlink()
+        (system / "system/etc/font_fallback.xml").unlink()
+        (system / "system/etc/font_fallback_cjkvf.xml").unlink()
+        (system / "my_product/etc/font_fallback.xml").unlink()
         result = sh([str(harness)], env)
         assert result.returncode != 0 and "没有 font_fallback" in result.stderr, result
-        system.joinpath("etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
-        system.joinpath("etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
+        system.joinpath("system/etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
+        system.joinpath("system/etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
+        system.joinpath("my_product/etc/font_fallback.xml").write_text("<familyset>old-oem</familyset>")
 
         # 没有字体文件（= 直接压缩了仓库）就中止。
         (modpath / "system/fonts/Any-Name.ttf").unlink()

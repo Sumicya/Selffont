@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-05 · 真机「字体未应用」两处修正：分区覆盖 + font_fallback.xml 根节点裸 <familyset>
+
+- 背景：真机（Android 16 / OnePlus）装上后字体没变。核对 AOSP 源码与官方文档后确认方向没错——android16-release 的 `data/fonts/fonts.xml` 头注写着「DEPRECATED：不再是系统装字体的来源，vendor 请把配置加到 `font_fallback.xml`」；android15-release 的 `font_fallback.xml` 本身就带 `sans-serif` 等命名家族（第一个 family 即默认族）。
+- 修正一（覆盖）：`customize.sh` 原先只找 `/system` 下的 `system_ext` / `product` / `etc`，厂商把配置放在 `/my_product` / `/my_stock` / `/my_bigball` / `/vendor` / `/odm` 时框架读到的还是旧文件。现在逐分区找 `font_fallback*.xml` 并投放到模块的对应路径，任一命中都算；自检加了 `my_product` 用例（替换 3 份）。
+- 修正二（根节点）：AOSP `font_fallback.xml` 头注写明「No attributes are allowed to `familyset` node」（15 的手写文件与 16 的生成器输出都是裸 `<familyset>`），我们的产物继承模板的 `version="23"`——严格解析下可能整份被拒。生成器现在去掉根属性，自检断言输出必须是裸 `<familyset>`。
+- 未验证：这两处是否就是真机不生效的根因；设备侧还需要确认模块是否真的挂载（KernelSU 的 metamodule）与框架日志有没有解析错误——取证命令见下一轮交付。
+
 ## 2026-10-05 · README 安装命令修正（Termux 路径坑：先 cp 到 /data/local/tmp 再 ksud install）
 
 - 现象：按 README 在 Termux 里 `su -c 'ksud module install /sdcard/Download/….zip'` 报 `No such file or directory`——解出的 zip 在 Termux 家目录，`/sdcard/Download/` 下没有；`ksud` 本身正常（打了 KernelSU 横幅）。
