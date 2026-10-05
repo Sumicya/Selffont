@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-05 · 真机验证成功（ColorOS 16 / 一加）：字体生效，三份配置全部替换
+
+- 设备实测（2026-10-05，OnePlus / ColorOS 16 / Android 16 / KernelSU，`MFGA` 版本 `26.10.5.23.86`）：`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml` 三份 `grep -c Selffont` 均为 7，系统字形变圆——**「只做新包 + 按设备实际配置替换」路线在真机成立**。
+- 此前失败的教训链（写在这里防回归）：只换 AOSP 的 `font_fallback.xml` 时，ColorOS 读的是 `/system_ext/etc/fonts_base.xml` / `fonts_ule.xml`（日志 `SystemFonts: Loading font config from /system_ext/etc/fonts_base.xml` 实证），配置没被读到 → 字体不变；模块本身一直是挂载成功的（`/system/etc/font_fallback.xml Selffont=7`）。
+- 明确体积构成（回应「去掉静态怎么还是 100+ MB」）：zip 约 100 MiB = 主字体 VF 副本约 46 MiB（源文件 `WenYuanRoundedSCVF.ttf` 48,755,224 字节）+ 补充字库约 54 MiB + 配置脚本不到 0.1 MiB；「去掉静态」删的是配置里的逐档展开（几 KB），字体数据始终只有一份 VF，不按字重复制。
+- 未验证项收窄：仅剩火狐接入、别名字件、网页字体开关的真机表现，以及纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径。
+
 ## 2026-10-05 · 真机根因定位：ColorOS 读 fonts_base.xml / fonts_ule.xml，我们只换了 font_fallback.xml
 
 - 现象：真机（OnePlus / ColorOS，Android 16）装好后字体不变；模块目录里 `system/etc/font_fallback.xml` 字节数正常，系统侧 `/system/etc/font_fallback.xml Selffont=7`——**说明模块已正确挂载、配置已替换**，问题不在挂载。
