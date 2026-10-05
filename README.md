@@ -46,17 +46,27 @@ gh api --paginate 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_p
 
 - 取不到当日序号时**退化写四段** `yy.m.d.总序号`（规范允许；本项目没有发布型 CI，当日序号只能在运行历史里查，查不到就不编数）。两个数都取不到就不盖戳：`module/module.prop` 是**非发行默认** `version=dev` / `versionCode=0`，自检核对盖戳格式与 versionCode 一致。
 
-CI（`.github/workflows/build.yml`）只做校验（自检 + 一次带版本号的验证性构建）：**不发版、不上传 artifact、不写 Release**；版本号由 `actions: read` 现场查运行历史算定。旧体系留下的 artifact 积压用 `cleanup.yml` 清（手动触发，保留最近 5 个）：
+CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**非 PR 运行**（push / 手动触发）把 `build/Selffont-<版本>.zip` 传成 Actions artifact（名 = 产物名去 `.zip`，`retention-days: 5`），PR 运行只校验；**不发版、不写 Release**，版本号由 `actions: read` 现场查运行历史算定。
 
 ```sh
-gh workflow run cleanup.yml -f apply=false          # 干跑:只打印将保留与将删除的清单
-gh workflow run cleanup.yml -f apply=true           # 真删(需 actions: write)
-gh api repos/Sumicya/Selffont/actions/artifacts --jq '.total_count'   # 核对剩余数量
+# 最近一次非 PR 运行的 artifact 就是模块 zip(算 id、验字节数、清下载残留)
+RUN=$(gh api 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=20' \
+  --jq '[.workflow_runs[]|select(.event!="pull_request")][0].id')
+ART=$(gh api "repos/Sumicya/Selffont/actions/runs/$RUN/artifacts" --jq '.artifacts[0].id')
+curl -fL -H "Authorization: token $(gh auth token)" -o selffont.zip \
+  "https://api.github.com/repos/Sumicya/Selffont/actions/artifacts/$ART/zip"
+unzip -o selffont.zip && ls -l Selffont-*.zip      # 约 100 MB 量级才正常
+rm -f selffont.zip
+
+# 不设清理工作流:artifact 5 天后自动过期;要提前删(凭据需含 actions: write):
+gh api --paginate repos/Sumicya/Selffont/actions/artifacts \
+  --jq '.artifacts[] | "\(.created_at) \(.id) \(.name) \(.size_in_bytes)"'
+gh api -X DELETE repos/Sumicya/Selffont/actions/artifacts/<id>
 ```
 
 ## 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `MFGA`；安装脚本只替换系统的 `font_fallback*.xml`，库存 `fonts.xml` 与 `fonts_customization.xml` 都不碰；没有前者的设备会中止安装）。卸载 = KSU 删模块 + 重启。仓库不发 Release，也不提供 Release 下载入口——zip 就是本地 `build.py` 的产物。
+KSU 装 zip，重启（模块 ID `MFGA`；安装脚本只替换系统的 `font_fallback*.xml`，库存 `fonts.xml` 与 `fonts_customization.xml` 都不碰；没有前者的设备会中止安装）。卸载 = KSU 删模块 + 重启。仓库不发 Release：zip 来自本地 `build.py` 或 CI 的 Actions artifact。命令行安装（需 root）等价于管理器：`su -c 'ksud module install <zip 路径>'`。
 
 ## 火狐
 

@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-05 · CI 出包：非 PR 运行上传 Actions artifact；按主人精简去掉 spec-check / cleanup
+
+- 读规范更正：规范禁的是自动建 Release、自动建正式 tag、自动上传正式 Release asset；Actions artifact 本身是规范点名的真实下载入口。此前「CI 不上传」把两者混为一谈，产物没有下载入口——本轮更正。
+- `build.yml` 在非 PR 运行（push / 手动触发）把 `build/Selffont-<版本>.zip` 传成 Actions artifact：名 = 产物名去 `.zip`、`retention-days: 5`、`if-no-files-found: error`；上传不需要写权限，权限块保持 `contents: read` + `actions: read`，不发版、不写 Release。
+- 主人 2026-10-05 精简流程：`spec-check.yml` 与 `cleanup.yml` 已删除，不再恢复；规范自检由 agent 每轮交付前按第十七版手动执行（本轮已执行），规范「至少一个只读规范检查工作流」与现状的差异记录在案，待主人定。
+- README 换成「从 CI 取包 / 手动删 artifact」命令块；AGENTS.md 的 CI 权限、产物与 artifact 条目同步。
+
 ## 2026-10-05 · 文档标点全角化收尾 + AGENTS 去重（必要维护）
 
 - 中文文案按规范收尾全角标点：补上此前遗漏的加粗标签后冒号与逗号、内联代码后逗号、英文双引号等（例：`**标签**:` → `**标签**：`、`**标签**,下一句` → `**标签**，下一句`、`"中文"` → `「中文」`）；代码、URL、版本号、数字千分位（`12,162`）与标识符原样保留。
