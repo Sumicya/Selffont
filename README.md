@@ -10,14 +10,11 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 2. 剪除映射到空白字形的码位（上游声称覆盖但字形空白，会吞掉回退链）；
 3. 按 OFL 保留名规则把内部家族名改成 **Selffont Rounded SC VF**。
 
-字重阶梯现场从字体的 `wght`/`ital` 轴读取（越界夹取）；静态字体也能打包（全档同文件，粗体交给系统合成）。
+字重阶梯现场从字体的 `wght`/`ital` 轴读取（越界夹取）；**主字体必须是含 `wght` 轴的可变字体**，静态字体直接拒绝（配置只出新语法，没有可声明的轴）。
 
-模块带**两份同源的字体配置**，安装时按目标文件名投放：
+模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。安装时把它投放到系统里存在的每份 `font_fallback*.xml`（含厂商的 `font_fallback_cjkvf.xml`）上；**库存 `fonts.xml` 不再替换**（Google 已废弃它，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备没有 `font_fallback*.xml`（Android 15 以下）时安装直接中止，不会留下半套配置。
 
-- `fonts.xml`（legacy 解析目标）：主字体逐档展开成 18 条静态条目（每档一条 `axis` 子节点）；
-- `font_fallback.xml`（Android 15+ 的新配置）：主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档；
-- `font_fallback*.xml`（含厂商的 `font_fallback_cjkvf.xml` 等）一律放新语法，其余 `font*.xml` 放 legacy 展开；官方要求两个文件保持同步，所以它们由 `build.py` 从同一棵家族树生成（自检断言两边的接管家族集合一致）。
-- 静态主字体没有 `wght`/`ital` 轴：新语法这一侧也退回逐档展开（`supportedAxes` 只认 `wght` / `wght,ital`）。另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 15 KB）：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
+另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 15 KB）：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
 
 ## 构建
 
@@ -33,7 +30,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成文渊）
 ```
 
-产物名跟版本走：`build/Selffont-<版本>.zip`；没盖戳的非发行版本叫 `build/Selffont.zip`。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
+产物名跟版本走：`build/Selffont-<版本>.zip`；没盖戳的非发行版本叫 `build/Selffont.zip`。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
 **版本号（五段，展示不含 `v`）**:`yy.m.d.当日序号.总序号`（第四段 = 当日序号，第五段 = 总序号），`versionCode` = 第五段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
@@ -59,7 +56,7 @@ gh api repos/Sumicya/Selffont/actions/artifacts --jq '.total_count'   # 核对�
 
 ## 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `MFGA`；安装脚本整份替换系统全部 `font*.xml`，不碰 `fonts_customization.xml`）。卸载 = KSU 删模块 + 重启。仓库不发 Release，也不提供 Release 下载入口——zip 就是本地 `build.py` 的产物。
+KSU 装 zip，重启（模块 ID `MFGA`；安装脚本只替换系统的 `font_fallback*.xml`，库存 `fonts.xml` 与 `fonts_customization.xml` 都不碰；没有前者的设备会中止安装）。卸载 = KSU 删模块 + 重启。仓库不发 Release，也不提供 Release 下载入口——zip 就是本地 `build.py` 的产物。
 
 ## 火狐
 
@@ -109,9 +106,9 @@ emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Col
 
 ## 边界
 
-- 真机验证过：Android 16 / OnePlus / KernelSU 一台，其他平台自担风险。本轮的别名字件与网页字体默认压是**未验证**改动：装机核对清单见「未验证项的真机清单」。
+- 只支持带 `font_fallback*.xml` 的设备（Android 15+）：装在没有该文件的机器上会中止安装。真机验证过：Android 16 / OnePlus / KernelSU 一台，其他平台自担风险。本轮的别名字件与网页字体默认压是**未验证**改动：装机核对清单见「未验证项的真机清单」。
 - 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork。上游领先的提交只动它自己的 Xposed 侧与文档（`fonts/`、`fonts.xml` 从 1717180003 起未变，已逐字节比对）：用 `-s ours` 记录了祖先关系（不再显示"落后"），但**不取它的代码**，只取字体资源（见 `LICENSES.md`）。
 - `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与 OEM 字体（如 MiSans）由设备提供，不打包。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
 - MFGA 基础包只取字体资源，绝不执行其代码（归属见 `LICENSES.md`）。
-- 主字体必须能被 fontTools 解析；`.ttf`/`.otf`/`.ttc` 之外的后缀直接拒绝。
+- 主字体必须能被 fontTools 解析且含 `wght` 轴；`.ttf`/`.otf`/`.ttc` 之外的后缀、静态字体、缺空壳的基础包都直接拒绝。

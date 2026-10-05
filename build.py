@@ -11,7 +11,8 @@
 不写死现值）；本地也可以手工传入。取不到当日序号时退化写四段 yy.m.d.总序号 并警告。
 
 自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
-全部现场从字体里读；静态字体也能打包（全档同文件，粗体交给系统合成）。
+全部现场从字体里读。主字体必须是含 wght 轴的可变字体——配置只出新语法（supportedAxes），
+静态字体没有该轴，直接拒绝，不做逐档展开的降级。
 
 对主字体的安装副本只做三件事（都属 OFL 意义上的修改，所以安装副本整体改名）：
 1. 竖直行度量对齐基础包里的 Roboto 空壳——真机验证过的角标偏低/切下沿修复；
@@ -83,20 +84,20 @@ ALIAS_FAMILIES = ("cursive", "fantasy", "casual", "serif-monospace",
                   "sans-serif-smallcaps", "sans-serif-condensed")
 ALIAS_PREFIX = "Selffont-Alias-"
 
-# 网页自带字体开关:模板默认压掉(全系统同一副面孔);--keep-web-fonts 放开(图标字体等要它)。
-# 表示法与 module/web-fonts.sh 完全一致:生效 = pref 行原样,放行 = 该行加 Selffont:keep 标记注释。
+# 网页自带字体开关：模板默认压掉（全系统同一副面孔）；--keep-web-fonts 放开（图标字体等要它）。
+# 表示法与 module/web-fonts.sh 完全一致：生效 = pref 行原样，放行 = 该行加 Selffont:keep 标记注释。
 WEB_FONT_PREF = "browser.display.use_document_fonts: 0"
 WEB_FONT_ACTIVE = f"  {WEB_FONT_PREF}"
 WEB_FONT_KEPT = f"  # Selffont:keep {WEB_FONT_PREF}"
 
 
 def apply_web_font_switch(config: str, keep: bool) -> str:
-    """把配置置成目标状态(幂等):keep 注释掉 pref 行(放行),否则还原(压掉);找不到那一行就报错。"""
+    """把配置置成目标状态（幂等）：keep 注释掉 pref 行（放行），否则还原（压掉）；找不到那一行就报错。"""
     wanted, other = (WEB_FONT_KEPT, WEB_FONT_ACTIVE) if keep else (WEB_FONT_ACTIVE, WEB_FONT_KEPT)
     if re.search(rf"^{re.escape(wanted)}$", config, re.M):
         return config
     if not re.search(rf"^{re.escape(other)}$", config, re.M):
-        raise ValueError(f"模板里找不到网页字体开关行（{WEB_FONT_PREF}）:请检查 module/geckoview-config.yaml")
+        raise ValueError(f"模板里找不到网页字体开关行（{WEB_FONT_PREF}）：请检查 module/geckoview-config.yaml")
     return re.sub(rf"^{re.escape(other)}$", wanted, config, count=1, flags=re.M)
 
 
@@ -189,13 +190,15 @@ def carrier_metrics(data: bytes) -> dict | None:
 
 
 def weight_ladder(axes: dict) -> list[dict]:
-    """9 档字重阶梯：VF 走 wght/ital 轴（越界只出范围内的档，不拒绝）；
-    静态字体全档同文件，粗体交给系统合成。"""
-    if "wght" in axes:
-        low, _, high = axes["wght"]
-        weights = [weight for weight in WEIGHTS if low <= weight <= high] or [min(max(400, low), high)]
-    else:
-        weights = list(WEIGHTS)
+    """字重阶梯：走 wght/ital 轴（越界只出范围内的档，不拒绝）。
+
+    没有 wght 轴（静态字体）直接拒绝：配置只出新语法 supportedAxes，静态字体没有可声明的轴，
+    逐档展开属于已删除的降级路径。
+    """
+    if "wght" not in axes:
+        raise ValueError("主字体没有 wght 轴：配置只出 supportedAxes 新语法，静态字体不再支持")
+    low, _, high = axes["wght"]
+    weights = [weight for weight in WEIGHTS if low <= weight <= high] or [min(max(400, low), high)]
     ital = axes.get("ital")
     styles = [False, True] if ital and ital[0] <= 1 <= ital[2] else [False]
     return [{"weight": weight, "italic": italic,
@@ -308,7 +311,7 @@ def rename_font(data: bytes, family: str) -> bytes:
 # ---------------------------------------------------------------- fonts.xml 生成
 
 def supported_axes(ladder: list[dict]) -> str | None:
-    """可变字体的 supportedAxes 值(Android 15+ 只认 wght / wght,ital);静态字体返回 None。
+    """可变字体的 supportedAxes 值（Android 15+ 只认 wght / wght,ital）；静态字体返回 None。
 
     带这个属性的字件由系统在运行时按请求的字重/斜体现场实例化——一条顶掉整条静态阶梯。
     """
@@ -318,29 +321,23 @@ def supported_axes(ladder: list[dict]) -> str | None:
     return "wght" if tags == {"wght"} else None
 
 
-def replace_fonts(family: ET.Element, font_name: str, ladder: list[dict], modern: bool = False) -> None:
+def replace_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
+    """一条 supportedAxes 字件顶掉整条阶梯（新语法，weight/style 可省）；没有可声明的轴就拒绝。"""
     for child in list(family):
         if child.tag == "font":
             family.remove(child)
-    axes = supported_axes(ladder) if modern else None
-    if axes:  # 新语法(font_fallback.xml):一条 supportedAxes 字件,weight/style 可省
-        node = ET.SubElement(family, "font", supportedAxes=axes)
-        node.text = font_name
-        return
-    for entry in ladder:
-        node = ET.SubElement(family, "font", weight=str(entry["weight"]),
-                             style="italic" if entry["italic"] else "normal")
-        node.text = font_name
-        for tag, value in entry["axes"]:
-            ET.SubElement(node, "axis", tag=tag, stylevalue=str(value))
+    axes = supported_axes(ladder)
+    if not axes:
+        raise ValueError("主字体没有 wght/ital 轴：配置只出 supportedAxes，不退回逐档展开")
+    node = ET.SubElement(family, "font", supportedAxes=axes)
+    node.text = font_name
 
 
-def configure_fonts(template: bytes, font_name: str, ladder: list[dict], carrier: bool,
-                    modern: bool = False) -> bytes:
+def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> bytes:
     """主字体接管全部主家族；空壳留在度量家族；旧数字主字体整体替换；匿名字形回退紧随默认家族。
 
-    modern=True 出 font_fallback.xml 的新语法(supportedAxes,Android 15+ 运行时实例化);
-    modern=False 出 fonts.xml 的 legacy 展开(每档一条 axis 子节点,官方要求两文件保持同步)。
+    输出统一是新语法（supportedAxes,Android 15+ 运行时实例化）：安装脚本只投放 font_fallback*.xml,
+    库存 fonts.xml 不再替换，所以没有 legacy 展开的第二份。
     """
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
     root = ET.fromstring(template, parser=parser)
@@ -355,12 +352,11 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict], carrier
         if not name and files and files <= OLD_PRIMARY | {CARRIER}:
             root.remove(family)
         elif name in METRIC_FAMILIES and files == {CARRIER}:
-            if not carrier:  # 没有空壳文件：度量隔离让位，主字体直接进默认家族（不拒绝构建）
-                replace_fonts(family, font_name, ladder, modern)
+            continue  # 度量家族保留空壳：主字体走匿名回退，这里只提供行度量
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
-            replace_fonts(family, font_name, ladder, modern)
+            replace_fonts(family, font_name, ladder)
     fallback = ET.Element("family")
-    replace_fonts(fallback, font_name, ladder, modern)
+    replace_fonts(fallback, font_name, ladder)
     root.insert(list(root).index(default) + 1, fallback)
     ET.indent(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
@@ -541,23 +537,21 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     with zipfile.ZipFile(base_path) as archive:
         members = font_members(archive)
         names = {member.filename for member in members}
-        carrier = carrier_metrics(archive.read(f"system/fonts/{CARRIER}")) if f"system/fonts/{CARRIER}" in names else None
         warnings: list[str] = []
+        if f"system/fonts/{CARRIER}" not in names:
+            raise ValueError(f"基础包缺少 {CARRIER} 度量空壳：没有它就不做归一，直接拒绝打包")
+        carrier = carrier_metrics(archive.read(f"system/fonts/{CARRIER}"))
         if carrier is None:
-            warnings.append(f"基础包没有可用的 {CARRIER} 度量空壳：跳过度量归一，角标/通知计数可能回退到修复前表现。")
-            packaged = primary
-        else:
-            packaged = normalize_metrics(primary, carrier)
-            assert_glyphs_preserved(primary, packaged)   # 改名前先验证只动了行度量
+            raise ValueError(f"{CARRIER} 不是可用的度量空壳（含可见字形或结构损坏），拒绝打包")
+        packaged = normalize_metrics(primary, carrier)
+        assert_glyphs_preserved(primary, packaged)   # 改名前先验证只动了行度量
         packaged = rename_font(packaged, RENAME)
         packaged, pruned = prune_blank_mappings(packaged)
         if pruned:
             warnings.append(f"剪除空壳映射 {pruned} 个（上游声称覆盖但字形空白），这些字落到回退链。")
 
-        xml = configure_fonts((ROOT / "fonts.xml").read_bytes(), name, ladder, carrier is not None)
-        # 官方要求两个文件保持同步:legacy 解析目标(fonts.xml)与新语法(font_fallback.xml)。
-        xml_modern = configure_fonts((ROOT / "fonts.xml").read_bytes(), name, ladder,
-                                     carrier is not None, modern=True)
+        # 只出新语法（Android 15+ 的 font_fallback.xml）；库存 fonts.xml 不再替换。
+        xml = configure_fonts((ROOT / "fonts.xml").read_bytes(), name, ladder)
         referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
         bundled = [member for member in members if PurePosixPath(member.filename).name in referenced]
 
@@ -589,7 +583,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         aliases = alias_members() if alias else {}
         config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
-        write_module(output, archive, bundled, name, packaged, xml, xml_modern, prop, config, aliases)
+        write_module(output, archive, bundled, name, packaged, xml, prop, config, aliases)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}")
@@ -604,12 +598,12 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
-                 name: str, packaged: bytes, xml: bytes, xml_modern: bytes, prop: str, config: str,
+                 name: str, packaged: bytes, xml: bytes, prop: str, config: str,
                  aliases: dict[str, bytes] | None = None) -> None:
-    """写模块 zip：被 fonts.xml 引用的基础包字体 + 主字体 + 别名字件 + 原生 KSU 模块布局。
+    """写模块 zip：被配置引用的基础包字体 + 主字体 + 别名字件 + 原生 KSU 模块布局。
 
-    fonts.xml = legacy 展开；font_fallback.xml = 新语法（supportedAxes）。安装脚本按目标文件名
-    二选一投放（font_fallback*.xml 用新语法，其余 font*.xml 用 legacy 展开）。
+    包内只有一份字体配置 font_fallback.xml（新语法）：安装脚本把它投放到系统里存在的
+    font_fallback*.xml 上；库存 fonts.xml 不替换（没有该文件的设备不支持，安装直接失败）。
     """
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as destination:
         for member in bundled:
@@ -617,8 +611,7 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         destination.writestr(f"system/fonts/{name}", packaged)
         for filename, data in (aliases or {}).items():  # 不进 fonts.xml：只给 Gecko 按名命中
             destination.writestr(filename, data)
-        destination.writestr("fonts.xml", xml)
-        destination.writestr("font_fallback.xml", xml_modern)
+        destination.writestr("font_fallback.xml", xml)
         destination.writestr("module.prop", prop)
         destination.writestr("geckoview-config.yaml", config)  # 静态模板 + 构建期尾链
         for path in sorted((ROOT / "module").rglob("*")):
@@ -740,71 +733,57 @@ def fonts_xml():
     # 轴范围窄：只出范围内的档，不拒绝。
     assert [entry["weight"] for entry in weight_ladder({"wght": (200, 400, 700)}) if not entry["italic"]] \
         == [200, 300, 400, 500, 600, 700]
-    # 静态：无轴也能打包，全档同文件。
-    static = weight_ladder({})
-    assert len(static) == 9 and not any(entry["axes"] for entry in static)
+    # 静态字体（没有 wght 轴）直接拒绝：配置只出 supportedAxes，不退回逐档展开。
+    for axes in ({}, {"ital": (0, 0, 1)}):
+        try:
+            weight_ladder(axes)
+            raise AssertionError(f"静态字体未被拒绝：{axes}")
+        except ValueError:
+            pass
 
     template = (ROOT / "fonts.xml").read_bytes()
-    root = ET.fromstring(configure_fonts(template, "V.ttf", ladder, True))
+    root = ET.fromstring(configure_fonts(template, "V.ttf", ladder))
     default = root.find("family[@name='sans-serif']")
     assert {node.text.strip() for node in default.findall("font")} == {CARRIER}, "默认家族应保留度量空壳"
     fallback = list(root)[list(root).index(default) + 1]
-    assert fallback.get("name") is None and len(fallback.findall("font")) == 18, "匿名字形回退应紧随默认家族"
-    assert {node.text.strip() for node in fallback.findall("font")} == {"V.ttf"}
+    assert fallback.get("name") is None, "匿名字形回退应紧随默认家族"
+    assert [(n.text.strip(), n.get("supportedAxes")) for n in fallback.findall("font")] == \
+        [("V.ttf", "wght,ital")], "匿名字形回退应是单条新语法字件"
     for family in root.findall("family"):
         for node in family.findall("font"):
             assert (node.text or "").strip() not in OLD_PRIMARY, "残留旧数字主字体"
+            if (node.text or "").strip() == "V.ttf":
+                assert node.get("supportedAxes") == "wght,ital" and not node.findall("axis"), \
+                    "主字体一律新语法：带 supportedAxes、无 axis 子节点"
+                assert node.get("weight") is None and node.get("style") is None, \
+                    "带 supportedAxes 的字件不该再写 weight/style"
     # 小型大写家族也接管：留在清单里的 CarroisGothicSC 会被火狐按文件名解析到。
-    smallcaps = root.findall("family[@name='sans-serif-smallcaps']")[0]
-    assert {node.text.strip() for node in smallcaps.findall("font")} == {"V.ttf"}, "小型大写家族未接管"
-    # 静态主字体不生成 axis；可变主字体生成 axis。
-    static_root = ET.fromstring(configure_fonts(template, "S.ttf", static, True))
-    ours = [node for family in static_root.findall("family") for node in family.findall("font")
-            if (node.text or "").strip() == "S.ttf"]
-    assert ours and not any(node.findall("axis") for node in ours), "静态主字体不该生成 axis"
-
-    # 新语法（font_fallback.xml,Android 15+）：一条 supportedAxes 字件顶掉整条阶梯，
-    # weight/style 可省；静态字体没有 supportedAxes，退回 legacy 展开。
-    modern = ET.fromstring(configure_fonts(template, "V.ttf", ladder, True, modern=True))
-    default_modern = modern.find("family[@name='sans-serif']")
-    assert {node.text.strip() for node in default_modern.findall("font")} == {CARRIER}, "默认家族应保留度量空壳"
-    modern_fallback = list(modern)[list(modern).index(default_modern) + 1]
-    assert len(modern_fallback.findall("font")) == 1, "新语法应只出一条字件"
-    node = modern_fallback.findall("font")[0]
-    assert node.get("supportedAxes") == "wght,ital" and node.text.strip() == "V.ttf", \
-        "新语法字件应带 supportedAxes=\"wght,ital\""
-    assert node.get("weight") is None and node.get("style") is None and not node.findall("axis"), \
-        "带 supportedAxes 的字件不该再写 weight/style/axis"
-    smallcaps_modern = modern.findall("family[@name='sans-serif-smallcaps']")[0]
-    assert [n.get("supportedAxes") for n in smallcaps_modern.findall("font")] == ["wght,ital"], \
-        "小型大写家族也走新语法"
+    for name in ("sans-serif-smallcaps", "cursive", "monospace"):
+        nodes = root.findall(f"family[@name='{name}']")[0].findall("font")
+        assert [(n.text.strip(), n.get("supportedAxes")) for n in nodes] == [("V.ttf", "wght,ital")], name
     # 注意：模板里空壳字件自带 supportedAxes（真机 dump 就是这么写的），断言只针对主字体节点。
-    modern_static = ET.fromstring(configure_fonts(template, "S.ttf", static, True, modern=True))
-    static_ours = [n for family in modern_static.findall("family") for n in family.findall("font")
-                   if (n.text or "").strip() == "S.ttf"]
-    assert static_ours and not any(n.get("supportedAxes") for n in static_ours), \
-        "静态字体不该出现 supportedAxes"
-    assert len(modern_static.findall("family[@name='sans-serif-smallcaps']")[0].findall("font")) == 9, \
-        "静态字体在新语法下仍是逐档展开"
-    # supportedAxes 只认 wght / wght,ital（AOSP 校验器枚举）。
-    assert supported_axes(ladder) == "wght,ital" and supported_axes(static) is None
-    assert supported_axes([{"weight": 400, "italic": False, "axes": [("ital", 1)]}]) is None, \
-        "只有 ital 轴不在枚举内，应退回 legacy"
-    assert supported_axes([{"weight": 400, "italic": False, "axes": [("wght", 400)]}]) == "wght"
+    def carriers_of(document):
+        return sorted((n.text.strip(), n.get("supportedAxes") or "", n.get("weight") or "", n.get("style") or "")
+                      for n in document.iter("font") if (n.text or "").strip() == CARRIER)
 
-    # 自由化：没有空壳时，度量家族也指向主字体（放弃度量隔离，不拒绝构建）。
-    no_carrier = ET.fromstring(configure_fonts(template, "V.ttf", ladder, False))
-    for name in ("sans-serif", "sans-serif-condensed"):
-        got = no_carrier.findall(f"family[@name='{name}']")[0].findall("font")
-        assert {node.text.strip() for node in got} == {"V.ttf"}, name
-    assert not [node for family in no_carrier.findall("family") for node in family.findall("font")
-                if (node.text or "").strip() == CARRIER], "无空壳时仍引用 Roboto"
+    # 模板里有 11 处空壳引用，输出少 1 处：那处随「旧数字主字体的匿名家族」整族删除（既有行为）。
+    # 不变量是「留下来的空壳条目一字不改」——改了就说明生成器动了别人的条目。
+    assert set(carriers_of(root)) <= set(carriers_of(ET.fromstring(template))), "空壳条目被改写"
+    # supportedAxes 只认 wght / wght,ital（AOSP 校验器枚举）；其余组合没有可声明的轴，直接拒绝。
+    assert supported_axes(ladder) == "wght,ital"
+    assert supported_axes([{"weight": 400, "italic": False, "axes": [("wght", 400)]}]) == "wght"
+    assert supported_axes([{"weight": 400, "italic": False, "axes": [("ital", 1)]}]) is None
+    try:
+        replace_fonts(ET.Element("family"), "V.ttf", [{"weight": 400, "italic": False, "axes": [("ital", 1)]}])
+        raise AssertionError("没有 wght/ital 可声明时未被拒绝")
+    except ValueError:
+        pass
 
     # 输入防线：默认家族不是 Roboto 空壳、或不是 familyset 的输入拒绝替换。
     foreign = template.replace(b'<family name="sans-serif">', b'<family name="elsewhere">', 1)
     for bad in (foreign, b"<not-familyset/>"):
         try:
-            configure_fonts(bad, "V.ttf", ladder, True)
+            configure_fonts(bad, "V.ttf", ladder)
             raise AssertionError("非法模板未被拒绝")
         except ValueError:
             pass
@@ -853,25 +832,25 @@ def build_end_to_end():
 
         with zipfile.ZipFile(output) as archive:
             members = set(archive.namelist())
-            for expected in ("module.prop", "fonts.xml", "LICENSES.md", "customize.sh",
+            for expected in ("module.prop", "LICENSES.md", "customize.sh",
                              "firefox.sh", "web-fonts.sh", "action.sh", "geckoview-config.yaml",
                              "font_fallback.xml", "licenses/WenYuan-OFL.txt",
                              "system/fonts/P-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
                              "system/fonts/NotoSansPro.otf", "licenses/MFGA-base-LICENSES.md",
                              *alias_members()):
                 assert expected in members, f"缺成员 {expected}"
-            for absent in ("report.json", "system/fonts/DeadWeight.ttf"):
+            for absent in ("report.json", "system/fonts/DeadWeight.ttf",
+                           "fonts.xml", "font_fallback_cjkvf.xml"):
                 assert absent not in members, f"不该有的成员 {absent}"
             installed_prop = archive.read("module.prop").decode()
             assert "version=26.9.30.2.9" in installed_prop and "\nversionCode=9\n" in installed_prop, installed_prop
             # 别名字件只在系统字体目录里给 Gecko 按名命中，不进 fonts.xml（Minikin 不读目录）。
             assert not any(ALIAS_PREFIX in name for name in
-                           {node.text.strip() for node in ET.fromstring(archive.read("fonts.xml")).iter("font")})
+                           {node.text.strip() for node in ET.fromstring(archive.read("font_fallback.xml")).iter("font")})
             assert (archive.getinfo("customize.sh").external_attr >> 16) == stat.S_IFREG | 0o755
             assert (archive.getinfo("system/fonts/P-Regular.ttf").external_attr >> 16) == stat.S_IFREG | 0o644
             packaged = archive.read("system/fonts/P-Regular.ttf")
-            xml = archive.read("fonts.xml").decode()
-            modern = archive.read("font_fallback.xml").decode()
+            xml = archive.read("font_fallback.xml").decode()
             config = archive.read("geckoview-config.yaml").decode()
 
         # 归一 + 改名之后：轮廓/cmap/轴不动，家族名换成 RENAME,hhea 对齐空壳。
@@ -880,27 +859,21 @@ def build_end_to_end():
         assert before["axes"] == after["axes"] and after["family"] == RENAME
         assert TTFont(io.BytesIO(packaged))["hhea"].ascent == 930, "包内字体未归一"
         assert "P-Regular.ttf" in xml
-        # 两个配置文件同源，差别只在主字体节点的写法（空壳自带的 supportedAxes 两边都在，不动）：
-        # legacy = 逐档展开（18 条带 axis 子节点），新语法 = 一条 supportedAxes、无 axis 子节点。
+        # 单一配置、单一写法：主字体一律「一条 supportedAxes 字件」，接管家族与旧版一致。
         def ours_by_family(document):
             root = ET.fromstring(document)
             return {family.get("name"): [n for n in family.findall("font")
                                          if (n.text or "").strip() == "P-Regular.ttf"]
                     for family in root.findall("family")}
 
-        legacy_families = {name: nodes for name, nodes in ours_by_family(xml).items() if nodes}
-        modern_families = {name: nodes for name, nodes in ours_by_family(modern).items() if nodes}
-        assert legacy_families and legacy_families.keys() == modern_families.keys(), "两文件接管的家族应一致"
-        assert all(len(nodes) == 18 and all(n.findall("axis") and not n.get("supportedAxes") for n in nodes)
-                   for nodes in legacy_families.values()), "legacy 应是逐档展开（每档一条 axis）"
+        families = {name: nodes for name, nodes in ours_by_family(xml).items() if nodes}
+        assert {"serif", "monospace", "sans-serif-smallcaps"} <= set(families), "接管家族少了"
         assert all(len(nodes) == 1 and nodes[0].get("supportedAxes") == "wght,ital"
                    and not nodes[0].findall("axis") and nodes[0].get("weight") is None
-                   for nodes in modern_families.values()), "新语法应是一条 supportedAxes 字件"
-        for document in (xml, modern):  # 家族集合与主家族接管在两个文件里一致
-            root = ET.fromstring(document)
-            assert {node.text.strip() for node in root.find("family[@name='sans-serif']").findall("font")} \
-                == {CARRIER}
-            assert "P-Regular.ttf" in {node.text.strip() for node in root.iter("font")}
+                   for nodes in families.values()), "应是一条 supportedAxes 字件"
+        root = ET.fromstring(xml)
+        assert {node.text.strip() for node in root.find("family[@name='sans-serif']").findall("font")} == {CARRIER}
+        assert "P-Regular.ttf" in {node.text.strip() for node in root.iter("font")}
         # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，前置仍是文渊。
         assert ", Noto Sans Pro\"" in config, "尾链未拼进火狐配置"
         for line in config.splitlines():
@@ -928,20 +901,36 @@ def build_end_to_end():
         build(base=str(base), font=str(custom), output=output)
         with zipfile.ZipFile(output) as archive:
             assert "system/fonts/Weird-Name.ttf" in archive.namelist()
-            assert "Weird-Name.ttf" in archive.read("fonts.xml").decode()
+            assert "Weird-Name.ttf" in archive.read("font_fallback.xml").decode()
         try:
             build(base=str(base), font=str(fonts_dir / "x.woff2"), output=output)
             raise AssertionError("非字体后缀未被拒绝")
         except ValueError:
             pass
 
-        # 没有空壳 → 跳过归一并警告，构建继续（自由化）。
+        # 没有空壳 / 空壳不可用 → 直接拒绝打包，不静默降级（不做冗余降级）。
         base_zip(base, {"SomeFont.ttf": b"supplemental"})
-        warnings = build(base=str(base), font=str(regular), output=output)
-        assert any("Roboto" in message for message in warnings)
-        with zipfile.ZipFile(output) as archive:
-            root = ET.fromstring(archive.read("fonts.xml"))
-        assert {node.text.strip() for node in root.find("family[@name='sans-serif']").findall("font")} == {"P-Regular.ttf"}
+        for message in ("没有它就不做归一",):
+            try:
+                build(base=str(base), font=str(regular), output=output)
+                raise AssertionError("缺空壳未被拒绝")
+            except ValueError as error:
+                assert message in str(error), error
+        base_zip(base, {"Roboto-Regular.ttf": make_carrier(visible=True)})  # 可见字形的 Roboto 不是空壳
+        try:
+            build(base=str(base), font=str(regular), output=output)
+            raise AssertionError("可见字形的空壳未被拒绝")
+        except ValueError as error:
+            assert "度量空壳" in str(error), error
+        # 静态主字体（没有 wght 轴）同样直接拒绝：配置只出 supportedAxes。
+        static_font = fonts_dir / "Static.ttf"
+        static_font.write_bytes(make_font(axes=False))
+        base_zip(base, {"Roboto-Regular.ttf": make_carrier()})
+        try:
+            build(base=str(base), font=str(static_font), output=output)
+            raise AssertionError("静态主字体未被拒绝")
+        except ValueError as error:
+            assert "wght" in str(error), error
 
         # 信任边界：路径穿越 / 绝对路径 / 符号链接成员拒绝，输出不许覆盖输入。
         for bad in ("system/fonts/../../evil.ttf", "/abs.ttf"):
@@ -1114,13 +1103,12 @@ def runtime_scripts():
         for path in sorted((ROOT / "module").iterdir()):  # 模块目录照打包后的样子铺开
             if path.is_file():
                 shutil.copy(path, modpath / path.name)
-        (modpath / "fonts.xml").write_bytes(b"<familyset legacy/>")
         (modpath / "font_fallback.xml").write_bytes(b"<familyset modern/>")
         (modpath / "system/fonts/Any-Name.ttf").write_bytes(b"font")
         system = tmp / "sysroot"
         for directory in ("etc", "system_ext/etc", "product/etc"):
             (system / directory).mkdir(parents=True)
-            (system / directory / "font.xml").write_text("<familyset>old</familyset>")
+            (system / directory / "fonts.xml").write_text("<familyset>stock-legacy</familyset>")
         (system / "etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
         (system / "etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
         (system / "etc/fonts_customization.xml").write_text("<other-schema/>")
@@ -1132,15 +1120,23 @@ def runtime_scripts():
 
         result = sh([str(harness)], env)
         assert result.returncode == 0, result.stderr
-        for directory in ("etc", "system_ext/etc", "product/etc"):
-            target = modpath / system.relative_to("/") / directory / "font.xml"
-            assert target.read_text() == "<familyset legacy/>", f"{directory} 的 fonts.xml 应放 legacy 展开"
-        # 按目标文件名选语法：font_fallback*.xml 放新语法（supportedAxes），其余放 legacy。
+        # 只投放 font_fallback*.xml（新语法）；库存 fonts.xml 与 fonts_customization.xml 都不碰。
         for name in ("font_fallback.xml", "font_fallback_cjkvf.xml"):
             target = modpath / system.relative_to("/") / "etc" / name
             assert target.read_text() == "<familyset modern/>", f"{name} 应放新语法"
+        for directory in ("etc", "system_ext/etc", "product/etc"):
+            assert not (modpath / system.relative_to("/") / directory / "fonts.xml").exists(), \
+                f"{directory} 的库存 fonts.xml 不该被替换"
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
-        assert "已替换 5 份" in result.stdout, "应报告替换数量：" + result.stdout
+        assert "已替换 2 份 font_fallback 配置" in result.stdout, "应报告替换数量：" + result.stdout
+
+        # 设备没有 font_fallback*.xml（Android 15 以下）→ 中止安装，不假装成功。
+        (system / "etc/font_fallback.xml").unlink()
+        (system / "etc/font_fallback_cjkvf.xml").unlink()
+        result = sh([str(harness)], env)
+        assert result.returncode != 0 and "没有 font_fallback" in result.stderr, result
+        system.joinpath("etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
+        system.joinpath("etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
 
         # 没有字体文件（= 直接压缩了仓库）就中止。
         (modpath / "system/fonts/Any-Name.ttf").unlink()

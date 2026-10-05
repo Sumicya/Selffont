@@ -8,32 +8,27 @@ command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 [ -n "$(ls -A "$MODPATH/system/fonts" 2>/dev/null)" ] ||
     abort "Selffont: 模块里没有字体文件。请用 build.py 打包，不要直接压缩仓库。"
 
-# 整份替换系统全部 font*.xml（familyset 只能有一份；fonts_customization.xml 是用户自选配置，不碰）。
-# 按目标文件名选语法：font_fallback*.xml 是 Android 15+ 的新配置，放新语法（supportedAxes，
-# 主字体由系统按 wght/ital 运行时实例化）；其余 font*.xml 是 legacy 解析目标，放展开好的静态阶梯。
-# 官方要求两个文件保持同步，包里两份内容同源（都由 build.py 从同一棵家族树生成）。
+# 只替换系统的 font_fallback*.xml（Android 15+ 的新配置）。包里的配置统一是新语法
+# （supportedAxes，主字体由系统按 wght/ital 运行时实例化），不再产出/投放 legacy 的 fonts.xml——
+# 库存 fonts.xml 保持原样，避免两套配置说法不一致。没有 font_fallback*.xml 的设备直接中止安装。
+# fonts_customization.xml 是用户自选配置，不碰。
 SYSTEM_ROOT=${SELFFONT_SYSTEM_ROOT:-/system}
 copied=0
+[ -f "$MODPATH/font_fallback.xml" ] || abort "Selffont: 包里缺少 font_fallback.xml"
 for base in "$SYSTEM_ROOT/system_ext/etc" "$SYSTEM_ROOT/product/etc" "$SYSTEM_ROOT/etc"; do
     [ -d "$base" ] || continue
-    for source in "$base"/font*.xml; do
+    for source in "$base"/font_fallback*.xml; do
         [ -f "$source" ] || continue
-        case "${source##*/}" in
-            fonts_customization.xml) continue ;;
-            font_fallback*.xml) from=font_fallback.xml ;;
-            *) from=fonts.xml ;;
-        esac
-        [ -f "$MODPATH/$from" ] || abort "Selffont: 包里缺少 $from，无法替换 $source"
-        mkdir -p "$MODPATH$base" && cp -f "$MODPATH/$from" "$MODPATH$base/${source##*/}" ||
+        mkdir -p "$MODPATH$base" && cp -f "$MODPATH/font_fallback.xml" "$MODPATH$base/${source##*/}" ||
             abort "Selffont: 替换 $source 失败"
         copied=$((copied + 1))
     done
 done
 
 if [ "$copied" -gt 0 ]; then
-    ui_print "Selffont: 已替换 $copied 份字体配置，重启后生效。"
+    ui_print "Selffont: 已替换 $copied 份 font_fallback 配置，重启后生效。"
 else
-    ui_print "Selffont: 警告——没找到系统 font*.xml，字体配置未替换（模块只挂载了字体文件）。"
+    abort "Selffont: 系统里没有 font_fallback*.xml（Android 15+ 才有）。本模块只支持带新配置的设备。"
 fi
 
 # 火狐配置是 firefox.sh 装到 /data/local/tmp 的拷贝：模块更新后那份会变旧，字体名单就不再前进。

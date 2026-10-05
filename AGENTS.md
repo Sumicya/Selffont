@@ -16,7 +16,7 @@
 ## 项目核对清单
 
 - 默认分支：`main`；会话固定在工作分支上提交并推送，不直接推 `main`。
-- 构建方式：本地 `python3 build.py`（唯一构建链，自检内建）。产物带两份同源字体配置：`fonts.xml`（legacy 逐档展开）与 `font_fallback.xml`（新语法 `supportedAxes`，Android 15+ 运行时实例化），安装脚本按目标文件名投放。CI（`.github/workflows/build.yml`）只跑自检 + 一次验证性构建，**不发版、不上传 artifact、不写 Release**。
+- 构建方式：本地 `python3 build.py`（唯一构建链，自检内建）。产物只带一份字体配置 `font_fallback.xml`（新语法 `supportedAxes`，Android 15+ 运行时实例化）；安装脚本只替换系统的 `font_fallback*.xml`，库存 `fonts.xml` 不碰，没有该文件的设备中止安装。输入侧不降级：静态主字体、缺空壳的基础包都直接拒绝。CI（`.github/workflows/build.yml`）只跑自检 + 一次验证性构建，**不发版、不上传 artifact、不写 Release**。
 - 产物：模块 zip `Selffont-<版本>.zip`（约 100 MB）；非发行版本叫 `Selffont.zip`。产物只由本地构建产出；仓库未启用 Release，文档里不写 Release 下载入口。
 - Actions artifact:CI 不再上传产物；`cleanup.yml` 手动触发清理，保留最近 **5** 个，按 `selffont-` 前缀筛选、完整分页、结构化字段，只删 artifact（详见"CI 权限与清理"）。
 - 允许写权限的工作流：cleanup.yml(actions) —— 只手动触发、只删 Actions artifact，不碰 Release、tag 与历史 tag。（这行同时是 `spec-check.yml` 的写权限白名单来源。）
@@ -25,6 +25,12 @@
 - 历史 tag:`v3.0.0`（0d9ba81,2026-09-26）、`v26.9.30.39`（215cf25,2026-09-29）属已下线的旧发版链，按规范默认保留，不追溯改名、不改写历史。
 - 下载与安装：不发 Release。安装 = KernelSU 装本地构建的 zip + 重启；卸载 = KSU 删模块 + 重启；火狐接入 = `su -c 'sh /data/adb/modules/MFGA/firefox.sh'`。
 - 术语表：模块 zip = KernelSU 模块包；基础包 = MFGA 补充字库 ZIP（`build.py` 现场读取）；主字体 = 文渊圆体 VF；别名字件 = 只有家族名、没有字形的极小字体；网页字体开关 = 火狐的 `browser.display.use_document_fonts`（压 = 0，放行 = 加 `Selffont:keep` 标记注释）；pref 尾链 = 构建期把补充字库内部家族名按 fonts.xml 顺序追加到火狐 `font.name-list.*` 末尾。
+
+## 三条硬规则（2026-10-05，主人定）
+
+- **只做新包**：配置只出新语法（`supportedAxes`），只投放 `font_fallback*.xml`；不做 legacy 逐档展开、不替换库存 `fonts.xml`。没有目标文件的设备中止安装，不为兼容再开旧路径。
+- **先查证再动手**：动到平台行为（Android 字体管线、Gecko、KernelSU）之前先查上游源码或官方文档（googlesource / gerrit、searchfox、官方文档），依据写进 changelog / PR；只有间接证据的必须标「未验证」并留回退开关。
+- **不做冗余降级**：能明确失败的直接失败（静态主字体、缺空壳、模板缺关键行、系统没有目标文件都报错/中止），不静默产出半成品；删降级路径前先确认最坏失败模式不是不可恢复（优先「功能不生效」而不是「系统损坏」）。
 
 ## CI 权限与清理
 

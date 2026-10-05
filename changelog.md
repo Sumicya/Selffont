@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2026-10-05 · 只做新包：只投放 font_fallback.xml + 输入侧删掉全部降级
+
+按主人裁决落地三条规则（只做新包 / 先查证 / 不做冗余降级）：
+
+- **只做新包**：`build.py` 只生成一份配置（新语法 `supportedAxes`），删掉 legacy 逐档展开；`customize.sh` 只替换系统的 `font_fallback*.xml`，**库存 `fonts.xml` 不再替换**（Google 已废弃它，AOSP 的 JSON 作者层是构建期管线、不上设备）。设备没有 `font_fallback*.xml`（Android 15 以下）→ 安装直接中止，不假装成功。代价：放弃 Android 15 以下、以及没有该文件的 ROM（文档写明）。
+- **不做冗余降级**：删掉「静态主字体全档同文件」（`weight_ladder` 无 `wght` 轴直接报错）与「缺空壳跳过归一继续打包」（缺 `Roboto-Regular.ttf` 或它不是可用空壳都直接报错）；`configure_fonts` 去掉现代/legacy 双开关与无空壳分支。
+- **先查证**：本轮回补了 AOSP 侧证据——`font_fallback.xml` 存在于 AOSP 15 分支、官方「Android 15 起 vendor 必须把可变字体写进 font_fallback.xml」；最坏失败模式是「模块未生效」而不是坏系统（库存 `fonts.xml` 不动）。
+- 自检同步：`fonts_xml` 断言主字体一律一条 `supportedAxes`、空壳条目只做「留下的一字不改」子集检查、静态字体与缺轴组合被拒；端到端断言包里没有 `fonts.xml`/`font_fallback_cjkvf.xml`、静态字体与不可用空壳被拒；安装脚本自检覆盖「只投放 font_fallback、库存 fonts.xml 不碰、没有新配置时中止」。
+- 未验证：Android 15/16 真机上新配置是否被 `FontManagerService` 实际加载（现有真机是 Android 16，符合预期但未实测本次改动）。
+
 ## 2026-10-05 · 跟上新语法：font_fallback.xml（supportedAxes，Android 15+ 运行时实例化）
 
 - `fonts.xml` 已废弃但仍必须与 `font_fallback.xml` 保持同步（AOSP 官方说明），且设备上跑的仍是 XML——AOSP 的 JSON 作者层（`font_config.json` / `alias.json` / `fallback_order.json` + `script/generate_fonts_xml_main.py`）是**构建期**管线，不上设备，模块没有 JSON 入口可挂。
