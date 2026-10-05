@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # KernelSU 安装脚本。自由化：没有平台闸门——任何 Android、任何厂商、任何管理器都放行。
-# 在未测试设备上安装是你自己的选择；唯一的硬要求是包里得有打包好的字体（见 BUILD 说明）。
+# 在未测试设备上安装是你自己的选择；唯一的硬要求是包里得有打包好的字体（见 build.py）。
 command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
 command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 
@@ -8,28 +8,36 @@ command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 [ -n "$(ls -A "$MODPATH/system/fonts" 2>/dev/null)" ] ||
     abort "Selffont: 模块里没有字体文件。请用 build.py 打包，不要直接压缩仓库。"
 
-# 只替换系统的 font_fallback*.xml（Android 15+ 的新配置；AOSP 16 的 fonts.xml 头部已写明
-# 「DEPRECATED：不再是系统装字体的来源，配置加到 font_fallback.xml」）。包里的配置统一是新语法
-# （supportedAxes，主字体由系统按 wght/ital 运行时实例化），不产出/投放 legacy 的 fonts.xml——
-# 库存 fonts.xml 与 fonts_customization.xml 保持原样，避免两套配置说法不一致。
-# 分区要全：AOSP 在 /system/etc，厂商还可能放在 system_ext / product / my_product /
-# my_stock / my_bigball / vendor / odm——只换一份的话，框架读的是没换的那份，字体就不生效。
+# 设备读哪份字体配置按厂商而定，都用包里同一份新语法配置（supportedAxes）填充：
+#   font_fallback.xml   AOSP 15+：SystemFonts 源码 FONTS_XML = font_fallback.xml
+#   fonts_base.xml      ColorOS 基础层（日志：Loading font config from /system_ext/etc/fonts_base.xml）
+#   fonts_ule.xml       ColorOS 界面实际使用的那层
+# 不碰库存 fonts.xml（AOSP 16 头注已标 DEPRECATED）与 fonts_customization.xml。
+# 模块内统一放 $MODPATH/system/<分区>/…：KernelSU 的 vendor / product / system_ext 就是
+# 指向 system/ 下同名的符号链接，直接建顶层分区目录会顶掉符号链接（已知会卡开机）。
 ROOT=${SELFFONT_SYSTEM_ROOT:-}
-copied=0
-[ -f "$MODPATH/font_fallback.xml" ] || abort "Selffont: 包里缺少 font_fallback.xml"
-for dir in system/etc system_ext/etc product/etc my_product/etc my_stock/etc my_bigball/etc vendor/etc odm/etc; do
-    for source in "$ROOT/$dir"/font_fallback*.xml; do
+replaced=""
+count=0
+for partition in system system_ext product; do
+    base="$ROOT/$partition/etc"
+    [ -d "$base" ] || continue
+    for source in "$base"/font_fallback*.xml "$base"/fonts_base.xml "$base"/fonts_ule.xml; do
         [ -f "$source" ] || continue
-        mkdir -p "$MODPATH/$dir" && cp -f "$MODPATH/font_fallback.xml" "$MODPATH/$dir/${source##*/}" ||
+        name=${source##*/}
+        target="$MODPATH/system/$partition/etc"
+        [ "$partition" = "system" ] && target="$MODPATH/system/etc"
+        mkdir -p "$target" && cp -f "$MODPATH/font_fallback.xml" "$target/$name" ||
             abort "Selffont: 替换 $source 失败"
-        copied=$((copied + 1))
+        replaced="$replaced $partition/etc/$name"
+        count=$((count + 1))
     done
 done
 
-if [ "$copied" -gt 0 ]; then
-    ui_print "Selffont: 已替换 $copied 份 font_fallback 配置，重启后生效。"
+if [ "$count" -gt 0 ]; then
+    ui_print "Selffont: 已替换 $count 份字体配置：$replaced"
+    ui_print "Selffont: 重启后生效（字体文件挂在 /system/fonts）。"
 else
-    abort "Selffont: 系统里没有 font_fallback*.xml（Android 15+ 才有）。本模块只支持带新配置的设备。"
+    abort "Selffont: 设备上没有可替换的字体配置（font_fallback.xml / fonts_base.xml / fonts_ule.xml 都没有）。本模块只支持带其中至少一份的设备。"
 fi
 
 # 火狐配置是 firefox.sh 装到 /data/local/tmp 的拷贝：模块更新后那份会变旧，字体名单就不再前进。

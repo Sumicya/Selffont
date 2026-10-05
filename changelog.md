@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2026-10-05 · 真机根因定位：ColorOS 读 fonts_base.xml / fonts_ule.xml，我们只换了 font_fallback.xml
+
+- 现象：真机（OnePlus / ColorOS，Android 16）装好后字体不变；模块目录里 `system/etc/font_fallback.xml` 字节数正常，系统侧 `/system/etc/font_fallback.xml Selffont=7`——**说明模块已正确挂载、配置已替换**，问题不在挂载。
+- 根因（设备日志实证）：`logcat` 出现 `SystemFonts: Loading font config from /system_ext/etc/fonts_base.xml`。AOSP `SystemFonts.java` 是 `FONTS_XML = getFontsXmlDir() + "font_fallback.xml"`，ColorOS 把配置目录改到 `/system_ext/etc` 并改用厂商文件名 `fonts_base.xml`（另有界面实际使用的 `fonts_ule.xml`）；我们换的 `/system/etc/font_fallback.xml` 在这台机器上不被读，所以「没生效」。
+- 修法：安装脚本按设备实际存在的配置逐个替换，内容永远是包里同一份新语法（`supportedAxes`）：`font_fallback*.xml`（AOSP）+ `fonts_base.xml` / `fonts_ule.xml`（ColorOS），扫描分区 `system` / `system_ext` / `product`；库存 `fonts.xml` 与 `fonts_customization.xml` 不碰。模块内容统一落 `$MODPATH/system/<分区>/etc/…`——KernelSU 的 `vendor` / `product` / `system_ext` 是指向 `system/` 下同名的符号链接，直接建顶层分区目录会顶掉符号链接（社区有卡开机案例）。
+- 依据：AOSP android16-release `graphics/java/android/graphics/fonts/SystemFonts.java`（`FONTS_XML = ... font_fallback.xml`）与本机日志；ColorOS 三套配置的对应关系见 lxgw 字体模块模板的兼容性说明与 `coloros-font-switcher` v1.1.0 的说明。
+- 自检：`runtime_scripts` 的假系统改成 `system/etc/font_fallback*.xml` + `system_ext/etc/fonts_base.xml` + `system_ext/etc/fonts_ule.xml`，断言替换 4 份、模块路径为 `system/etc/...` 与 `system/system_ext/etc/...`、库存 `fonts.xml` 不碰、一份都没有时中止。
+- 未验证：ColorOS 的解析器是否接受带 `supportedAxes` 的新语法（其系统基于 Android 16，AOSP 解析器自 Android 15 起支持；若被拒，表现应是字体仍不生效，不会坏系统——要退就在管理器里停用模块）。装完复测方法：`grep -c Selffont /system_ext/etc/fonts_base.xml` 应非 0。
+
 ## 2026-10-05 · 真机「字体未应用」两处修正：分区覆盖 + font_fallback.xml 根节点裸 <familyset>
 
 - 背景：真机（Android 16 / OnePlus）装上后字体没变。核对 AOSP 源码与官方文档后确认方向没错——android16-release 的 `data/fonts/fonts.xml` 头注写着「DEPRECATED：不再是系统装字体的来源，vendor 请把配置加到 `font_fallback.xml`」；android15-release 的 `font_fallback.xml` 本身就带 `sans-serif` 等命名家族（第一个 family 即默认族）。

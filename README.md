@@ -12,7 +12,7 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 
 字重阶梯现场从字体的 `wght`/`ital` 轴读取（越界夹取）；**主字体必须是含 `wght` 轴的可变字体**，静态字体直接拒绝（配置只出新语法，没有可声明的轴）。
 
-模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。安装时把它投放到系统里存在的每份 `font_fallback*.xml`（含厂商的 `font_fallback_cjkvf.xml`，分区覆盖 `system` / `system_ext` / `product` / `my_product` / `my_stock` / `my_bigball` / `vendor` / `odm`——只换一份、而框架读的是另一份，字体就不会生效）；**库存 `fonts.xml` 不再替换**（Google 已废弃它，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备没有 `font_fallback*.xml`（Android 15 以下）时安装直接中止，不会留下半套配置。
+模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。安装时把它投放到设备实际会读的每一份配置上（内容都是这同一份新语法）：AOSP 的 `font_fallback*.xml`，以及 ColorOS 的 `/system_ext/etc/fonts_base.xml` 与 `fonts_ule.xml`——**读哪份按厂商而定**，只换 AOSP 那份时 ColorOS 会继续用厂商配置，字体看起来「没生效」；**库存 `fonts.xml` 不再替换**（AOSP 16 头注已把这份文件标为 DEPRECATED，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备一份可替换配置都没有（Android 15 以下）时安装直接中止，不留下半套配置。
 
 另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 4 KB（实测 6 枚共 4136 字节））：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
 
@@ -66,7 +66,7 @@ gh api -X DELETE repos/Sumicya/Selffont/actions/artifacts/<id>
 
 ## 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `MFGA`；安装脚本替换系统里存在的每一份 `font_fallback*.xml`，库存 `fonts.xml` 与 `fonts_customization.xml` 都不碰；没有前者的设备会中止安装）。卸载 = KSU 删模块 + 重启。仓库不发 Release：zip 来自本地 `build.py` 或 CI 的 Actions artifact。
+KSU 装 zip，重启（模块 ID `MFGA`；安装脚本替换设备实际会读的字体配置——AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`，库存 `fonts.xml` 与 `fonts_customization.xml` 都不碰；一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。仓库不发 Release：zip 来自本地 `build.py` 或 CI 的 Actions artifact。
 
 管理器安装：KernelSU → 模块 → 从存储安装 → 选解压出的 zip → 重启。
 
@@ -82,7 +82,7 @@ su -c 'rm -f /data/local/tmp/selffont-module.zip'
 su -c reboot                                            # 或手动重启
 ```
 
-装完字体没变时，按序查三条：管理器里模块已启用且已重启；`su -c 'grep -c Selffont /system/etc/font_fallback.xml'` 非 0（厂商分区同理，用 `find / -maxdepth 3 -name 'font_fallback*.xml'` 找全）；KernelSU 需要挂载类元模块（metamodule）才能把模块内容挂进系统——缺了它模块装得上但不生效。
+装完字体没变时，按序查三条：管理器里模块已启用且已重启；`su -c 'for f in /system/etc/font_fallback.xml /system_ext/etc/fonts_base.xml /system_ext/etc/fonts_ule.xml; do [ -f "$f" ] && echo "$f Selffont=$(grep -c Selffont "$f")"; done'`——设备读了哪份，就该有哪份被换（ColorOS 只查后两行；全是 0 或文件不存在说明选错了配置文件）；KernelSU 需要挂载类元模块（metamodule）才能把模块内容挂进系统——缺了它模块装得上但不生效（`mount | grep MFGA` 能看到才说明挂上了）。
 
 若 `cp` 被 SELinux 拦：先在 Termux 里 `cp "$ZIP" ~/storage/downloads/`（`termux-setup-storage` 给的软链），再 `su -c 'cp /sdcard/Download/<文件名> /data/local/tmp/'` 后照上装。
 

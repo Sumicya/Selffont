@@ -22,7 +22,7 @@
 ## 项目核对清单
 
 - 默认分支：`main`；会话固定在工作分支上提交并推送，不直接推 `main`。
-- 构建方式：本地 `python3 build.py`（唯一构建链，自检内建）。产物只带一份字体配置 `font_fallback.xml`（新语法 `supportedAxes`，Android 15+ 运行时实例化）；安装脚本替换系统里存在的每一份 `font_fallback*.xml`（分区覆盖 `system` / `system_ext` / `product` / `my_product` / `my_stock` / `my_bigball` / `vendor` / `odm`），库存 `fonts.xml` 不碰，没有该文件的设备中止安装。输入侧不降级：静态主字体、缺空壳的基础包都直接拒绝。CI（`.github/workflows/build.yml`）跑自检 + 一次构建：push 与 PR 都把 zip 传成 Actions artifact（`name=Selffont-<版本>`、`retention-days: 5`、`if-no-files-found: error`），出包成功后自动滚动清理旧 artifact（保留最近 5 个）；**不发版、不写 Release**。
+- 构建方式：本地 `python3 build.py`（唯一构建链，自检内建）。产物只带一份字体配置 `font_fallback.xml`（新语法 `supportedAxes`，Android 15+ 运行时实例化）；安装脚本替换设备实际会读的字体配置（AOSP 的 `font_fallback*.xml`；ColorOS 的 `/system_ext/etc/fonts_base.xml` / `fonts_ule.xml`——分区 `system` / `system_ext` / `product`，模块路径 `system/<分区>/etc`），库存 `fonts.xml` 不碰，一份可替换配置都没有的设备中止安装。输入侧不降级：静态主字体、缺空壳的基础包都直接拒绝。CI（`.github/workflows/build.yml`）跑自检 + 一次构建：push 与 PR 都把 zip 传成 Actions artifact（`name=Selffont-<版本>`、`retention-days: 5`、`if-no-files-found: error`），出包成功后自动滚动清理旧 artifact（保留最近 5 个）；**不发版、不写 Release**。
 - 产物：模块 zip `Selffont-<版本>.zip`（约 100 MB）；非发行版本叫 `Selffont.zip`。产物由本地 `build.py` 产出，CI 也产一份并传成 Actions artifact（push 与 PR 都传，取包命令见 README）；仓库不发 Release，文档里不写 Release 下载入口。
 - Actions artifact：`build.yml` 出包（名如 `Selffont-<版本>`）并自动滚动清理，保留最近 5 个；筛选按 `selffont-` 前缀（不分大小写，含旧积压 `selffont-module`）、完整分页、删除前打印完整清单；要提前删可手动跑 README 的 `gh api -X DELETE`。
 - 工作流写权限：`build.yml` 的 `cleanup` job（`actions: write`，只删 artifact）；其余一律只读；上传 artifact 不需要写权限。

@@ -1113,14 +1113,16 @@ def runtime_scripts():
         (modpath / "font_fallback.xml").write_bytes(b"<familyset modern/>")
         (modpath / "system/fonts/Any-Name.ttf").write_bytes(b"font")
         system = tmp / "sysroot"
-        for directory in ("system/etc", "system_ext/etc", "product/etc", "my_product/etc"):
+        # AOSP 读 /system/etc/font_fallback.xml；ColorOS 读 /system_ext/etc/fonts_base.xml 与
+        # fonts_ule.xml（设备日志实证）。库存 fonts.xml 一律不碰。
+        for directory in ("system/etc", "system_ext/etc", "product/etc"):
             (system / directory).mkdir(parents=True)
             (system / directory / "fonts.xml").write_text("<familyset>stock-legacy</familyset>")
         (system / "system/etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
         (system / "system/etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
         (system / "system/etc/fonts_customization.xml").write_text("<other-schema/>")
-        # 厂商分区（ColorOS 系走 my_product）也有一份：只换 /system 那份，框架读的是没换的。
-        (system / "my_product/etc/font_fallback.xml").write_text("<familyset>old-oem</familyset>")
+        (system / "system_ext/etc/fonts_base.xml").write_text("<familyset>old-coloros-base</familyset>")
+        (system / "system_ext/etc/fonts_ule.xml").write_text("<familyset>old-coloros-ule</familyset>")
         env = {**os.environ, "MODPATH": str(modpath), "SELFFONT_SYSTEM_ROOT": str(system)}
         harness = modpath / "harness.sh"
         harness.write_text('ui_print() { echo "$@"; }\n'
@@ -1129,27 +1131,28 @@ def runtime_scripts():
 
         result = sh([str(harness)], env)
         assert result.returncode == 0, result.stderr
-        # 只投放 font_fallback*.xml（新语法），且覆盖所有装着它的分区；
-        # 库存 fonts.xml 与 fonts_customization.xml 都不碰。
+        # 投放设备实际会读的每一份配置（AOSP 的 font_fallback* 与 ColorOS 的 fonts_base / fonts_ule），
+        # 内容都是同一份新语法；库存 fonts.xml 与 fonts_customization.xml 都不碰。
         for relative in ("system/etc/font_fallback.xml", "system/etc/font_fallback_cjkvf.xml",
-                         "my_product/etc/font_fallback.xml"):
+                         "system/system_ext/etc/fonts_base.xml", "system/system_ext/etc/fonts_ule.xml"):
             target = modpath / relative
             assert target.read_text() == "<familyset modern/>", f"{relative} 应放新语法"
-        for directory in ("system/etc", "system_ext/etc", "product/etc", "my_product/etc"):
+        for directory in ("system/etc", "system_ext/etc", "product/etc"):
             assert not (modpath / directory / "fonts.xml").exists(), \
                 f"{directory} 的库存 fonts.xml 不该被替换"
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
-        assert "已替换 3 份 font_fallback 配置" in result.stdout, "应报告替换数量：" + result.stdout
+        assert "已替换 4 份字体配置" in result.stdout, "应报告替换数量：" + result.stdout
 
-        # 设备没有 font_fallback*.xml（Android 15 以下）→ 中止安装，不假装成功。
-        (system / "system/etc/font_fallback.xml").unlink()
-        (system / "system/etc/font_fallback_cjkvf.xml").unlink()
-        (system / "my_product/etc/font_fallback.xml").unlink()
+        # 设备一份可替换配置都没有（Android 15 以下）→ 中止安装，不假装成功。
+        for relative in ("system/etc/font_fallback.xml", "system/etc/font_fallback_cjkvf.xml",
+                         "system_ext/etc/fonts_base.xml", "system_ext/etc/fonts_ule.xml"):
+            (system / relative).unlink()
         result = sh([str(harness)], env)
-        assert result.returncode != 0 and "没有 font_fallback" in result.stderr, result
-        system.joinpath("system/etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
-        system.joinpath("system/etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
-        system.joinpath("my_product/etc/font_fallback.xml").write_text("<familyset>old-oem</familyset>")
+        assert result.returncode != 0 and "没有可替换的字体配置" in result.stderr, result
+        (system / "system/etc/font_fallback.xml").write_text("<familyset>old-modern</familyset>")
+        (system / "system/etc/font_fallback_cjkvf.xml").write_text("<familyset>old-cjkvf</familyset>")
+        (system / "system_ext/etc/fonts_base.xml").write_text("<familyset>old-coloros-base</familyset>")
+        (system / "system_ext/etc/fonts_ule.xml").write_text("<familyset>old-coloros-ule</familyset>")
 
         # 没有字体文件（= 直接压缩了仓库）就中止。
         (modpath / "system/fonts/Any-Name.ttf").unlink()
