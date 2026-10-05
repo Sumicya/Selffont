@@ -1,0 +1,48 @@
+name: spec-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  spec-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check global specification
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          root = Path(".")
+          agents = root / "AGENTS.md"
+          if not agents.exists():
+              raise SystemExit("缺少 AGENTS.md")
+          text = agents.read_text(encoding="utf-8")
+          required = [
+              "全局规范同步",
+              "第十五版",
+              "任何本轮本地改动必须最终提交并推送",
+              "CI 不得自动创建 Release",
+              "Release 1 个",
+              "Actions artifact 5 个",
+          ]
+          for item in required:
+              if item not in text:
+                  raise SystemExit(f"AGENTS.md 缺少全局规范条目：{item}")
+
+          workflows = root / ".github" / "workflows"
+          forbidden = re.compile(r"(?i)(softprops/action-gh-release|gh release create|createRelease|create_git_release|actions/create-release)")
+          for path in workflows.glob("*.yml"):
+              if path.name == "spec-check.yml":
+                  continue
+              source = path.read_text(encoding="utf-8")
+              if forbidden.search(source):
+                  raise SystemExit(f"{path} 包含自动创建 Release 的实现；第十五版规范禁止 CI 自动发版")
+          print("第十五版全局规范检查通过")
