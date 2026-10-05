@@ -14,8 +14,6 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 
 模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。安装时把它投放到设备实际会读的每一份配置上（内容都是这同一份新语法）：AOSP 的 `font_fallback*.xml`，以及 ColorOS 的 `/system_ext/etc/fonts_base.xml` 与 `fonts_ule.xml`——**读哪份按厂商而定**，只换 AOSP 那份时 ColorOS 会继续用厂商配置，字体看起来「没生效」；**库存 `fonts.xml` 不再替换**（AOSP 16 头注已把这份文件标为 DEPRECATED，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备一份可替换配置都没有（Android 15 以下）时安装直接中止，不留下半套配置。
 
-另外附带几枚**别名字件**（只有家族名、没有字形的极小字体，合计约 4 KB（实测 6 枚共 4136 字节））：Gecko 只认字件内部家族名，系统 `fonts.xml` 里的别名它看不见，带引号调用（如 `font-family: "sans-serif-smallcaps"`）会落到平台默认字体；同名字件让 Gecko 命中后逐字回退到文渊。不想要就 `--no-alias-fonts`。
-
 ## 构建
 
 整个构建链是一个 Python 文件，自检内建其中：
@@ -26,7 +24,6 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py --query-github           # 正式打包:现场查运行历史取数并盖戳
 .venv/bin/python build.py --build 47 --day 3       # 或手工传序号(离线;--date 可另给)
 .venv/bin/python build.py --font 文件或URL --base 本地ZIP或URL
-.venv/bin/python build.py --no-alias-fonts         # 不打火狐别名字件（回退旧行为）
 .venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成文渊）
 ```
 
@@ -106,11 +103,11 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 **泛型与家族名的坑**（CSS 写法不同，路径完全不同）：
 
 - 泛型关键字（`font-family: cursive/fantasy`，不带引号）：all.js 的 Android 段只有 `cursive.x-unicode/x-western` 默认、`fantasy` 一个都没有，zh/ja/ko 下解析成空字体组落平台默认——配置把 cursive/fantasy × 7 语言组补齐。
-- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 清单只收**字体文件内部家族名**，fonts.xml 别名进不去。本轮改成给这些别名各发一枚**别名字件**（家族名 = 别名、无字形，合计约 4 KB（实测 6 枚共 4136 字节））：Gecko 命中后逐字回退，按上面的名单落到文渊。**未在真机验证**；要退回旧行为，打包时加 `--no-alias-fonts`。
+- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 的字体清单只收**写进系统配置的字件**。曾试过给这些别名各发一枚「别名字件」（家族名 = 别名、无字形），2026-10-05 真机实测（OnePlus / ColorOS 16）**解析不到**：20 个空格的宽度与默认链完全相同，别名字件的 0.5em 空格没有出现。又因为每条 `font.name-list.*` 都被我们前置了文渊，命中与不命中最终渲染一致——既不可见也无收益，**已删除**（`build.py` 不再产别名字件、也无 `--no-alias-fonts` 开关）。
 - 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成文渊**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/MFGA/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是文渊；`web-fonts.sh status` 看当前状态。
 - CSS `font-variant: small-caps` 由基础字体合成：基础字体是文渊，小型大写就是文渊。
 
-验证：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`，应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。别名字件的真机验证：开一个用 `font-family: "sans-serif-smallcaps"` 的测试页，字形应是文渊而非 Roboto；若出现豆腐块，加 `--no-alias-fonts` 重新打包即可回到旧行为。
+验证：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`，应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。
 
 emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Color Emoji` / `Noto Color Emoji Flags`（对 emoji 表现字符它优先选带彩色的那张，所以前置不挡彩色）；包内字体到底覆盖到哪个码位，拿 fontTools 查 cmap 即可——先拿数据，再谈 Gecko。
 
@@ -123,14 +120,13 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 未验证项的真机清单
 
-**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效。**仍无真机数据**：别名字件、纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径。装上一分钟后按顺序看四条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**仍无真机数据**：纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
-3. 别名字件（**仍未测**）：开一个测试页写 `font-family: "sans-serif-smallcaps"`（或 `"cursive"`），字形应是文渊的圆体；若出现豆腐块或方框，改用 `--no-alias-fonts` 重新打包。
-4. 网页字体（**已真机验证**）：开一个图标站点（如 FontAwesome 示例页）——**默认压掉**时图标会显示成方块/异常，这是预期代价；点管理器里模块的「操作」按钮切成「放行」（`web-fonts.sh status` 可核对），再重启火狐，图标恢复。两种表现都算「按设计工作」，选哪种看你要全系统同一副面孔还是保图标。
+3. 网页字体（**已真机验证**）：开一个图标站点（如 FontAwesome 示例页）——**默认压掉**时图标会显示成方块/异常，这是预期代价；点管理器里模块的「操作」按钮切成「放行」（`web-fonts.sh status` 可核对），再重启火狐，图标恢复。两种表现都算「按设计工作」，选哪种看你要全系统同一副面孔还是保图标。
 
-回退都不用卸载：开关随时可切；要回到旧行为就重新打包（`--no-alias-fonts` / `--keep-web-fonts`）→ KSU 装新 zip → 重启。
+回退都不用卸载：开关随时可切；要回到旧行为就重新打包（`--keep-web-fonts`）→ KSU 装新 zip → 重启。
 
 ## 产物构成（为什么约 100 MB）
 
@@ -138,7 +134,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 | --- | --- |
 | 主字体（文渊圆体 VF，归一度量后的安装副本） | 约 46 MiB |
 | 补充字库（`fonts.xml` 引用、基础包里有的那几个：Plangothic、Unicode*-New、NotoSansPro、ZDigit 等） | 约 54 MiB |
-| 配置与脚本（`font_fallback.xml`、`customize.sh`、火狐配置、别名字件 6 枚） | 不到 0.1 MiB |
+| 配置与脚本（`font_fallback.xml`、`customize.sh`、火狐配置） | 不到 0.1 MiB |
 
 「去掉静态」只删掉了配置里的逐档展开（`fonts.xml` 的 18 个 `<font>` 节点，几 KB）——字体数据从来只带一份 VF，没有按字重复制过文件，所以体积不变。装完想自己看构成：`unzip -l Selffont-<版本>.zip | sort -k1 -nr | head -15`。
 

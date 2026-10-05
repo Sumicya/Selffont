@@ -20,9 +20,9 @@
 3. 内部家族名改成 RENAME——保留名合规（文渊的 OFL 保留 'WenYuan'/'文渊'）。
 轮廓、cmap 归属、可变轴有构建期守卫，动一个字节就报错。
 
-另外附带几枚「别名字件」（只有家族名、没有字形的极小字体，见 ALIAS_FAMILIES）：Gecko 只认
-字件内部家族名，系统 fonts.xml 里的别名它看不见，网页按名调用会落到平台默认字体；有了同名
-字件，Gecko 命中它、逐字回退再按模块名单落到文渊.--no-alias-fonts 可关掉。
+不做「别名字件」：2026-10-05 真机实测（OnePlus / ColorOS 16），Gecko 的字体清单不含未写进
+系统配置的字件，别名字件在网页里解析不到（20 个空格宽度 = 默认链，别名值 0.5em 未出现）；
+而 Gecko 每条回退链都由本模块前置文渊，命中与不命中最终都渲染文渊——既不可见也无收益，删。
 """
 import argparse
 import hashlib
@@ -74,15 +74,6 @@ FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
 WORKFLOW = "build.yml"  # 版本取数的计数对象：仓库唯一构建工作流
 DEV_VERSION = "dev"     # 仓库里的非发行默认：没盖戳就不假装有正式序号
 VERSION_RE = re.compile(r"^(?P<date>\d{1,2}\.\d{1,2}\.\d{1,2})\.(?:(?P<day>\d+)\.)?(?P<build>\d+)$")
-
-# Gecko 的名字清单只收字件内部家族名，fonts.xml 别名永远进不去。这几个别名在设备上没有
-# 同名真实字件，网页按名调用（带引号的 "cursive" / "sans-serif-smallcaps" 等）会落到平台
-# 默认字体；主字体 48.7MB 复制四份不值，于是给每个别名发一枚只有名字、没有字形的极小字件：
-# Gecko 命中它 → 该字件画不出字 → 逐字回退按模块名单落到文渊。
-# sans-serif / serif / monospace 不发：设备上有真实同名家族，泛型路径已由 pref 前置文渊。
-ALIAS_FAMILIES = ("cursive", "fantasy", "casual", "serif-monospace",
-                  "sans-serif-smallcaps", "sans-serif-condensed")
-ALIAS_PREFIX = "Selffont-Alias-"
 
 # 网页自带字体开关：模板默认压掉（全系统同一副面孔）；--keep-web-fonts 放开（图标字体等要它）。
 # 表示法与 module/web-fonts.sh 完全一致：生效 = pref 行原样，放行 = 该行加 Selffont:keep 标记注释。
@@ -460,31 +451,6 @@ def github_version_numbers(workflow: str = WORKFLOW, now: datetime | None = None
             str(count_day_runs(runs, start)), pick_total(runs))
 
 
-# ---------------------------------------------------------------- 火狐别名字件
-
-def alias_font(family: str) -> bytes:
-    """只有名字、没有字形的极小字体（.notdef/空格）：给 Gecko 一个能命中的家族名。"""
-    builder = FontBuilder(1000, isTTF=True)
-    order = [".notdef", "space"]
-    builder.setupGlyphOrder(order)
-    builder.setupCharacterMap({32: "space"})
-    builder.setupGlyf({name: TTGlyphPen(None).glyph() for name in order})
-    builder.setupHorizontalMetrics(dict.fromkeys(order, (500, 0)))
-    builder.setupHorizontalHeader(ascent=930, descent=-250)
-    builder.setupNameTable({"familyName": family, "styleName": "Regular", "uniqueFontIdentifier": family,
-                            "fullName": family, "psName": family.replace(" ", "-")})
-    builder.setupOS2(sTypoAscender=930, sTypoDescender=-250, usWinAscent=930, usWinDescent=250, usWeightClass=400)
-    builder.setupPost()
-    out = io.BytesIO()
-    builder.save(out)
-    return out.getvalue()
-
-
-def alias_members(families=ALIAS_FAMILIES) -> dict[str, bytes]:
-    """别名字件在包内的文件名 → 字体数据（不写进 fonts.xml:Minikin 不读目录，Gecko 读得到目录）。"""
-    return {f"system/fonts/{ALIAS_PREFIX}{family}.ttf": alias_font(family) for family in families}
-
-
 # ---------------------------------------------------------------- 基础包（只取字体资源）
 
 def font_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
@@ -508,7 +474,7 @@ def font_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 def build(base: str | None = None, font: str | None = None, output: Path | None = None,
           build_num: str | None = None, day: str | None = None, date: str | None = None,
-          query: bool = False, alias: bool = True, keep_web_fonts: bool = False) -> list[str]:
+          query: bool = False, keep_web_fonts: bool = False) -> list[str]:
     """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。"""
     cache = ROOT / "build/cache"
     build_num = build_num or os.environ.get("SELFFONT_BUILD") or None
@@ -584,17 +550,14 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                             lambda match: f"{match.group(1)}{match.group(2)}, {tail}{match.group(3)}",
                             config, flags=re.M)
 
-        aliases = alias_members() if alias else {}
         config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
-        write_module(output, archive, bundled, name, packaged, xml, prop, config, aliases)
+        write_module(output, archive, bundled, name, packaged, xml, prop, config)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}")
     print(f"  主字体 {face['family']!r} → {RENAME}（{name},{len(ladder)} 档）")
     print(f"  补充字库 {len(bundled)} 个，fonts.xml 其余引用由设备自带（Noto/OEM，不打包）")
-    print(f"  火狐别名字件 {len(aliases)} 枚（{', '.join(ALIAS_FAMILIES)}）"
-          if aliases else "  火狐别名字件已关闭（--no-alias-fonts）")
     print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成文渊")
     for message in warnings:
         warn(message)
@@ -602,9 +565,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
-                 name: str, packaged: bytes, xml: bytes, prop: str, config: str,
-                 aliases: dict[str, bytes] | None = None) -> None:
-    """写模块 zip：被配置引用的基础包字体 + 主字体 + 别名字件 + 原生 KSU 模块布局。
+                 name: str, packaged: bytes, xml: bytes, prop: str, config: str) -> None:
+    """写模块 zip：被配置引用的基础包字体 + 主字体 + 原生 KSU 模块布局。
 
     包内只有一份字体配置 font_fallback.xml（新语法）：安装脚本把它投放到系统里存在的
     font_fallback*.xml 上；库存 fonts.xml 不替换（没有该文件的设备不支持，安装直接失败）。
@@ -613,8 +575,6 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         for member in bundled:
             destination.writestr(member.filename, archive.read(member))
         destination.writestr(f"system/fonts/{name}", packaged)
-        for filename, data in (aliases or {}).items():  # 不进 fonts.xml：只给 Gecko 按名命中
-            destination.writestr(filename, data)
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("module.prop", prop)
         destination.writestr("geckoview-config.yaml", config)  # 静态模板 + 构建期尾链
@@ -843,17 +803,13 @@ def build_end_to_end():
                              "firefox.sh", "web-fonts.sh", "action.sh", "geckoview-config.yaml",
                              "font_fallback.xml", "licenses/WenYuan-OFL.txt",
                              "system/fonts/P-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
-                             "system/fonts/NotoSansPro.otf", "licenses/MFGA-base-LICENSES.md",
-                             *alias_members()):
+                             "system/fonts/NotoSansPro.otf", "licenses/MFGA-base-LICENSES.md"):
                 assert expected in members, f"缺成员 {expected}"
             for absent in ("report.json", "system/fonts/DeadWeight.ttf",
                            "fonts.xml", "font_fallback_cjkvf.xml"):
                 assert absent not in members, f"不该有的成员 {absent}"
             installed_prop = archive.read("module.prop").decode()
             assert "version=26.9.30.2.9" in installed_prop and "\nversionCode=9\n" in installed_prop, installed_prop
-            # 别名字件只在系统字体目录里给 Gecko 按名命中，不进 fonts.xml（Minikin 不读目录）。
-            assert not any(ALIAS_PREFIX in name for name in
-                           {node.text.strip() for node in ET.fromstring(archive.read("font_fallback.xml")).iter("font")})
             assert (archive.getinfo("customize.sh").external_attr >> 16) == stat.S_IFREG | 0o755
             assert (archive.getinfo("system/fonts/P-Regular.ttf").external_attr >> 16) == stat.S_IFREG | 0o644
             packaged = archive.read("system/fonts/P-Regular.ttf")
@@ -887,11 +843,10 @@ def build_end_to_end():
             if line.strip().startswith("font.name-list."):
                 assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
 
-        # 关掉别名字件时包里不该有；--keep-web-fonts 时那一行应带 Selffont:keep 标记。
+        # --keep-web-fonts 时那一行应带 Selffont:keep 标记。
         build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30",
-              alias=False, keep_web_fonts=True)
+              keep_web_fonts=True)
         with zipfile.ZipFile(output) as archive:
-            assert not any(ALIAS_PREFIX in name for name in archive.namelist()), "别名字件未关闭"
             kept = archive.read("geckoview-config.yaml").decode()
             assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", kept, re.M), "网页字体未放行"
             assert not re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", kept, re.M), "放行后 pref 仍生效"
@@ -1020,21 +975,6 @@ def version_numbers():
         raise AssertionError("空运行列表应报错，不该编数")
     except RuntimeError:
         pass
-
-
-@check
-def alias_fonts():
-    """别名字件：家族名就是别名、除空格外没有字形、体积极小；包内文件不写进 fonts.xml。"""
-    data = alias_font("sans-serif-smallcaps")
-    with TTFont(io.BytesIO(data)) as font:
-        assert font["name"].getDebugName(1) == "sans-serif-smallcaps"
-        cmap = font.getBestCmap() or {}
-        assert set(cmap) <= {32}, f"别名字件不该有可见字形：{sorted(cmap)}"
-    assert len(data) < 4096, f"别名字件过大：{len(data)} 字节"
-    members = alias_members()
-    assert len(members) == len(ALIAS_FAMILIES)
-    for family in ALIAS_FAMILIES:
-        assert f"system/fonts/{ALIAS_PREFIX}{family}.ttf" in members, family
 
 
 # ---------------------------------------------------------------- 火狐（Gecko）接入
@@ -1264,7 +1204,6 @@ def main() -> None:
     parser.add_argument("--date", help="版本日期 YY.M.D（默认读 $SELFFONT_DATE，没有取当天 UTC+8）")
     parser.add_argument("--query-github", action="store_true",
                         help="用 gh 现场查仓库唯一工作流的运行历史，取齐日期与两个序号（CI 用；失败只警告）")
-    parser.add_argument("--no-alias-fonts", action="store_true", help="不打火狐别名字件")
     parser.add_argument("--keep-web-fonts", action="store_true",
                         help="放行网页自带字体（图标字体等）；默认压成文渊")
     args = parser.parse_args()
@@ -1273,7 +1212,7 @@ def main() -> None:
     else:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,
               day=args.day, date=args.date, query=args.query_github,
-              alias=not args.no_alias_fonts, keep_web_fonts=args.keep_web_fonts)
+              keep_web_fonts=args.keep_web_fonts)
 
 
 if __name__ == "__main__":

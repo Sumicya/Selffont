@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-05 · 别名字件实验判定无效并删除
+
+- 真机探针（OnePlus / ColorOS 16 / Firefox for Android，随机测试页）：20 个空格在 `"cursive"`/`"fantasy"`/`"casual"`/`"serif-monospace"`/`"sans-serif-smallcaps"`/`"sans-serif-condensed"` 六个别名家族下宽度全部 = 478.3px（= 默认链），别名字件特有的 0.5em 空格（应为 ≈1000px）从未出现 → **Gecko 的字体清单不含未写进系统配置的字件**，别名字件解析不到。
+- 同页拉丁串宽度三行（`"Selffont Rounded SC VF"` / `Roboto` / 不存在家族）全部 = 1049.8px：这是预期内的「收敛」——每条 `font.name-list.*` 都被前置文渊，家族命中与回退链首项指向同一副字体，网页侧无法区分（该结果不能用作「接入生效」的证据）。
+- 结论：别名字件既不可见（解析不到）也无收益（命中与否都渲染文渊），**删除**：`build.py` 去掉 `ALIAS_FAMILIES`/`alias_font()`/`alias_members()`/`--no-alias-fonts` 与相关自检（自检 10 项 → 9 项），README/AGENTS 同步（不再有「别名字件未验证」条目）。
+- 方法论留档：CSS `local()` 匹配的是字体**全名/PostScript 名**（我们主字体全名为 `Selffont Rounded SC VF Regular`、PS 为 `Selffont-Rounded-SC-VF`），且 Android 上 `local()` 查不到这些设备字体——用它测家族可见性是错仪器（第一版探针作废）。
+
 ## 2026-10-05 · 收尾：火狐开关真机生效；体积维持现状（不减覆盖）；建 TODO（自制圆体，下个会话）
 
 - 真机（一加 / ColorOS 16 / Android 16 / KernelSU）补测：**火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效**；系统字体生效此前已验证。剩余未验证项收窄为「别名字件」与「纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径」。
