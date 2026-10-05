@@ -14,7 +14,7 @@
 - [Noto Unicode](https://github.com/MY1L/Unicode/releases/tag/NotoUni7)
 - [MapleMono](https://github.com/subframe7536/maple-font)
 - [Plangothic](https://github.com/Fitzgerald-Porthmouth-Koenigsegg/Plangothic)
-- [Unicodia* & NewGardiner](https://github.com/Mercury13/unicodia/tree/main/Fonts) (作者声明/﻿JSesh Fonts Licenses/OFL)
+- [Unicodia* & NewGardiner](https://github.com/Mercury13/unicodia/tree/main/Fonts) （作者声明/﻿JSesh Fonts Licenses/OFL）
  
 无特殊说明则默认其为 OFL-1.1 许可
  
@@ -41,7 +41,7 @@ Unless otherwise specified, all fonts are licensed under OFL-1.1 by default.
 Primary font usage is unrelated to the MFGA module.
 ## Selffont 新增资源
 
-- 主字体(默认源):[文渊圆体 v1.010 可变字体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)(takushun-wu),OFL-1.1,保留字体名 'WenYuan'/'文渊',完整声明随包(`licenses/WenYuan-OFL.txt`)。换任意字体请自行确认其许可,声明随源自带。
-- 主字体是外部构建输入,不提交大二进制;安装副本归一行度量、剪除空壳映射、内部名改为 'Selffont Rounded SC VF'(归一与剪除均属 OFL 意义上的修改,不以保留名 'WenYuan'/'文渊' 发布改造字体)。
-- 曾试过的寒蝉全圆体/半圆体自 v2.7.0 起不在产线:其 OFL 声明也随之删除,不再随包。构建含空壳映射剪除防线。
-- 基础包只提供补充字体资源;各资源遵循其自己的许可,基础包归属说明随包保留。`build.py` 里的默认源哈希只是提示,自选来源的许可由你确认。
+- 主字体（默认源）：[文渊圆体 v1.010 可变字体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)(takushun-wu),OFL-1.1，保留字体名 'WenYuan'/'文渊'，完整声明随包（`licenses/WenYuan-OFL.txt`）。换任意字体请自行确认其许可，声明随源自带。
+- 主字体是外部构建输入，不提交大二进制；安装副本归一行度量、剪除空壳映射、内部名改为 'Selffont Rounded SC VF'（归一与剪除均属 OFL 意义上的修改，不以保留名 'WenYuan'/'文渊' 发布改造字体）。
+- 曾试过的寒蝉全圆体/半圆体自 v2.7.0 起不在产线：其 OFL 声明也随之删除，不再随包。构建含空壳映射剪除防线。
+- 基础包只提供补充字体资源；各资源遵循其自己的许可，基础包归属说明随包保留。`build.py` 里的默认源哈希只是提示，自选来源的许可由你确认。

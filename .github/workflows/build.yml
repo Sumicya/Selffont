@@ -5,6 +5,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read          # 只为读本工作流的运行历史算版本号,不写
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -22,7 +23,9 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Selfcheck (packager, metric normalization, module scripts)
         run: python build.py --check
-      # 校验性构建:流水线必须能跑通,但 CI 不发版、不出产物——
-      # 模块 zip 由本地 build.py 产出。这里只验证,产物随 runner 丢弃。
-      - name: Build verification (no artifacts)
-        run: python build.py --output /tmp/Selffont.zip
+      # 校验性构建:版本号在这一处算定(build.py --query-github 现场查本工作流的运行历史),
+      # 产物名跟着版本走。CI 不发版、不上传 artifact——zip 随 runner 丢弃,模块 zip 由本地 build.py 产出。
+      - name: Build verification (no artifacts, version stamped)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python build.py --query-github

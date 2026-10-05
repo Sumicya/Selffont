@@ -1,5 +1,7 @@
 name: spec-check
 
+# 只读规范检查:规范版本与 AGENTS.md 指针、关键 CI 权限、自动发版禁令。
+# 本工作流不得拥有 contents: write / actions: write 等任何写权限。
 on:
   push:
     branches: [main]
@@ -28,21 +30,45 @@ jobs:
           required = [
               "全局规范同步",
               "第十五版",
+              "本仓库上次同步 = 第 15 版",
+              "Sumicya/selfs",
               "任何本轮本地改动必须最终提交并推送",
               "CI 不得自动创建 Release",
               "Release 1 个",
               "Actions artifact 5 个",
+              "允许写权限的工作流",
           ]
           for item in required:
               if item not in text:
-                  raise SystemExit(f"AGENTS.md 缺少全局规范条目：{item}")
+                  raise SystemExit(f"AGENTS.md 缺少全局规范条目:{item}")
 
-          workflows = root / ".github" / "workflows"
-          forbidden = re.compile(r"(?i)(softprops/action-gh-release|gh release create|createRelease|create_git_release|actions/create-release)")
-          for path in workflows.glob("*.yml"):
-              if path.name == "spec-check.yml":
-                  continue
+          # 写权限白名单由 AGENTS.md 一处声明:允许写权限的工作流:cleanup.yml(actions)
+          line = next((ln for ln in text.splitlines() if "允许写权限的工作流" in ln), "")
+          if not line:
+              raise SystemExit("AGENTS.md 缺少写权限白名单行")
+          allowed = set(re.findall(r"([\w.-]+\.ya?ml)\s*[(（]([^)）]*)[)）]", line))
+          workflows = sorted((root / ".github" / "workflows").glob("*.yml"))
+          write_permission = re.compile(r"^[ \t]*([\w-]+):[ \t]*write\b", re.M)
+          forbidden = re.compile(
+              r"(?i)(softprops/action-gh-release|gh release create|createRelease|create_git_release|actions/create-release)")
+
+          this = (root / ".github" / "workflows" / "spec-check.yml").read_text(encoding="utf-8")
+          if re.search(r"^\s*permissions:\s*write-all", this, re.M) or write_permission.search(this):
+              raise SystemExit("规范检查自身出现了写权限")
+
+          for path in workflows:
               source = path.read_text(encoding="utf-8")
               if forbidden.search(source):
-                  raise SystemExit(f"{path} 包含自动创建 Release 的实现；第十五版规范禁止 CI 自动发版")
-          print("第十五版全局规范检查通过")
+                  raise SystemExit(f"{path} 包含自动创建 Release 的实现;第十五版规范禁止 CI 自动发版")
+              if "pull_request_target" in source:
+                  raise SystemExit(f"{path} 使用了 pull_request_target;写权限 job 不得跑未信任 PR 代码")
+              if re.search(r"^\s*permissions:\s*write-all", source, re.M):
+                  raise SystemExit(f"{path} 使用 write-all;权限必须按 job 最小化")
+              permissions = set(write_permission.findall(source))
+              if path.name == "spec-check.yml":
+                  continue
+              if permissions and (path.name, ", ".join(permissions)) not in allowed:
+                  raise SystemExit(f"{path} 有写权限 {sorted(permissions)},但没在 AGENTS.md 的写权限白名单里声明")
+              if permissions and re.search(r"^\s{2,}pull_request:", source, re.M):
+                  raise SystemExit(f"{path} 同时有写权限和 pull_request 触发;写权限 job 不得跑未信任 PR 代码")
+          print(f"第十五版全局规范检查通过(检查 {len(workflows)} 个工作流)")

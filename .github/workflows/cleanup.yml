@@ -1,0 +1,73 @@
+name: Cleanup (artifacts)
+# 滚动保留的清理入口。本项目 CI 不上传 artifact,所以这个工作流只做两件事:
+# 清掉旧体系留下的积压,以及将来真有产物时按「保留最近 KEEP 个」纳管。
+# 只手动触发:规范要求发版(人工授权)与清理分离,且写权限 job 不跑未信任 PR 的代码。
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 真删(false = 只打印将要删的清单)
+        type: boolean
+        default: false
+      keep:
+        description: 保留最近的 artifact 个数
+        type: string
+        default: "5"
+permissions:
+  actions: write         # 只删 Actions artifact;contents 保持只读,不碰 Release / tag
+concurrency:
+  group: cleanup
+  cancel-in-progress: false
+jobs:
+  artifacts:
+    name: Keep newest artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Delete old selffont- artifacts (full pagination, keep newest KEEP)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ inputs.keep }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          keep_raw = os.environ["KEEP"].strip()
+          if not keep_raw.isdigit() or int(keep_raw) < 1:
+              sys.exit(f"KEEP 必须是正整数,收到 {keep_raw!r}")
+          keep = int(keep_raw)
+          repo, apply = os.environ["REPO"], os.environ["APPLY"].lower() == "true"
+
+          def api(path, jq=None, method=None):
+              command = ["gh", "api"] + (["--jq", jq] if jq else []) + (["-X", method] if method else []) + [path]
+              result = subprocess.run(command, capture_output=True, text=True)
+              if result.returncode != 0:
+                  sys.exit(f"gh api {path} 失败:{result.stderr.strip()}")
+              return result.stdout
+
+          # 完整分页 + 结构化字段;只认本项目明确标识的 selffont- 前缀,不碰别的对象。
+          rows, page = [], 1
+          while True:
+              batch = [json.loads(line) for line in
+                       api(f"repos/{repo}/actions/artifacts?per_page=100&page={page}",
+                           jq=".artifacts[]|{id,name,created_at,size_in_bytes}").splitlines() if line.strip()]
+              if not batch:
+                  break
+              rows += [row for row in batch if row["name"].startswith("selffont-")]
+              page += 1
+
+          rows.sort(key=lambda row: row["created_at"], reverse=True)
+          print(f"匹配到 {len(rows)} 个本项目 artifact,保留最近 {keep} 个")
+          for row in rows[:keep]:
+              print(f"KEEP   {row['created_at']} {row['name']} {row['size_in_bytes']} 字节 id={row['id']}")
+          victims = rows[keep:]
+          for row in victims:
+              print(f"{'DELETE' if apply else 'DRY-RUN'} {row['created_at']} {row['name']} "
+                    f"{row['size_in_bytes']} 字节 id={row['id']}")
+              if apply:
+                  api(f"repos/{repo}/actions/artifacts/{row['id']}", method="DELETE")
+          print(f"共 {len(victims)} 个待删,已删 {len(victims) if apply else 0} 个"
+                f"(Release / tag 不在本工作流范围内:历史 tag 默认保留)")
+          PY
