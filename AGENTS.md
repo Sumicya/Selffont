@@ -36,5 +36,5 @@
 ## 项目取舍（与规范的关系）
 
 - 本项目没有发布型 CI（CI 只校验、无产物），因此「在发布工作流一处算定」落在唯一构建工作流 `Build Selffont` 上：日期与两个序号由 `build.py --query-github` 现场查运行历史一次取齐；本地打包可手工传 `--build` / `--day` / `--date`，或直接 `--query-github`。
-- 火狐别名字件与 `browser.display.use_document_fonts: 0`（默认开）属激进修复：**未在真机验证**，验证步骤写在 README「火狐」；不想要就 `--no-alias-fonts`，或把配置里那行注释掉后重放 `firefox.sh`。
+- 火狐别名字件与网页字体默认压属激进修复：**未在真机验证**，装机核对清单在 README「未验证项的真机清单」。两个开关都在构建期：`--no-alias-fonts` 不打别名字件，`--keep-web-fonts` 放行网页自带字体（默认压成文渊）；选择烧进 zip，`customize.sh` 刷新配置拷贝也不会覆盖。
 - 边界与限制以 README 为准；本文件的清单与 README 冲突时，先按 README 的事实改本文件。

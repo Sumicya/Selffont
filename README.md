@@ -22,6 +22,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py --query-github           # 正式打包:现场查运行历史取数并盖戳
 .venv/bin/python build.py --build 47 --day 3       # 或手工传序号(离线;--date 可另给)
 .venv/bin/python build.py --font 文件或URL --base 本地ZIP或URL
+.venv/bin/python build.py --no-alias-fonts         # 不打火狐别名字件（回退旧行为）
+.venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成文渊）
 ```
 
 产物名跟版本走：`build/Selffont-<版本>.zip`；没盖戳的非发行版本叫 `build/Selffont.zip`。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
@@ -73,7 +75,7 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 
 - 泛型关键字（`font-family: cursive/fantasy`，不带引号）：all.js 的 Android 段只有 `cursive.x-unicode/x-western` 默认、`fantasy` 一个都没有，zh/ja/ko 下解析成空字体组落平台默认——配置把 cursive/fantasy × 7 语言组补齐。
 - 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 清单只收**字体文件内部家族名**,fonts.xml 别名进不去。本轮改成给这些别名各发一枚**别名字件**（家族名 = 别名、无字形，合计约 15 KB）：Gecko 命中后逐字回退，按上面的名单落到文渊。**未在真机验证**；要退回旧行为，打包时加 `--no-alias-fonts`。
-- 网页**自带的 webfont**（站内装饰字体）不读系统清单，pref 管不到：配置里 `browser.display.use_document_fonts: 0` **默认开**，网页字体一律压成文渊。代价是图标字体（如 FontAwesome）会显示异常；要放行就把那行注释掉，再重放一次 `firefox.sh`。
+- 网页**自带的 webfont**（站内装饰字体）不读系统清单，pref 管不到：配置里 `browser.display.use_document_fonts: 0` **默认开**，网页字体一律压成文渊。代价是图标字体（如 FontAwesome）会显示异常；要放行就用 `--keep-web-fonts` 重新打包（这是构建期开关：选择烧进 zip，模块更新刷新配置拷贝也不会被覆盖）。
 - CSS `font-variant: small-caps` 由基础字体合成：基础字体是文渊，小型大写就是文渊。
 
 验证：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`，应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。别名字件的真机验证：开一个用 `font-family: "sans-serif-smallcaps"` 的测试页，字形应是文渊而非 Roboto；若出现豆腐块，加 `--no-alias-fonts` 重新打包即可回到旧行为。
@@ -87,9 +89,20 @@ emoji:Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto Col
 3. emoji：拿一个较新的 emoji 看是否彩色；想看包内覆盖上限，用 fontTools 查 cmap（没有随包报告——查 cmap 是一行的事）。
 4. 复原：卸载 = KSU 删模块 + 重启，一切回到系统自带字体。
 
+## 未验证项的真机清单
+
+别名字件与网页字体默认压是本轮新改，**没有真机数据**。装上一分钟后按顺序看这四条，任一条不对就按对应的回退走：
+
+1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（旧结论，先确认这条）。
+2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
+3. 别名字件：开一个测试页写 `font-family: "sans-serif-smallcaps"`（或 `"cursive"`），字形应是文渊的圆体；若出现豆腐块或方框，改用 `--no-alias-fonts` 重新打包。
+4. 网页字体：开一个图标站点（如 FontAwesome 示例页）——**默认压掉**时图标会显示成方块/异常，这是预期代价；要正常显示图标就 `--keep-web-fonts` 重新打包。两种表现都算「按设计工作」，选哪种看你要全系统同一副面孔还是保图标。
+
+回退都不用卸载：重新打包 → KSU 装新 zip → 重启。
+
 ## 边界
 
-- 真机验证过：Android 16 / OnePlus / KernelSU 一台，其他平台自担风险。本轮的别名字件与 `use_document_fonts: 0` 默认值是**未验证**改动（见「火狐」里的验证与回退）。
+- 真机验证过：Android 16 / OnePlus / KernelSU 一台，其他平台自担风险。本轮的别名字件与网页字体默认压是**未验证**改动：装机核对清单见「未验证项的真机清单」。
 - 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork。上游领先的提交只动它自己的 Xposed 侧与文档（`fonts/`、`fonts.xml` 从 1717180003 起未变，已逐字节比对）：用 `-s ours` 记录了祖先关系（不再显示"落后"），但**不取它的代码**，只取字体资源（见 `LICENSES.md`）。
 - `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与 OEM 字体（如 MiSans）由设备提供，不打包。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。

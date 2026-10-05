@@ -63,8 +63,8 @@ prefs:
   font.name-list.cursive.ko: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.fantasy.ko: "Selffont Rounded SC VF, Coming Soon"
 
-  # 网页自带的 webfont（站内装饰字体）不读系统清单，字体 pref 管不到它，只有这条能压：
-  # 关掉文档字体 → 所有网页一律按上面的名单渲染成文渊。默认开（模块的目的就是全系统同一副面孔）。
-  # 要放行网页自带字体（例如图标字体 FontAwesome 靠自带字体出图标），把下面这行注释掉，
-  # 再重放一次 firefox.sh —— 图标类站点会因此显示异常，这是唯一代价。
+  # Selffont:web-fonts 下面是「网页自带字体」开关：默认压掉（全系统同一副面孔）。
+  # 打包时用 --keep-web-fonts 会整块替换成放行说明（图标字体 FontAwesome 等需要它）。
+  # 网页自带的 webfont（站内装饰字体）不读系统清单，字体 pref 管不到它，只有下面这条能压：
+  # 关掉文档字体 → 所有网页一律按上面的名单渲染成文渊；代价是图标字体可能显示异常。
   browser.display.use_document_fonts: 0

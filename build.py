@@ -83,6 +83,22 @@ ALIAS_FAMILIES = ("cursive", "fantasy", "casual", "serif-monospace",
                   "sans-serif-smallcaps", "sans-serif-condensed")
 ALIAS_PREFIX = "Selffont-Alias-"
 
+# 网页自带字体开关:模板里默认压掉(全系统同一副面孔);--keep-web-fonts 放开(图标字体等要它)。
+WEB_FONT_PREF = "browser.display.use_document_fonts: 0"
+WEB_FONT_BLOCK = re.compile(r"^  # Selffont:web-fonts.*?^  browser\.display\.use_document_fonts: 0[ \t]*$\n?",
+                            re.M | re.S)
+WEB_FONT_KEEP = "  # Selffont:web-fonts 本次打包用了 --keep-web-fonts：网页自带 webfont（图标字体等）放行。\n"
+
+
+def apply_web_font_switch(config: str, keep: bool) -> str:
+    """按 --keep-web-fonts 决定配置里是压掉还是放行网页自带字体;模板标记不在就报错,不静默。"""
+    if not keep:
+        return config
+    switched, count = WEB_FONT_BLOCK.subn(WEB_FONT_KEEP, config)
+    if count != 1:
+        raise ValueError(f"模板里找不到网页字体开关块（{WEB_FONT_PREF}）:请检查 module/geckoview-config.yaml")
+    return switched
+
 
 def warn(message: str) -> None:
     print(f"WARNING: {message}", file=sys.stderr)
@@ -471,7 +487,7 @@ def font_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 def build(base: str | None = None, font: str | None = None, output: Path | None = None,
           build_num: str | None = None, day: str | None = None, date: str | None = None,
-          query: bool = False, alias: bool = True) -> list[str]:
+          query: bool = False, alias: bool = True, keep_web_fonts: bool = False) -> list[str]:
     """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。"""
     cache = ROOT / "build/cache"
     build_num = build_num or os.environ.get("SELFFONT_BUILD") or None
@@ -547,6 +563,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                             config, flags=re.M)
 
         aliases = alias_members() if alias else {}
+        config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
         write_module(output, archive, bundled, name, packaged, xml, prop, config, aliases)
 
@@ -556,6 +573,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     print(f"  补充字库 {len(bundled)} 个，fonts.xml 其余引用由设备自带（Noto/OEM，不打包）")
     print(f"  火狐别名字件 {len(aliases)} 枚（{', '.join(ALIAS_FAMILIES)}）"
           if aliases else "  火狐别名字件已关闭（--no-alias-fonts）")
+    print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成文渊")
     for message in warnings:
         warn(message)
     return warnings
@@ -808,11 +826,16 @@ def build_end_to_end():
             if line.strip().startswith("font.name-list."):
                 assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
 
-        # 关掉别名字件时包里不该有；产物名跟版本走，非发行版本才留在 Selffont.zip。
+        # 关掉别名字件时包里不该有；--keep-web-fonts 时配置里不该有压网页字体的那行。
         build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30",
-              alias=False)
+              alias=False, keep_web_fonts=True)
         with zipfile.ZipFile(output) as archive:
             assert not any(ALIAS_PREFIX in name for name in archive.namelist()), "别名字件未关闭"
+            kept = archive.read("geckoview-config.yaml").decode()
+            assert WEB_FONT_PREF not in kept and "Selffont:web-fonts" in kept, "网页字体未放行"
+            for line in kept.splitlines():  # 放行后名单本身仍完整、仍前置文渊
+                if line.strip().startswith("font.name-list."):
+                    assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
         unstamped = stamp_version((ROOT / "module/module.prop").read_text(), None)
         assert default_output(unstamped).name == "Selffont.zip"
         assert default_output(stamp_version(unstamped, "9", day="2", date="26.9.30")).name == "Selffont-26.9.30.2.9.zip"
@@ -959,8 +982,17 @@ def firefox_bridge():
     for key in ("serif.x-math", "sans-serif.x-math", "monospace.x-math"):
         assert f"font.name-list.{key}" in keys, f"{key} 缺失（逐字回退乱选）"
     assert config.count('"') % 2 == 0, "引号不配对"
-    # 网页自带 webfont 不读系统清单：默认压掉文档字体（激进设定），要放行只能关这一行。
-    assert "browser.display.use_document_fonts: 0" in config, "文档字体未默认压掉"
+    # 网页自带 webfont 不读系统清单：默认压掉文档字体（激进设定）；--keep-web-fonts 时才放行。
+    assert WEB_FONT_PREF in config, "文档字体未默认压掉"
+    kept = apply_web_font_switch(config, True)
+    assert WEB_FONT_PREF not in kept and "Selffont:web-fonts" in kept, "--keep-web-fonts 未生效"
+    assert apply_web_font_switch(config, False) == config, "默认路径不该改动配置"
+    for template in ("prefs:\n" + WEB_FONT_KEEP, config.replace(WEB_FONT_PREF, "# 丢了标记")):
+        try:  # 模板标记不在时必须报错，不许静默出一个没开关的包
+            apply_web_font_switch(template, True)
+            raise AssertionError("开关块缺失未被拒绝")
+        except ValueError:
+            pass
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -1092,12 +1124,15 @@ def main() -> None:
     parser.add_argument("--query-github", action="store_true",
                         help="用 gh 现场查仓库唯一工作流的运行历史，取齐日期与两个序号（CI 用；失败只警告）")
     parser.add_argument("--no-alias-fonts", action="store_true", help="不打火狐别名字件")
+    parser.add_argument("--keep-web-fonts", action="store_true",
+                        help="放行网页自带字体（图标字体等）；默认压成文渊")
     args = parser.parse_args()
     if args.check:
         run_checks()
     else:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,
-              day=args.day, date=args.date, query=args.query_github, alias=not args.no_alias_fonts)
+              day=args.day, date=args.date, query=args.query_github,
+              alias=not args.no_alias_fonts, keep_web_fonts=args.keep_web_fonts)
 
 
 if __name__ == "__main__":
