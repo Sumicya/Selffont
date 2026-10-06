@@ -129,7 +129,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 未验证项的真机清单
 
-**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**仍无真机数据**：纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**仍无真机数据**：① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 2026-10-06 的**语言区改动**（CJK 语言区前置主字体）——装机后按 `grep -c Selffont /system_ext/etc/fonts_base.xml` 看条数应比旧包多，再挑一个主字体没有、厂商字体有的字看是否仍渲染成圆体。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
@@ -149,7 +149,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 边界
 
-- 只支持带 `font_fallback*.xml` 的设备（Android 15+）：装在没有该文件的机器上会中止安装。真机验证过：Android 16 / OnePlus / KernelSU 一台，其他平台自担风险。本轮的别名字件与网页字体默认压是**未验证**改动：装机核对清单见「未验证项的真机清单」。
+- 只支持带 `font_fallback*.xml` 的设备（Android 15+）：装在没有该文件的机器上会中止安装。真机验证过：Android 16 / OnePlus / KernelSU 一台（系统字体、火狐网页字体开关都已实测生效；别名字件实验实测无效后已删除），其他平台自担风险。**未验证**：纯 AOSP 机器的配置路径、CJK 语言区改动——装机核对清单见「未验证项的真机清单」。
 - 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork。上游领先的提交只动它自己的 Xposed 侧与文档（`fonts/`、`fonts.xml` 从 1717180003 起未变，已逐字节比对）：用 `-s ours` 记录了祖先关系（不再显示「落后」），但**不取它的代码**，只取字体资源（见 `LICENSES.md`）。
 - `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与 OEM 字体（如 MiSans）由设备提供，不打包。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
