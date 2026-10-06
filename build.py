@@ -8,7 +8,9 @@
 
 版本号按全局规范的五段格式：yy.m.d.当日序号。总序号（展示不含 v），versionCode = 总序号。
 日期与两个序号在仓库唯一构建工作流 Build Selffont 一处算定（--query-github 现场查运行历史，
-不写死现值）；本地也可以手工传入。取不到当日序号时退化写四段 yy.m.d.总序号 并警告。
+不写死现值）；本地也可以手工传入，但三段缺一不可——五段格式不可豁免，取不到数就停，不出包。
+CI 里 --query-github 锚定本次运行（GITHUB_RUN_ID / GITHUB_RUN_NUMBER）：总序号 = 本次 run_number，
+日期与当日序号按本次运行的创建时间算，不拿查询时的最新运行冒充本次，重试复用同一版本。
 
 自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
 全部现场从字体里读。主字体必须是含 wght 轴的可变字体——配置只出新语法（supportedAxes），
@@ -66,6 +68,7 @@ PRIMARY_FAMILIES = {"sans-serif", "sans-serif-condensed", "serif", "monospace",
                     "serif-monospace", "casual", "cursive", "sans-serif-smallcaps"}
 METRIC_FAMILIES = {"sans-serif", "sans-serif-condensed"}
 OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}  # 输入配置里的旧数字主字体
+CJK_LANGS = {"zh", "ja", "ko"}  # 语言区里主字体要接管的 BCP-47 主语言子标签
 WEIGHTS = range(100, 1000, 100)
 BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位类别（空格类、控制类）
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
@@ -73,7 +76,7 @@ CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
 WORKFLOW = "build.yml"  # 版本取数的计数对象：仓库唯一构建工作流
 DEV_VERSION = "dev"     # 仓库里的非发行默认：没盖戳就不假装有正式序号
-VERSION_RE = re.compile(r"^(?P<date>\d{1,2}\.\d{1,2}\.\d{1,2})\.(?:(?P<day>\d+)\.)?(?P<build>\d+)$")
+VERSION_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+\.\d+$")  # 只认五段：计数规则不豁免格式
 
 # 网页自带字体开关：模板默认压掉（全系统同一副面孔）；--keep-web-fonts 放开（图标字体等要它）。
 # 表示法与 module/web-fonts.sh 完全一致：生效 = pref 行原样，放行 = 该行加 Selffont:keep 标记注释。
@@ -312,23 +315,62 @@ def supported_axes(ladder: list[dict]) -> str | None:
     return "wght" if tags == {"wght"} else None
 
 
-def replace_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
-    """一条 supportedAxes 字件顶掉整条阶梯（新语法，weight/style 可省）；没有可声明的轴就拒绝。"""
-    for child in list(family):
-        if child.tag == "font":
-            family.remove(child)
+def primary_node(font_name: str, ladder: list[dict]) -> ET.Element:
+    """主字体在配置里的唯一写法：一条 supportedAxes 字件（运行时实例化）；没有可声明的轴就拒绝。"""
     axes = supported_axes(ladder)
     if not axes:
         raise ValueError("主字体没有 wght/ital 轴：配置只出 supportedAxes，不退回逐档展开")
-    node = ET.SubElement(family, "font", supportedAxes=axes)
+    node = ET.Element("font", supportedAxes=axes)
     node.text = font_name
+    return node
+
+
+def replace_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
+    """一条 supportedAxes 字件顶掉整条阶梯（新语法，weight/style 可省）；family 的属性原样保留。"""
+    for child in list(family):
+        if child.tag == "font":
+            family.remove(child)
+    family.append(primary_node(font_name, ladder))
+
+
+def prepend_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
+    """主字体插到家族最前，原有字件全部留在后面（覆盖只加不减）；family 的属性原样保留。"""
+    if any((node.text or "").strip() == font_name for node in family.findall("font")):
+        return  # 幂等：已经前置过就不重复插
+    family.insert(0, primary_node(font_name, ladder))
+
+
+def swap_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
+    """CJK 语言区：删掉旧主字体与度量空壳，主字体前置到最前，其余字件（MiSansL3 / NotoSansCJK…）留后。
+
+    覆盖只加不减：语言区里原有的非主字体字件一个不动，只是排到主字体后面。
+    """
+    for node in list(family.findall("font")):
+        if (node.text or "").strip() in OLD_PRIMARY | {CARRIER}:
+            family.remove(node)
+    prepend_fonts(family, font_name, ladder)
+
+
+def is_cjk_locale(tag: str | None) -> bool:
+    """lang 属性里有中日韩标签就算 CJK 语言区（zh / zh-Hans / zh-Hant,zh-Bopo / ja / ko…）。
+
+    依据 AOSP font_fallback.xml 头注：除默认家族、命名家族外还有 locale fallback family，
+    缺字时按「完整 BCP-47 标签（含 script）→ 仅语言 → 顺序」匹配，语言区优先于默认区顺序。
+    非 CJK 的语言区（und-Arab 之类）与 emoji 区一律不碰。
+    """
+    return any(part.split("-")[0].strip().lower() in CJK_LANGS
+               for part in (tag or "").split(",") if part.strip())
 
 
 def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> bytes:
-    """主字体接管全部主家族；空壳留在度量家族；旧数字主字体整体替换；匿名字形回退紧随默认家族。
+    """主字体接管全部主家族、CJK 语言区与默认区；空壳留在度量家族；匿名字形回退紧随默认家族。
 
     输出统一是新语法（supportedAxes,Android 15+ 运行时实例化）：安装脚本只投放 font_fallback*.xml,
     库存 fonts.xml 不再替换，所以没有 legacy 展开的第二份。
+
+    缺字回退分两个区（AOSP font_fallback.xml 头注）：语言区（带 lang/variant 的 locale fallback
+    family）按「完整 BCP-47 标签 → 仅语言」优先匹配，默认区才按文件顺序。所以 CJK 语言区必须
+    自己带上主字体——只往默认区插一条，中文场景缺字时会先落到语言区里的厂商字体（如 MiSansL3）。
     """
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
     root = ET.fromstring(template, parser=parser)
@@ -339,13 +381,17 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> byte
         raise ValueError(f"输入 fonts.xml 的默认家族必须保留 {CARRIER} 度量空壳")
     for family in list(root.findall("family")):
         name = family.get("name")
+        lang, variant = family.get("lang"), family.get("variant")
+        locale = bool(lang or variant)
         files = {(node.text or "").strip() for node in family.findall("font")}
-        if not name and files and files <= OLD_PRIMARY | {CARRIER}:
-            root.remove(family)
+        if not name and not locale and files and files <= OLD_PRIMARY | {CARRIER}:
+            root.remove(family)  # 默认区的旧主字体匿名家族：由紧随默认家族的新匿名家族顶替
         elif name in METRIC_FAMILIES and files == {CARRIER}:
             continue  # 度量家族保留空壳：主字体走匿名回退，这里只提供行度量
+        elif locale and is_cjk_locale(lang) and not variant:
+            swap_fonts(family, font_name, ladder)  # CJK 语言区：清旧主字体、前置主字体、其余字件留后
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
-            replace_fonts(family, font_name, ladder)
+            replace_fonts(family, font_name, ladder)  # 语言区只换字件，lang/variant 属性原样保留
     fallback = ET.Element("family")
     replace_fonts(fallback, font_name, ladder)
     root.insert(list(root).index(default) + 1, fallback)
@@ -360,15 +406,18 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> byte
 # ---------------------------------------------------------------- 版本盖戳
 
 def default_output(prop: str) -> Path:
-    """产物名跟版本走：Selffont-<版本>.zip（规范 <项目名>-<版本>）；非发行默认留在 build/Selffont.zip。"""
+    """产物名跟版本走：Selffont-<五段版本>.zip（规范 <项目名>-<五段版本>）；没有五段版本就不出包。"""
     stamped = re.search(r"^version=(.+)$", prop, flags=re.M)
-    core = stamped.group(1) if stamped and VERSION_RE.fullmatch(stamped.group(1)) else None
-    return ROOT / "build" / (f"Selffont-{core}.zip" if core else "Selffont.zip")
+    core = stamped.group(1) if stamped else ""
+    if not VERSION_RE.fullmatch(core):
+        raise ValueError(f"产物名需要五段版本号，实际 version={core!r}："
+                         "先 --query-github 取数，或显式传 --date/--day/--build")
+    return ROOT / "build" / f"Selffont-{core}.zip"
 
 
-def version_core(date: str, day: str | None, build: str) -> str:
-    """五段版本号核心：yy.m.d.当日序号。总序号；取不到当日序号时退化成四段 yy.m.d.总序号。"""
-    return f"{date}.{day}.{build}" if day else f"{date}.{build}"
+def version_core(date: str, day: str, build: str) -> str:
+    """五段版本号核心：yy.m.d.当日序号.总序号（规范：计数规则不豁免五段格式）。"""
+    return f"{date}.{day}.{build}"
 
 
 def check_number(value: str, label: str, minimum: int = 0) -> str:
@@ -383,21 +432,18 @@ def check_date(value: str) -> str:
     return value
 
 
-def stamp_version(prop: str, build: str | None, day: str | None = None,
-                  date: str | None = None, now: datetime | None = None) -> str:
+def stamp_version(prop: str, build: str | None, day: str | None = None, date: str | None = None) -> str:
     """盖戳：version = yy.m.d.当日序号。总序号（展示不含 v），versionCode = 总序号（KSU 靠它比新旧）。
 
-    没有总序号（本地直接打包且不指定）就原样返回——仓库里的 module.prop 是非发行默认，不猜数。
-    没有当日序号就退化写四段 yy.m.d.总序号（规范允许，文档写明原因）；没有日期取当天 UTC+8.
+    三段版本数据缺一不可：规范不许退化成四段，也不许拿非发行版本出包。缺数据就抛错停在这里，
+    调用方（build / CI）不出包、不上传——不编数，也不静默产半成品。
     """
-    if not build:
-        return prop
+    missing = [label for label, value in (("总序号", build), ("当日序号", day), ("日期", date)) if not value]
+    if missing:
+        raise ValueError(f"版本号缺少{'、'.join(missing)}：用 --query-github 现场取数，"
+                         "或显式传 --build/--day/--date（五段格式不可豁免，不出非发行包）")
     check_number(build, "总序号", 1)
-    if day:
-        check_number(day, "当日序号", 1)
-    if not date:
-        moment = now or datetime.now(CLOCK)
-        date = f"{moment.year % 100}.{moment.month}.{moment.day}"
+    check_number(day, "当日序号", 1)
     check_date(date)
     prop = re.sub(r"^version=.*$", f"version={version_core(date, day, build)}", prop, flags=re.M)
     return re.sub(r"^versionCode=.*$", f"versionCode={build}", prop, flags=re.M)
@@ -408,11 +454,21 @@ def day_start(moment: datetime) -> datetime:
     return moment.astimezone(CLOCK).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
 
-def count_day_runs(runs: list[dict], start: datetime) -> int:
-    """当日序号：当天（Asia/Shanghai）push / workflow_dispatch 触发的运行数；PR 检查不计入。"""
+def parse_time(value: str) -> datetime:
+    """API 的 created_at（…Z）→ 带时区的 datetime。"""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def count_day_runs(runs: list[dict], start: datetime, until: datetime | None = None) -> int:
+    """当日序号：当天（Asia/Shanghai）该工作流已开始的运行数（push / workflow_dispatch / PR 都算）。
+
+    PR 也计入，因为 PR 同样出包（规范：push 与 PR 都出包），而当日序号只是当天第几次构建；
+    唯一性由总序号（本次 run_number）保证。until 给定时只数不晚于它的运行——锚定本次运行，
+    晚于本次的运行不影响本次的版本号。
+    """
     return sum(1 for run in runs
-               if run.get("event") in ("push", "workflow_dispatch")
-               and datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")) >= start)
+               if start <= parse_time(run["created_at"])
+               and (until is None or parse_time(run["created_at"]) <= until))
 
 
 def pick_total(runs: list[dict]) -> str:
@@ -430,12 +486,44 @@ def gh_api(path: str, jq: str) -> list[dict]:
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
+def gh_api_object(path: str, jq: str = ".") -> dict:
+    """同上，但取单个 JSON 对象（本次运行的记录）。"""
+    result = subprocess.run(["gh", "api", "--jq", jq, path], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"gh api 退出码 {result.returncode}")
+    return json.loads(result.stdout)
+
+
+def current_run() -> dict | None:
+    """CI 里锚定本次运行的身份：GITHUB_RUN_ID + GITHUB_RUN_NUMBER（重试用同一身份 → 版本复用）。
+
+    本地没有这两个环境变量，返回 None，由 github_version_numbers 退到「最近一次运行」口径。
+    """
+    run_id, run_number = os.environ.get("GITHUB_RUN_ID"), os.environ.get("GITHUB_RUN_NUMBER")
+    if not (run_id and run_number):
+        return None
+    record = gh_api_object(f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}",
+                           "{id: .id, run_number: .run_number, event: .event, created_at: .created_at}")
+    if str(record["id"]) != str(run_id):
+        raise RuntimeError(f"运行身份不符：API 返回 {record['id']}，环境里是 {run_id}")
+    return record
+
+
 def github_version_numbers(workflow: str = WORKFLOW, now: datetime | None = None) -> tuple[str, str, str]:
     """从仓库唯一构建工作流的运行历史取数（现场查，不写死现值）：返回 （日期， 当日序号， 总序号）。
 
-    按时间倒序翻页，翻到早于当天（Asia/Shanghai）零点的运行就停；日期也在这里一次取定。
+    CI 里锚定本次运行（GITHUB_RUN_ID / GITHUB_RUN_NUMBER）：总序号 = 本次 run_number，日期 = 本次
+    运行创建时间换算到 UTC+8，当日序号 = 当天不晚于本次运行的运行数——不拿「查询时的最新运行」冒充
+    本次（同一提交并行跑 push 与 PR 时会撞号），重试复用同一身份所以版本不变。
+    本地没有这两个环境变量时退到「该工作流最近一次运行」口径（由人核对，本地打包用）。
+    按时间倒序翻页，翻到早于当天（Asia/Shanghai）零点的运行就停。
     """
-    moment = now or datetime.now(CLOCK)
+    run = current_run()
+    if run:
+        moment = parse_time(run["created_at"]).astimezone(CLOCK)
+        total = check_number(str(run["run_number"]), "总序号", 1)
+    else:
+        moment, total = now or datetime.now(CLOCK), None
     start = day_start(moment)
     runs, page = [], 1
     while page <= 10:  # 兜底上限：一天之内不可能翻 1000 条还没跨过当天零点
@@ -444,11 +532,11 @@ def github_version_numbers(workflow: str = WORKFLOW, now: datetime | None = None
         if not batch:
             break
         runs += batch
-        if datetime.fromisoformat(batch[-1]["created_at"].replace("Z", "+00:00")) < start:
+        if parse_time(batch[-1]["created_at"]) < start:
             break
         page += 1
     return (f"{moment.year % 100}.{moment.month}.{moment.day}",
-            str(count_day_runs(runs, start)), pick_total(runs))
+            str(count_day_runs(runs, start, moment)), total or pick_total(runs))
 
 
 # ---------------------------------------------------------------- 基础包（只取字体资源）
@@ -480,18 +568,12 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     build_num = build_num or os.environ.get("SELFFONT_BUILD") or None
     day = day or os.environ.get("SELFFONT_DAY") or None
     date = date or os.environ.get("SELFFONT_DATE") or None
-    if query and not build_num:
-        try:
-            date, day, build_num = github_version_numbers()
-        except Exception as error:  # noqa: BLE001  取不到数不编数：退化成非发行版本并警告
-            warn(f"版本取数失败，本次不打正式序号：{error}")
+    if query:
+        if build_num or day or date:
+            raise ValueError("版本号只认一个来源：--query-github 与 --build/--day/--date 不能混用")
+        date, day, build_num = github_version_numbers()  # 取数失败直接抛：不编数、不出非发行包
     prop = stamp_version((ROOT / "module/module.prop").read_text(encoding="utf-8"),
                          build_num, day=day, date=date)
-    if not build_num:
-        warn(f"本次构建没有总序号，按非发行版本处理（module.prop 里仍是 {DEV_VERSION}）；"
-             "正式打包请传 --build 或用 --query-github 取数。")
-    elif date and not day:
-        warn("没有当日序号，版本号退化成四段 yy.m.d.总序号（规范允许，README 写明原因）。")
     output = Path(output) if output else default_output(prop)
     base_path = source(base, BASE_URL, BASE_SHA256, cache / "base.zip")
     if output.resolve() == Path(base_path).resolve():
@@ -716,6 +798,39 @@ def fonts_xml():
     assert fallback.get("name") is None, "匿名字形回退应紧随默认家族"
     assert [(n.text.strip(), n.get("supportedAxes")) for n in fallback.findall("font")] == \
         [("V.ttf", "wght,ital")], "匿名字形回退应是单条新语法字件"
+
+    # 语言区（locale fallback family）：缺字时按「完整 BCP-47 标签 → 仅语言 → 顺序」匹配，
+    # 语言区优先于默认区顺序（AOSP font_fallback.xml 头注）。整族删掉会让中文场景的缺字
+    # 落到语言区里的厂商字体（如 lang="zh" 的 MiSansL3），所以 CJK 语言区必须自带主字体。
+    def locales(document):
+        return {tuple(sorted(family.attrib.items())): [(n.text or "").strip() for n in family.findall("font")]
+                for family in document.findall("family") if family.get("lang") or family.get("variant")}
+
+    template_root = ET.fromstring(template)
+    assert len(locales(root)) == len(locales(template_root)), "语言区家族数变了：不许整族删语言区"
+    for family in root.findall("family"):
+        if not is_cjk_locale(family.get("lang")) or family.get("variant"):
+            continue
+        nodes = family.findall("font")
+        assert nodes and (nodes[0].text or "").strip() == "V.ttf", \
+            f"CJK 语言区 {family.attrib} 的首个字件应是主字体"
+        assert nodes[0].get("supportedAxes") == "wght,ital", family.attrib
+    def locales(document):
+        return [(family.get("lang"), family.get("variant"),
+                 [(n.text or "").strip() for n in family.findall("font")])
+                for family in document.findall("family") if family.get("lang") or family.get("variant")]
+    before, after = locales(template_root), locales(root)
+    assert [(lang, variant) for lang, variant, _ in before] == \
+        [(lang, variant) for lang, variant, _ in after], "语言区家族被删、被加或被重排"
+    for (lang, variant, files), (_, _, got) in zip(before, after):
+        if is_cjk_locale(lang) and not variant:
+            kept = [name for name in files if name not in OLD_PRIMARY | {CARRIER}]
+            assert got == ["V.ttf"] + kept, f"CJK 语言区 {lang} 应前置主字体并保留 {kept}，实际 {got}"
+        elif set(files) & OLD_PRIMARY:
+            assert got == ["V.ttf"], f"语言区 {lang} 的旧主字体应被主字体整体顶掉，实际 {got}"
+        else:
+            # 非 CJK 语言区（含 emoji 的 und-Zsye）逐字未改：主字体不进去，顺序也不动。
+            assert got == files, f"非 CJK 语言区 {lang} 被改动：{got} != {files}"
     for family in root.findall("family"):
         for node in family.findall("font"):
             assert (node.text or "").strip() not in OLD_PRIMARY, "残留旧数字主字体"
@@ -837,6 +952,13 @@ def build_end_to_end():
         root = ET.fromstring(xml)
         assert {node.text.strip() for node in root.find("family[@name='sans-serif']").findall("font")} == {CARRIER}
         assert "P-Regular.ttf" in {node.text.strip() for node in root.iter("font")}
+        # 包内配置的语言区：CJK 语言区自带主字体（缺字时语言区优先于默认区顺序），原有字件留着。
+        locale = [family for family in root.findall("family") if is_cjk_locale(family.get("lang"))]
+        assert locale, "包内配置没有 CJK 语言区"
+        assert all((family.findall("font")[0].text or "").strip() == "P-Regular.ttf" for family in locale), \
+            "CJK 语言区应前置主字体"
+        assert any("MiSansL3.otf" in [(node.text or "").strip() for node in family.findall("font")]
+                   for family in locale), "语言区原有字件应保留（覆盖只加不减）"
         # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，前置仍是文渊。
         assert ", Noto Sans Pro\"" in config, "尾链未拼进火狐配置"
         for line in config.splitlines():
@@ -853,19 +975,25 @@ def build_end_to_end():
             for line in kept.splitlines():  # 放行后名单本身仍完整、仍前置文渊
                 if line.strip().startswith("font.name-list."):
                     assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
-        unstamped = stamp_version((ROOT / "module/module.prop").read_text(), None)
-        assert default_output(unstamped).name == "Selffont.zip"
-        assert default_output(stamp_version(unstamped, "9", day="2", date="26.9.30")).name == "Selffont-26.9.30.2.9.zip"
+        # 没有五段版本数据就不出包（规范：取数失败停止出包和上传）。
+        try:
+            build(base=str(base), font=str(regular), output=tmp / "out" / "nostamp.zip")
+            raise AssertionError("没有版本数据的构建未被拒绝")
+        except ValueError as error:
+            assert "版本号缺少" in str(error), error
+        assert default_output(stamp_version((ROOT / "module/module.prop").read_text(),
+                                           "9", day="2", date="26.9.30")).name == "Selffont-26.9.30.2.9.zip"
 
         # 自由化：主字体按自己的文件名安装，不要求固定命名；非字体后缀明确报错。
         custom = fonts_dir / "Weird-Name.ttf"
         custom.write_bytes(make_font(family="Custom Face"))
-        build(base=str(base), font=str(custom), output=output)
+        build(base=str(base), font=str(custom), output=output, build_num="9", day="2", date="26.9.30")
         with zipfile.ZipFile(output) as archive:
             assert "system/fonts/Weird-Name.ttf" in archive.namelist()
             assert "Weird-Name.ttf" in archive.read("font_fallback.xml").decode()
         try:
-            build(base=str(base), font=str(fonts_dir / "x.woff2"), output=output)
+            build(base=str(base), font=str(fonts_dir / "x.woff2"), output=output,
+                  build_num="9", day="2", date="26.9.30")
             raise AssertionError("非字体后缀未被拒绝")
         except ValueError:
             pass
@@ -874,13 +1002,13 @@ def build_end_to_end():
         base_zip(base, {"SomeFont.ttf": b"supplemental"})
         for message in ("没有它就不做归一",):
             try:
-                build(base=str(base), font=str(regular), output=output)
+                build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
                 raise AssertionError("缺空壳未被拒绝")
             except ValueError as error:
                 assert message in str(error), error
         base_zip(base, {"Roboto-Regular.ttf": make_carrier(visible=True)})  # 可见字形的 Roboto 不是空壳
         try:
-            build(base=str(base), font=str(regular), output=output)
+            build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
             raise AssertionError("可见字形的空壳未被拒绝")
         except ValueError as error:
             assert "度量空壳" in str(error), error
@@ -889,7 +1017,7 @@ def build_end_to_end():
         static_font.write_bytes(make_font(axes=False))
         base_zip(base, {"Roboto-Regular.ttf": make_carrier()})
         try:
-            build(base=str(base), font=str(static_font), output=output)
+            build(base=str(base), font=str(static_font), output=output, build_num="9", day="2", date="26.9.30")
             raise AssertionError("静态主字体未被拒绝")
         except ValueError as error:
             assert "wght" in str(error), error
@@ -901,7 +1029,7 @@ def build_end_to_end():
             with zipfile.ZipFile(bad_zip, "a") as archive:
                 archive.writestr(bad, b"x")
             try:
-                build(base=str(bad_zip), font=str(regular), output=output)
+                build(base=str(bad_zip), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
                 raise AssertionError(f"危险成员未拒绝：{bad}")
             except ValueError:
                 pass
@@ -912,12 +1040,12 @@ def build_end_to_end():
             info.external_attr = (stat.S_IFLNK | 0o644) << 16
             archive.writestr(info, "/etc/passwd")
         try:
-            build(base=str(link_zip), font=str(regular), output=output)
+            build(base=str(link_zip), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
             raise AssertionError("符号链接字体未被拒绝")
         except ValueError:
             pass
         try:
-            build(base=str(base), font=str(regular), output=base)
+            build(base=str(base), font=str(regular), output=base, build_num="9", day="2", date="26.9.30")
             raise AssertionError("输出覆盖了输入")
         except ValueError:
             pass
@@ -927,33 +1055,42 @@ def build_end_to_end():
 
 @check
 def version_stamp():
-    """盖戳：五段 yy.m.d.当日序号。总序号，versionCode = 总序号；没给总序号就原样不动。"""
+    """盖戳：五段 yy.m.d.当日序号。总序号，versionCode = 总序号；缺任一段就拒绝出包。"""
     prop = (ROOT / "module/module.prop").read_text()
-    noon = datetime(2026, 9, 30, 12, 0, tzinfo=CLOCK)
-    stamped = stamp_version(prop, "42", day="3", date="26.9.30", now=noon)
+    stamped = stamp_version(prop, "42", day="3", date="26.9.30")
     assert "version=26.9.30.3.42" in stamped and "versionCode=42" in stamped, stamped
     assert "v26" not in stamped, "展示版本不该带 v"
-    # 日期缺省取当天 UTC+8；当日序号缺省退化成四段（规范允许，README 写明原因）。
-    assert "version=26.9.30.3.42" in stamp_version(prop, "42", day="3", now=noon)
-    degraded = stamp_version(prop, "42", now=noon)
-    assert "version=26.9.30.42" in degraded and "versionCode=42" in degraded, degraded
-    assert VERSION_RE.fullmatch("26.9.30.42") and VERSION_RE.fullmatch("26.9.30.3.42")
-    assert not VERSION_RE.fullmatch("26.9.30") and not VERSION_RE.fullmatch("26.9.30.3.42.7")
-    assert stamp_version(prop, None) == prop and stamp_version(prop, "") == prop
+    # 五段是唯一格式：四段不再被接受（规范第二十二版：计数规则不豁免五段格式）。
+    assert VERSION_RE.fullmatch("26.9.30.3.42")
+    for bad in ("26.9.30.42", "26.9.30", "26.9.30.3.42.7", "dev"):
+        assert not VERSION_RE.fullmatch(bad), bad
+    # 缺段就停：不出非发行包，也不静默退化。
+    for kwargs in ({}, {"day": "3"}, {"date": "26.9.30"}, {"day": "3", "date": "26.9.30"}):
+        try:
+            stamp_version(prop, kwargs.get("build"), day=kwargs.get("day"), date=kwargs.get("date"))
+            raise AssertionError(f"缺段未被拒绝：{kwargs}")
+        except ValueError as error:
+            assert "五段格式不可豁免" in str(error), error
+    try:
+        default_output(prop)  # 仓库里的 module.prop 是非发行默认，没有五段版本就不给产物名
+        raise AssertionError("非发行版本不该有产物名")
+    except ValueError as error:
+        assert "五段版本号" in str(error), error
+    assert default_output(stamped).name == "Selffont-26.9.30.3.42.zip"
     for bad in ("abc", "4 2", "9.", "0"):
         try:
-            stamp_version(prop, bad)
+            stamp_version(prop, bad, day="3", date="26.9.30")
             raise AssertionError(f"非法总序号未被拒绝：{bad!r}")
         except ValueError:
             pass
     for bad in ("0", "x"):
         try:
-            stamp_version(prop, "42", day=bad)
+            stamp_version(prop, "42", day=bad, date="26.9.30")
             raise AssertionError(f"非法当日序号未被拒绝：{bad!r}")
         except ValueError:
             pass
     try:
-        stamp_version(prop, "42", date="26.9")
+        stamp_version(prop, "42", day="3", date="26.9")
         raise AssertionError("非法日期未被拒绝")
     except ValueError:
         pass
@@ -961,15 +1098,24 @@ def version_stamp():
 
 @check
 def version_numbers():
-    """取数口径：总序号 = 最近运行号；当日序号只算当天 push/手动触发，PR 不计入。"""
-    start = day_start(datetime(2026, 10, 5, 9, 52, tzinfo=CLOCK))
-    runs = [{"run_number": 46, "event": "push", "created_at": "2026-10-05T01:52:23Z"},
+    """取数口径：锚定本次运行；当日序号只算当天不晚于本次运行的 push/手动触发，PR 不计入。"""
+    now = datetime(2026, 10, 5, 9, 52, 23, tzinfo=CLOCK)   # 本次运行 09:52:23 UTC+8
+    start = day_start(now)
+    runs = [{"run_number": 47, "event": "push", "created_at": "2026-10-05T02:00:00Z"},  # 晚于本次运行
+            {"run_number": 46, "event": "push", "created_at": "2026-10-05T01:52:23Z"},  # 本次运行
             {"run_number": 45, "event": "push", "created_at": "2026-10-05T01:52:02Z"},
             {"run_number": 44, "event": "pull_request", "created_at": "2026-10-05T00:10:00Z"},
             {"run_number": 43, "event": "push", "created_at": "2026-10-04T15:00:00Z"}]  # 前一天的 23:00 UTC+8
-    assert count_day_runs(runs, start) == 2, count_day_runs(runs, start)
-    assert pick_total(runs) == "46"
+    # PR 也计入（都出包）：当天不晚于本次运行的 3 次（44 / 45 / 46），47 晚于本次不算。
+    assert count_day_runs(runs, start, now) == 3, count_day_runs(runs, start, now)
+    assert count_day_runs(runs, start) == 4, "不给 until 时按当天全部计（本地口径）"
+    assert pick_total(runs) == "47"
     assert day_start(datetime(2026, 10, 5, 0, 30, tzinfo=CLOCK)) == datetime(2026, 10, 4, 16, 0, tzinfo=timezone.utc)
+    assert parse_time("2026-10-05T01:52:23Z") == datetime(2026, 10, 5, 1, 52, 23, tzinfo=timezone.utc)
+    # 本地没有 CI 身份环境变量时不锚定；有就按环境身份走（这里只验「没有」这条路径）。
+    for key in ("GITHUB_RUN_ID", "GITHUB_RUN_NUMBER"):
+        assert not os.environ.get(key), f"{key} 不该在自检环境里"
+    assert current_run() is None
     try:
         pick_total([])
         raise AssertionError("空运行列表应报错，不该编数")
@@ -1198,12 +1344,13 @@ def main() -> None:
     parser.add_argument("--base", help="基础包 ZIP：本地路径或 URL（默认下载并缓存）")
     parser.add_argument("--font", metavar="PATH|URL", help="主字体：本地文件或 URL（默认用内置来源）")
     parser.add_argument("--output", type=Path,
-                        help="产物路径（默认跟版本走：build/Selffont-<版本>.zip，非发行版本用 build/Selffont.zip）")
-    parser.add_argument("--build", help="总序号：盖戳进 module.prop（默认读 $SELFFONT_BUILD，没有就不盖）")
-    parser.add_argument("--day", help="当日序号：五段版本号第四段（默认读 $SELFFONT_DAY，没有就退化成四段）")
-    parser.add_argument("--date", help="版本日期 YY.M.D（默认读 $SELFFONT_DATE，没有取当天 UTC+8）")
+                        help="产物路径（默认跟版本走：build/Selffont-<五段版本>.zip）")
+    parser.add_argument("--build", help="总序号：五段版本号第五段，同时写进 versionCode（默认读 $SELFFONT_BUILD）")
+    parser.add_argument("--day", help="当日序号：五段版本号第四段（默认读 $SELFFONT_DAY）")
+    parser.add_argument("--date", help="版本日期 YY.M.D（默认读 $SELFFONT_DATE）")
     parser.add_argument("--query-github", action="store_true",
-                        help="用 gh 现场查仓库唯一工作流的运行历史，取齐日期与两个序号（CI 用；失败只警告）")
+                        help="用 gh 现场查仓库唯一工作流的运行历史取齐三段版本数据；CI 里锚定本次运行，"
+                             "取不到就报错停止（不出包、不上传），不与 --build/--day/--date 混用")
     parser.add_argument("--keep-web-fonts", action="store_true",
                         help="放行网页自带字体（图标字体等）；默认压成文渊")
     args = parser.parse_args()

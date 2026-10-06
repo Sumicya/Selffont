@@ -12,7 +12,13 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 
 字重阶梯现场从字体的 `wght`/`ital` 轴读取（越界夹取）；**主字体必须是含 `wght` 轴的可变字体**，静态字体直接拒绝（配置只出新语法，没有可声明的轴）。
 
-模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。安装时把它投放到设备实际会读的每一份配置上（内容都是这同一份新语法）：AOSP 的 `font_fallback*.xml`，以及 ColorOS 的 `/system_ext/etc/fonts_base.xml` 与 `fonts_ule.xml`——**读哪份按厂商而定**，只换 AOSP 那份时 ColorOS 会继续用厂商配置，字体看起来「没生效」；**库存 `fonts.xml` 不再替换**（AOSP 16 头注已把这份文件标为 DEPRECATED，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备一份可替换配置都没有（Android 15 以下）时安装直接中止，不留下半套配置。
+模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。
+
+缺字回退分两个区，两边都要放主字体（AOSP `font_fallback.xml` 头注：家族分默认家族、命名家族、**locale fallback family** 三类，缺字时按「完整 BCP-47 标签（含 script）→ 仅语言 → 顺序」匹配）：
+
+- **默认区**（不带 `lang` 的匿名家族，按文件顺序）：主字体作为一条匿名家族紧随默认家族，排在最前。
+- **语言区**（带 `lang` / `variant` 的 locale fallback family，按语言标签优先匹配）：中日韩语言区（`zh` / `zh-Hans` / `zh-Hant,zh-Bopo` / `ja` / `ko`…）一律把主字体前置，区内原有字件（`MiSansL3`、`NotoSansCJK`…）原样留在后面——**覆盖只加不减**。只往默认区插一条是不够的：中文场景缺字会先在语言区里命中厂商字体（如 `lang="zh"` 的 `MiSansL3`），主字体根本轮不到。
+- 非 CJK 语言区（`und-Arab` 之类）与 emoji 区（`und-Zsye`）逐字不动：那些字形主字体没有，插进去只会挡路。安装时把它投放到设备实际会读的每一份配置上（内容都是这同一份新语法）：AOSP 的 `font_fallback*.xml`，以及 ColorOS 的 `/system_ext/etc/fonts_base.xml` 与 `fonts_ule.xml`——**读哪份按厂商而定**，只换 AOSP 那份时 ColorOS 会继续用厂商配置，字体看起来「没生效」；**库存 `fonts.xml` 不再替换**（AOSP 16 头注已把这份文件标为 DEPRECATED，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备一份可替换配置都没有（Android 15 以下）时安装直接中止，不留下半套配置。
 
 ## 构建
 
@@ -22,28 +28,31 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py --check                  # 自检:无框架、无夹具,不下载不打包
 .venv/bin/python build.py --query-github           # 正式打包:现场查运行历史取数并盖戳
-.venv/bin/python build.py --build 47 --day 3       # 或手工传序号(离线;--date 可另给)
+.venv/bin/python build.py --build 47 --day 3 --date 26.10.6   # 或手工传三段(离线;缺一段就报错不出包)
 .venv/bin/python build.py --font 文件或URL --base 本地ZIP或URL
 .venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成文渊）
 ```
 
-产物名跟版本走：`build/Selffont-<版本>.zip`；没盖戳的非发行版本叫 `build/Selffont.zip`。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
+产物名跟版本走：`build/Selffont-<五段版本>.zip`；没有五段版本数据就不出包（规范：取数失败停止出包和上传，五段格式不可豁免）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
 **版本号（五段，展示不含 `v`）**：`yy.m.d.当日序号.总序号`（第四段 = 当日序号，第五段 = 总序号），`versionCode` = 第五段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
 - 计数对象 = 仓库唯一构建工作流 `Build Selffont`（`.github/workflows/build.yml`）的运行历史，现场查、不写死现值；取数在这一次运行里算定，构建只用算出的三个值。
-- 总序号 = 该工作流最近一次运行的 `run_number`；当日序号 = 当天（Asia/Shanghai）该工作流 `push` / 手动触发且已开始的运行数，**PR 检查不计入**。
-- 本地照抄能跑的查法（与 `--query-github` 同一口径）：
+- **CI 锚定本次运行**（`GITHUB_RUN_ID` / `GITHUB_RUN_NUMBER`）：总序号 = 本次运行的 `run_number`，日期 = 本次运行创建时间换算到 UTC+8，当日序号 = 当天不晚于本次运行的运行数。不拿「查询时的最新运行」冒充本次——同一提交并行跑 push 与 PR 时那样会撞号（实测撞过：两条不同内容的 artifact 同名 `Selffont-26.10.5.26.92`）；重试用同一身份，版本自然复用。
+- 当日序号把 PR 运行也算进去（PR 同样出包），唯一性由总序号保证；`push` / `workflow_dispatch` / `pull_request` 都计入。
+- 本地（没有 CI 环境变量）`--query-github` 退到「该工作流最近一次运行」口径，当天没有任何运行就取不到当日序号 → 明确报错不出包；要出包就手工传齐 `--date/--day/--build`。
+- 本地照抄能跑的查法（与 `--query-github` 同一口径；`$RUN_ID` 用本次运行 id，本地留空即取最近一次）：
 
 ```sh
-gh api 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=1' --jq '.workflow_runs[0].run_number'
+gh api "repos/Sumicya/Selffont/actions/runs/${RUN_ID:-$(gh api 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=1' --jq '.workflow_runs[0].id')}" \
+  --jq '"总序号 \(.run_number) 创建 \(.created_at)"'
 gh api --paginate 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=100' --jq '.workflow_runs[]' \
-  | python3 -c 'import json,sys;from datetime import datetime,timezone,timedelta;c=timezone(timedelta(hours=8));d=datetime.now(c).replace(hour=0,minute=0,second=0,microsecond=0);print(sum(1 for l in sys.stdin if (r:=json.loads(l))["event"] in ("push","workflow_dispatch") and datetime.fromisoformat(r["created_at"].replace("Z","+00:00"))>=d))'
+  | python3 -c 'import json,sys;from datetime import datetime,timezone,timedelta;c=timezone(timedelta(hours=8));d=datetime.now(c).replace(hour=0,minute=0,second=0,microsecond=0);print("当日序号", sum(1 for l in sys.stdin if datetime.fromisoformat((r:=json.loads(l))["created_at"].replace("Z","+00:00"))>=d))'
 ```
 
-- 取不到当日序号时**退化写四段** `yy.m.d.总序号`（规范允许；本项目没有发布型 CI，当日序号只能在运行历史里查，查不到就不编数）。两个数都取不到就不盖戳：`module/module.prop` 是**非发行默认** `version=dev` / `versionCode=0`，自检核对盖戳格式与 versionCode 一致。
+- 三段版本数据（日期、当日序号、总序号）**缺一不可**：`build.py` 不再退化写四段、也不再出「非发行版本」的包；`module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**push 与 PR 都上传** `build/Selffont-<版本>.zip` 为 Actions artifact（名 = `Selffont-<版本>`，`retention-days: 5`）；出包成功后自动滚动清理旧 artifact（保留最近 5 个，按 `selffont-` 前缀不分大小写筛选）。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset；版本号由 `actions: read` 现场查运行历史算定。
+CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**push 与 PR 都上传** `build/Selffont-<五段版本>.zip` 为 Actions artifact（名 = `Selffont-<五段版本>`，上传前先核对产物名符合五段格式，`retention-days: 5` 只是时间兜底）；出包成功后自动滚动清理旧 artifact——**跨分支、跨触发事件合计只留最近 5 个**：`selffont-` 前缀（不分大小写）只用于筛候选，归属再按 `workflow_run` 的运行记录核验（`repository_id` / `head_repository_id` 必须是本仓库），归属不明的对象保留不删，删完复核数量、超限就报错。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。清理 job 是唯一有写权限的 job（`actions: write`，只删 artifact），且不跑 PR 事件的代码——PR 产物照样计入清理范围，由下一次 push / 手动触发运行的清理 job 处理。
 
 ```sh
 # 最近一次非 PR 运行的 artifact 就是模块 zip(算 id、验字节数、清下载残留)

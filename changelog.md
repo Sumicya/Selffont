@@ -1,5 +1,45 @@
 # 更新日志
 
+## 2026-10-06 · 缺字回退「语言区」修正：CJK 语言区必须自带主字体（此前被整族删除）
+
+- 主人指正：「部分场景有字体回退默认区的情况」。核对上游后确认这是真问题——AOSP `font_fallback.xml` 头注写明家族分三类（默认家族 / 命名家族 / **locale fallback family**），缺字时按「完整 BCP-47 标签（含 script）→ 仅语言 → **顺序**」匹配，语言区优先于默认区的文件顺序；`source.android.com/docs/core/fonts/custom-font-fallback` 也点明 Android 15 起可变字体配置写在 `font_fallback.xml`（示例就是 `<family lang="und-Ethi" supportedAxes="wght,ital">`）。
+- 旧实现的漏洞：`configure_fonts` 把「字件全是旧数字主字体 / 空壳」的**匿名家族整族删除**，这条规则把 5 个 CJK 语言区（`lang="zh,zh-Hans,zh-Hant"`、`zh-Hans`、`zh-Hant,zh-Bopo`、`ja`、`ko`）一起删了——它们原本装着旧主字体。删掉后中文场景缺字会先在语言区命中厂商字体（模板里 `lang="zh"` 是 `MiSansL3.otf`、`ja` / `ko` 是 `NotoSansCJK-Regular.ttc`），主字体根本轮不到；而主字体在默认区排第一，看着像「已经接管」。
+- 修法：语言区不再整族删。新增 `swap_fonts()`——CJK 语言区（`zh` / `ja` / `ko` 系标签）删掉旧主字体与空壳字件、把主字体（一条 `supportedAxes="wght,ital"`）前置到最前，区内其余字件原样留在后面（**覆盖只加不减**）；非 CJK 语言区（`und-Arab` 等）与 emoji 区（`und-Zsye`）逐字不动。
+- 现场核对（真实 `fonts.xml` 模板，主字体记作 `V.ttf`）：模板 193 个家族 → 输出 192；**带 `lang` 的家族 153 个，一个不少**（旧实现输出只剩 148）；`lang="zh"` 现在是 `[V.ttf, MiSansL3.otf]`，`lang="ja"` / `ko` 是 `[V.ttf, NotoSansCJK-Regular.ttc ×…]`，`zh-Hans` / `zh-Hant,zh-Bopo` / `zh,zh-Hans,zh-Hant` / `ja` / `ko` 各为 `[V.ttf]`；非 CJK 语言区 144 个家族逐字未改（自检逐条比对）；残留旧数字主字体 0 条；默认区第一条仍是紧随默认家族的匿名主字体家族。
+- 自检（`fonts_xml`）新增：语言区家族数与顺序不变、CJK 语言区首个字件必是主字体且带 `supportedAxes`、区内原有非主字体字件一个不许少、非 CJK 语言区逐字未改。`.venv/bin/python build.py --check` **9 项全部通过**。
+- 未验证：本机没有设备，语言区改动**未真机验证**。装机核对：中文界面下挑一个主字体没有、`MiSansL3` 有的字（或反向），看是否渲染成圆体；`grep -c Selffont /system_ext/etc/fonts_base.xml` 应比旧包多（多了 CJK 语言区的字件）。要退回旧行为就把 `configure_fonts` 里 `elif locale and is_cjk_locale(...)` 那条分支去掉。
+
+## 2026-10-06 · 版本号锚定本次运行：五段格式不可豁免，取消四段退化与非发行出包
+
+- 规范要求（第二十二版）：「CI 锚定本次运行创建时间与身份，不取查询时的最新运行冒充本次；同次重试复用版本」「计数规则不得豁免五段格式」「版本数据缺失、取数失败或校验不通过，就停止出包和上传」。
+- 旧口径确实撞号，仓库里有实证：`Selffont-26.10.5.26.92` 有两条**不同内容**的 artifact（id `11349882843` = 105147518 字节，来自 push 运行 `37321147235`，`run_number` 91；id `11350566111` = 105147562 字节，来自 PR 运行 `37321152703`，`run_number` 92）——同一提交并行的 push 与 PR，push 那次查到的「最近运行号」已经是 92。
+- 修法：`github_version_numbers()` 在 CI 里读 `GITHUB_RUN_ID` / `GITHUB_RUN_NUMBER`，用 `gh api repos/{owner}/{repo}/actions/runs/<id>` 取本次运行记录（校验返回的 id 与环境一致）：总序号 = 本次 `run_number`，日期 = 本次 `created_at` 换算 UTC+8，当日序号 = 当天不晚于本次运行的运行数（`until` 上界）。重试复用同一身份 → 版本不变。本地没有这两个环境变量时退到「最近一次运行」口径。
+- 用真实运行号现场复核（`gh api` 实跑）：运行 91 → `26.10.5.47.91`，运行 92 → `26.10.5.48.92`——**不再撞号**；93 → `26.10.5.49.93`、94 → `26.10.5.50.94`。
+- 同日把降级路径一并删干净（规范：五段不可豁免、缺数据就停）：`stamp_version()` 三段（日期 / 当日序号 / 总序号）缺一不可，缺就报错；`VERSION_RE` 只认五段；`default_output()` 没有五段版本不给产物名（`build/Selffont.zip` 这条非发行出口取消）；`build()` 里「取数失败只警告、按非发行版本继续」和「退化成四段」两条路径删除；`--query-github` 与手工 `--date/--day/--build` 混用直接报错（版本号只认一个来源）。
+- 当日序号口径随之改：PR 运行也计入（PR 同样出包），唯一性由总序号保证；`AGENTS.md`「计数口径」与 README 同步改写（原「PR 检查不计入」「取不到当日序号退化写四段」两条已删）。
+- 自检：`version_stamp` 改成断言「缺任一段就拒绝 + 四段不再被接受 + 非发行版本不给产物名」，`version_numbers` 断言 `until` 上界与本地口径。9 项全部通过。
+
+## 2026-10-06 · 同步规范第二十二版：Release 1 个 / artifact 合计 5 个 + 归属核验与删后复核
+
+- 规范从第二十一版升到第二十二版（2026-10-06）；`AGENTS.md` 版本戳与继承条目同步重写，删掉相反表述（旧的「Actions artifact 保留最近 5 个」升级为「跨分支、跨触发事件合计 5 个 + 归属核验 + 删后复核」，并补 Release 上限 1）。
+- 现场核对（`gh api`）：本仓库 **Release 0 个**（规范上限 1，无积压要清）、Actions artifact **5 个**（正好在上限，dry-run 复核 0 个待删）、历史 tag 2 个（`v3.0.0` / `v26.9.30.39`，按规范保留）。
+- `cleanup` job 按「前缀只筛候选、归属结合工作流与运行记录核验」改造：先取本仓库 `repository_id`（实测 `1356719722`），artifact 的 `workflow_run.repository_id` 与 `head_repository_id` 都必须是本仓库才算本项目；**归属不明的对象保留并打印**；删完再查一次复核，超过上限就 `exit 1`；顺带只读打印 Release 数，超过 1 个打 WARNING（CI 不拿 `contents` 写权限，获准人工发布时由发布者做发布后清理）。
+- 出包前加命名一致性核对：产物名必须匹配 `^Selffont-<五段版本>$` 才写 `ARTIFACT_NAME`、才上传（`if-no-files-found: error` 与 `retention-days: 5` 不变）。
+- PR 事件仍不跑 `cleanup`（工作流定义来自 PR 的合并 ref，给写权限等于执行未信任代码）；PR 产物照样计入清理范围，由下一次 push / 手动触发运行的清理 job 处理——这是安全边界，不是放弃数量清理。
+- 未验证：`cleanup` 与新取数的**实际运行**要等这次 push 的 CI；沙箱里只做了 dry-run（同一套 `gh api` 调用与判定逻辑，未执行 DELETE）。
+
+## 2026-10-06 · 删除旧会话分支 `arena/01a10a49-selffont`（PR #6 已合并）
+
+- 主人明确要求删旧分支（覆盖上一轮「未删分支」的做法）。删前核对：该分支相对 `main` 只差 `changelog.md` 的一条记录（`git diff --stat 4e7f6b1 main` = `changelog.md | 6 ------`），其余内容已在 `main`（PR #6 的 merge commit `204b238`）。
+- 那条记录先带进本分支（见下条「PR #6 并入 main」），再 `git push origin --delete arena/01a10a49-selffont`——不靠删除藏内容。删后 `git ls-remote --heads origin` 只剩 `main` 与本会话分支。
+- 本地克隆是 depth 1 的浅克隆（`.git/shallow` 里是 `204b238`），所以「是否已合并」不能用 `merge-base --is-ancestor` 判（会误报 NOT ancestor）；改用 PR 状态（`gh pr list` 显示 #6 MERGED）+ 内容差异比对。
+
+## 2026-10-05 · PR #6 并入 main（204b2380）
+
+- 合并方式：merge commit（保留分支上 22 个提交的历史），当时未删分支（2026-10-06 已按主人要求删除，见上）。
+- 合并后默认分支第一次运行：`37321612591` success，`Selfcheck / build / upload artifact` 与 `Keep newest 5 artifacts` **两个 job 都在默认分支上实跑**（此前只有 PR 分支可验证）；artifact 总数维持 5，最新 `Selffont-26.10.5.27.93`。
+- 「清理必须挂在默认分支构建工作流里」的规范要求至此落实。
+
 ## 2026-10-05 · 别名字件实验判定无效并删除
 
 - 真机探针（OnePlus / ColorOS 16 / Firefox for Android，随机测试页）：20 个空格在 `"cursive"`/`"fantasy"`/`"casual"`/`"serif-monospace"`/`"sans-serif-smallcaps"`/`"sans-serif-condensed"` 六个别名家族下宽度全部 = 478.3px（= 默认链），别名字件特有的 0.5em 空格（应为 ≈1000px）从未出现 → **Gecko 的字体清单不含未写进系统配置的字件**，别名字件解析不到。

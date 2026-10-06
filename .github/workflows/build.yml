@@ -23,18 +23,25 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Selfcheck (packager, metric normalization, module scripts)
         run: python build.py --check
-      # 版本号在这一处算定(build.py --query-github 现场查本工作流的运行历史),产物名跟着版本走。
+      # 版本号在这一处算定:build.py --query-github 锚定本次运行(GITHUB_RUN_ID / GITHUB_RUN_NUMBER),
+      # 不拿查询时的最新运行冒充本次;重试用同一身份,版本自然复用。取不到数就停,不出包不上传。
       - name: Build (version stamped)
         env:
           GH_TOKEN: ${{ github.token }}
         run: python build.py --query-github
-      - name: Stage artifact name (Selffont-<版本>)
+      # 出包前核对命名一致性:产物名与 artifact 名统一 Selffont-<五段版本>,不合规范就不上传。
+      - name: Stage artifact name (Selffont-<五段版本>)
         run: |
           zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont*.zip' -print -quit)")
           test -n "$zip_file"
           ls -l "build/$zip_file"
-          echo "ARTIFACT_NAME=${zip_file%.zip}" >> "$GITHUB_ENV"
-      # CI 出包(不是发版):push 与 PR 都照传,名 = <项目名>-<版本>,留 5 天兜底;
+          name="${zip_file%.zip}"
+          echo "$name" | grep -Eq '^Selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+\.[0-9]+$' || {
+            echo "产物名不符合规范的五段版本格式:$name" >&2
+            exit 1
+          }
+          echo "ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
+      # CI 出包(不是发版):push 与 PR 都照传,名 = <项目名>-<五段版本>,留 5 天兜底;
       # 上传用 runner 自带令牌,不需要写权限。Release / tag / 正式 asset 一概不碰。
       - name: Upload module zip (Actions artifact)
         uses: actions/upload-artifact@v7
@@ -46,7 +53,7 @@ jobs:
   cleanup:
     name: Keep newest 5 artifacts
     needs: build
-    if: github.event_name != 'pull_request'   # 写权限 job 不跑未信任 PR 的代码
+    if: github.event_name != 'pull_request'   # 写权限 job 不跑未信任 PR 的代码(PR 产物照样计入清理范围)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -77,26 +84,50 @@ jobs:
                   sys.exit(f"gh api {path} 失败:{result.stderr.strip()}")
               return result.stdout
 
-          # 完整分页 + 结构化字段;只认本项目标识(项目名 + 短横线,不分大小写),
-          # 旧积压 selffont-module 与新名 Selffont-<版本> 都命中,别的对象不碰。
-          rows, page = [], 1
-          while True:
-              batch = [json.loads(line) for line in
-                       api(f"repos/{repo}/actions/artifacts?per_page=100&page={page}",
-                           jq=".artifacts[]|{id,name,created_at,size_in_bytes}").splitlines() if line.strip()]
-              if not batch:
-                  break
-              rows += [row for row in batch if row["name"].lower().startswith("selffont-")]
-              page += 1
+          repo_id = int(json.loads(api(f"repos/{repo}", jq="{id: .id}"))["id"])
 
+          def artifacts():
+              """完整分页取 artifact;名字前缀只用于筛候选,归属另按运行记录核验。"""
+              rows, page = [], 1
+              while True:
+                  batch = [json.loads(line) for line in
+                           api(f"repos/{repo}/actions/artifacts?per_page=100&page={page}",
+                               jq=".artifacts[]|{id,name,created_at,size_in_bytes,workflow_run}").splitlines()
+                           if line.strip()]
+                  if not batch:
+                      return rows
+                  rows += batch
+                  page += 1
+
+          rows = [row for row in artifacts() if row["name"].lower().startswith("selffont-")]
+
+          # 归属核验(规范:前缀只筛候选,归属结合工作流与运行记录;归属不明的不删):
+          # artifact 的 workflow_run 必须落在本仓库,否则视为别人的对象,跳过并打印。
+          def owned(row):
+              run = row.get("workflow_run") or {}
+              return run.get("repository_id") == repo_id and run.get("head_repository_id") == repo_id
+
+          unknown = [row for row in rows if not owned(row)]
+          rows = [row for row in rows if owned(row)]
           rows.sort(key=lambda row: row["created_at"], reverse=True)
-          print(f"匹配到 {len(rows)} 个本项目 artifact,保留最近 {keep} 个;完整清单:")
+          print(f"匹配到 {len(rows)} 个本项目 artifact(另有 {len(unknown)} 个归属不明,保留),保留最近 {keep} 个;完整清单:")
           for row in rows:
               print(f"  {row['created_at']} {row['name']} {row['size_in_bytes']} 字节 id={row['id']}")
+          for row in unknown:
+              print(f"  归属不明(保留) {row['created_at']} {row['name']} id={row['id']} workflow_run={row.get('workflow_run')}")
           victims = rows[keep:]
           for row in victims:
               print(f"DELETE {row['created_at']} {row['name']} {row['size_in_bytes']} 字节 id={row['id']}")
               api(f"repos/{repo}/actions/artifacts/{row['id']}", method="DELETE")
-          print(f"已删 {len(victims)} 个,保留 {min(len(rows), keep)} 个"
-                f"(Release / tag 不在本 job 范围内:历史 tag 默认保留)")
+
+          # 删完复核:本项目 artifact 不得超过保留数;超了就报错(不回滚新产物、不动保留对象)。
+          left = [row for row in artifacts() if row["name"].lower().startswith("selffont-") and owned(row)]
+          print(f"已删 {len(victims)} 个,复核后本项目 artifact {len(left)} 个(上限 {keep})")
+          if len(left) > keep:
+              sys.exit(f"清理后仍有 {len(left)} 个本项目 artifact,超过上限 {keep}")
+          releases = json.loads(api(f"repos/{repo}/releases", jq="length"))
+          print(f"Release 数:{releases}(规范上限 1。CI 不发版也不删 Release;"
+                "获准人工发布时由发布者做发布后清理)")
+          if releases > 1:
+              print("WARNING: Release 超过 1 个,需要获准的人工操作清理(CI 无 contents 写权限)")
           PY
