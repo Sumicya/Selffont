@@ -1112,10 +1112,14 @@ def version_numbers():
     assert pick_total(runs) == "47"
     assert day_start(datetime(2026, 10, 5, 0, 30, tzinfo=CLOCK)) == datetime(2026, 10, 4, 16, 0, tzinfo=timezone.utc)
     assert parse_time("2026-10-05T01:52:23Z") == datetime(2026, 10, 5, 1, 52, 23, tzinfo=timezone.utc)
-    # 本地没有 CI 身份环境变量时不锚定；有就按环境身份走（这里只验「没有」这条路径）。
-    for key in ("GITHUB_RUN_ID", "GITHUB_RUN_NUMBER"):
-        assert not os.environ.get(key), f"{key} 不该在自检环境里"
-    assert current_run() is None
+    # 自检不联网，所以只验「没有 CI 身份」这条路径：临时摘掉环境变量（CI 里它们必然存在），
+    # 验完还原——断言不能依赖跑在哪个环境里。
+    saved = {key: os.environ.pop(key, None) for key in ("GITHUB_RUN_ID", "GITHUB_RUN_NUMBER")}
+    try:
+        assert current_run() is None, "没有 CI 身份时不该锚定本次运行"
+    finally:
+        os.environ.update({key: value for key, value in saved.items() if value is not None})
+    assert all(os.environ.get(key) == saved[key] for key in saved if saved[key] is not None), "环境变量未还原"
     try:
         pick_total([])
         raise AssertionError("空运行列表应报错，不该编数")
