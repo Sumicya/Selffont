@@ -72,6 +72,11 @@ CJK_LANGS = {"zh", "ja", "ko"}  # 语言区里主字体要接管的 BCP-47 主�
 # 主人 2026-10-06 明确：不喜欢 MiSans。配置里连引用一起清掉，中文缺字不再落到它上面；
 # 那些字继续往默认区的补充字库（天珩 / Unicode 新平面等）落，覆盖不靠厂商字体。
 UNWANTED_FONTS = re.compile(r"misans", re.I)
+# 火狐名单里谁排最前，按这个泛型在系统里本来是什么字体（fonts.xml 的命名家族）定：
+# monospace=DroidSansMono.ttf / cursive=DancingScript-Regular.ttf / casual=ComingSoon.ttf
+# （Android 的 fantasy 对应 casual）。本来是什么字体就保持什么字体，文渊只紧随其后兜 CJK。
+# 不在表里的泛型（sans-serif / serif / emoji）系统里本来就是主字体，文渊排最前是恢复火狐的篡改。
+NATIVE_FIRST = {"monospace": "Droid Sans Mono", "cursive": "Dancing Script", "fantasy": "Coming Soon"}
 WEIGHTS = range(100, 1000, 100)
 BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位类别（空格类、控制类）
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
@@ -86,6 +91,22 @@ VERSION_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+\.\d+$")  # 只认五�
 WEB_FONT_PREF = "browser.display.use_document_fonts: 0"
 WEB_FONT_ACTIVE = f"  {WEB_FONT_PREF}"
 WEB_FONT_KEPT = f"  # Selffont:keep {WEB_FONT_PREF}"
+
+
+def name_list_ok(line: str) -> None:
+    """一条 font.name-list 首选项的校验：开头由 NATIVE_FIRST 定，文渊紧随其后且只出现一次。
+
+    本来是什么字体就保持什么字体（monospace / cursive / fantasy），火狐篡改掉的才恢复（其余泛型
+    系统里本来就是主字体，文渊排最前）。构建期尾链只往名单末尾追加，文渊不该被追加第二遍。
+    """
+    key, raw = (part.strip() for part in line.split(":", 1))
+    names = [item.strip() for item in raw.strip('"').split(",")]
+    parts = key.split(".")
+    native = NATIVE_FIRST.get(parts[2] if len(parts) > 2 else "")
+    head = [native, RENAME] if native else [RENAME]
+    assert names[:len(head)] == head, f"{key} 名单开头应是 {head}：{line}"
+    assert names.count(RENAME) == 1, f"{key} 文渊只该出现一次：{line}"
+    assert not UNWANTED_FONTS.search(raw), f"名单里不该有不要的厂商字体：{line}"
 
 
 def apply_web_font_switch(config: str, keep: bool) -> str:
@@ -978,11 +999,11 @@ def build_end_to_end():
         assert not any("P-Regular.ttf" in [(n.text or "").strip() for n in f.findall("font")]
                        and len(f.findall("font")) > 1 for f in locale), "语言区不许混主字体与其他字件（真机卡开机）"
         assert "MiSans" not in xml, "包内配置不该引用 MiSans"
-        # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，前置仍是文渊。
+        # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，开头（本来字体或文渊）不动。
         assert ", Noto Sans Pro\"" in config, "尾链未拼进火狐配置"
         for line in config.splitlines():
             if line.strip().startswith("font.name-list."):
-                assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
+                name_list_ok(line)
 
         # --keep-web-fonts 时那一行应带 Selffont:keep 标记。
         build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30",
@@ -991,9 +1012,9 @@ def build_end_to_end():
             kept = archive.read("geckoview-config.yaml").decode()
             assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", kept, re.M), "网页字体未放行"
             assert not re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", kept, re.M), "放行后 pref 仍生效"
-            for line in kept.splitlines():  # 放行后名单本身仍完整、仍前置文渊
+            for line in kept.splitlines():  # 放行后名单本身仍完整、开头仍是本来字体或文渊
                 if line.strip().startswith("font.name-list."):
-                    assert line.split(":", 1)[1].strip().strip('"').startswith(RENAME + ","), line
+                    name_list_ok(line)
         # 没有五段版本数据就不出包（规范：取数失败停止出包和上传）。
         try:
             build(base=str(base), font=str(regular), output=tmp / "out" / "nostamp.zip")
@@ -1155,10 +1176,8 @@ def firefox_bridge():
     assert config.startswith("prefs:\n") or "\nprefs:\n" in config, "Gecko 配置必须只有 prefs 段"
     lines = [line.strip() for line in config.splitlines() if line.strip().startswith("font.name-list.")]
     assert len(lines) >= 20, f"首选项太少：{len(lines)}"
-    for line in lines:  # 只前置：每条都必须以本模块家族名开头，后面原样保留 Gecko 默认回退链
-        value = line.split(":", 1)[1].strip().strip('"')
-        assert value.startswith(RENAME + ","), f"未前置或家族名不符：{line}"
-        assert not UNWANTED_FONTS.search(value), f"名单里不该有不要的厂商字体：{line}"
+    for line in lines:  # 只插入不清空：开头是谁由 NATIVE_FIRST 定，后面原样保留 Gecko 默认回退链
+        name_list_ok(line)
 
     # 泛型缺口修复：Gecko 在 Android 只有 cursive.x-unicode/x-western 默认、fantasy 一个都没有，
     # 其余语言组解析成空字体组落到平台默认。CJK 与西文的 cursive/fantasy 必须都在位。

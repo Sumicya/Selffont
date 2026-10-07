@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2026-10-07 · 火狐名单：本来是什么字体就保持什么字体，被火狐篡改的才恢复
+
+- 主人：「本来就是什么字体就应该是什么字体。但火狐篡改字体就应该恢复被篡改的字体。」
+- 对照模板 `fonts.xml` 的命名家族，各泛型在系统里本来是：`sans-serif`=度量空壳（实际显示系统主字体）、`serif`=旧数字主字件、`monospace`=`DroidSansMono.ttf`、`cursive`=`DancingScript-Regular.ttf`、`casual`=`ComingSoon.ttf`（Android 的 fantasy 对应 casual）。所以 `sans-serif` / `serif` / `emoji` 前置文渊是**恢复**火狐的篡改；`monospace` / `cursive` / `fantasy` 前置文渊是**本模块自己改的**，之前连英文花体也被换成了文渊。
+- 改法：`module/geckoview-config.yaml` 里 monospace / cursive / fantasy 共 22 行（`x-unicode` / `x-western` / `x-math` / `zh-CN` / `zh-TW` / `zh-HK` / `ja` / `ko`）改成「本来字体, 文渊, 原回退链」，本来字体在原链里出现过的去重（`monospace.ja` 尾部的 `Droid Sans Mono` 因此上移）。`sans-serif` / `serif` / `emoji` 不动，文渊仍在最前。
+- 代码：`build.py` 新增 `NATIVE_FIRST`（泛型 → 本来字体）与 `name_list_ok()`；三处「必须以文渊开头」的断言（`firefox_bridge` 一处、`build_end_to_end` 两处）统一走它，另加「文渊在一条名单里只出现一次」（构建期尾链只往末尾追加，不该再加一遍）。
+- 自检：9 项全部通过。变异测试两条——把 `monospace.x-western` 改回文渊在前、把 `cursive.ja` 的文渊写两遍——`firefox_bridge` 与 `build_end_to_end` 都 FAIL；还原后全过。`geckoview-config.yaml` 用 PyYAML 解析合法（40 个键）。`README.md` 里「每条首选项都是前置文渊」那句已按新规则改写。
+- 未验证：「Gecko 按名单逐字找字体，所以 CJK 会落到紧随的文渊」是推断，没在火狐上实测。装机核对：火狐里 `font-family: cursive` 的英文应是 Dancing Script、中文应是文渊。
+- 未处理（等主人定）：系统层同类问题——生成的 `font_fallback.xml` 把 `monospace` / `serif-monospace` / `casual` / `cursive` / `sans-serif-smallcaps` 五个命名族整族换成文渊，它们本来是 Droid Sans Mono / Cutive Mono / Coming Soon / Dancing Script / Carrois Gothic SC。按同一原则也该保持本来字体；本轮没动，因为影响所有 App，且改的正是刚出过卡开机事故的那份配置。
+
 ## 2026-10-07 · 真机卡开机修复：CJK 语言区不许混主字体与 .ttc 字件
 
 - 真机（ColorOS 16 / 一加）刷入 `26.10.7.4.98` 后卡第一屏开机动画、整机重启；换回 main 构建无此现象。pstore 无 panic / watchdog，dropbox 无 system_server 崩溃记录，失败那次的 logcat 因重启丢失。

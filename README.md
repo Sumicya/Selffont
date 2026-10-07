@@ -102,7 +102,7 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh'          # 接入
 su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 ```
 
-`firefox.sh` 只做两件事：把 `geckoview-config.yaml` 放到 `/data/local/tmp/org.mozilla.firefox-geckoview-config.yaml`，再把 Firefox 设成 Android「调试应用」（`am set-debug-app --persistent`，重启后仍在）——GeckoView 只在这两种情况下读那份配置。配置里每条首选项都是**前置**文渊、后面原样保留 Gecko 自己的回退链；整条覆盖会掐断回退，那才是缺字的来源。
+`firefox.sh` 只做两件事：把 `geckoview-config.yaml` 放到 `/data/local/tmp/org.mozilla.firefox-geckoview-config.yaml`，再把 Firefox 设成 Android「调试应用」（`am set-debug-app --persistent`，重启后仍在）——GeckoView 只在这两种情况下读那份配置。配置里每条首选项都只**插入**不清空，后面原样保留 Gecko 自己的回退链（整条覆盖会掐断回退，那才是缺字的来源）。谁排在最前，看这个泛型在系统里本来是什么字体：`sans-serif` / `serif` / `emoji` 本来就是主字体（`serif` 是旧数字字件、`sans-serif` 是度量空壳），文渊在最前是把火狐改掉的恢复回来；`monospace` / `cursive` / `fantasy` 本来是 Droid Sans Mono / Dancing Script / Coming Soon（`fonts.xml` 的 `monospace` / `cursive` / `casual`），**本来是什么字体就保持什么字体**，文渊只紧随其后兜这些字体没有的 CJK。
 
 **花体 / 小型大写（Unicode 字符本身，如 𝓐𝓑𝓒、ᴀʙᴄ）**——这类字符不选字体，走逐字回退，而 Gecko 的逐字回退**不读 fonts.xml 顺序**（先按字符语言组查 `font.name-list.*`，再全清单乱序扫描），选中的兜底字体和系统不同 → 同一字符两副面孔。修法 = 让火狐的回退链与 fonts.xml 同序：
 
