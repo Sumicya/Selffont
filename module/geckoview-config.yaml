@@ -33,7 +33,7 @@ prefs:
   # 简体
   font.name-list.sans-serif.zh-CN: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans SC, Noto Sans CJK SC, SEC CJK SC, Droid Sans Fallback"
   font.name-list.serif.zh-CN: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK SC, Noto Serif, Droid Serif, Droid Sans Fallback"
-  font.name-list.monospace.zh-CN: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK SC, SEC Mono CJK SC, Noto Sans CJK SC, MiSans VF, MiSans, Droid Sans Fallback"
+  font.name-list.monospace.zh-CN: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK SC, SEC Mono CJK SC, Noto Sans CJK SC, Droid Sans Fallback"
   # 花体/随意：Gecko 没有 zh/ja/ko 的 cursive/fantasy 默认，空字体组会落到平台默认字体
   # （清单第一个家族是 Roboto 空壳）——花体行因此不渲染文渊。这里把缺口补齐。
   font.name-list.cursive.zh-CN: "Selffont Rounded SC VF, Dancing Script"
@@ -42,12 +42,12 @@ prefs:
   # 繁体
   font.name-list.sans-serif.zh-TW: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans TC, Noto Sans SC, Noto Sans CJK TC, SEC CJK TC, Droid Sans Fallback"
   font.name-list.serif.zh-TW: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK TC, Noto Serif, Droid Serif, Droid Sans Fallback"
-  font.name-list.monospace.zh-TW: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK TC, SEC Mono CJK TC, Noto Sans CJK TC, MiSans TC VF, MiSans TC, Droid Sans Fallback"
+  font.name-list.monospace.zh-TW: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK TC, SEC Mono CJK TC, Noto Sans CJK TC, Droid Sans Fallback"
   font.name-list.cursive.zh-TW: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.fantasy.zh-TW: "Selffont Rounded SC VF, Coming Soon"
   font.name-list.sans-serif.zh-HK: "Selffont Rounded SC VF, Roboto, Google Sans, Droid Sans, Noto Sans TC, Noto Sans SC, Noto Sans CJK TC, SEC CJK TC, Droid Sans Fallback"
   font.name-list.serif.zh-HK: "Selffont Rounded SC VF, Charis SIL Compact, Noto Serif CJK TC, Noto Serif, Droid Serif, Droid Sans Fallback"
-  font.name-list.monospace.zh-HK: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK TC, SEC Mono CJK TC, Noto Sans CJK TC, MiSans TC VF, MiSans TC, Droid Sans Fallback"
+  font.name-list.monospace.zh-HK: "Selffont Rounded SC VF, Droid Sans Mono, Noto Sans Mono CJK TC, SEC Mono CJK TC, Noto Sans CJK TC, Droid Sans Fallback"
   font.name-list.cursive.zh-HK: "Selffont Rounded SC VF, Dancing Script"
   font.name-list.fantasy.zh-HK: "Selffont Rounded SC VF, Coming Soon"
 

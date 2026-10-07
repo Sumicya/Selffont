@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-06 · 不要 MiSans：配置与火狐名单里的引用一并清掉
+
+- 主人：「MiSans 我不喜欢」（同时选定语言区方案 A：CJK 语言区前置主字体，区内原字件留后）。
+- 做法（`build.py`，构建期，无开关）：新增 `UNWANTED_FONTS = re.compile(r"misans", re.I)`，`configure_fonts` 先把匹配的 `<font>` 引用整条删掉（模板里就一处：`<family lang="zh">` 的 `MiSansL3.otf`，带 `postScriptName="MiSans-L3"`），再删掉标注它的那条注释（`<!-- MiSans 作为回退 -->` 留在产物里会指不到东西），主循环照常走，最后把清空的家族节点删除（空 `<family>` 没有意义）。火狐模板 `module/geckoview-config.yaml` 里 `monospace.zh-CN` 的 `MiSans VF, MiSans`、`monospace.zh-TW` / `zh-HK` 的 `MiSans TC VF, MiSans TC` 直接删掉。
+- 现场核对：产物里 `MiSans` 出现 **0 次**，其余 37 条注释保留；`lang="zh"` 语言区现在是 `[主字体]`（原来 `[主字体, MiSansL3.otf]`）；家族总数仍 192、带 `lang` 的家族仍 153、空家族 0、CJK 语言区仍各以主字体打头。
+- 覆盖影响：`MiSansL3.otf` 本来就是**设备自带**（小米系）而非基础包成员，非小米设备上这条引用一直是空的；清掉后中文缺字继续往默认区的补充字库（天珩 / Unicode 新平面等）落，链子没断。自检 `build_end_to_end` 加了**字面**断言 `"MiSans" not in xml`（变异测试：把 `UNWANTED_FONTS` 改成永不匹配，该断言 FAIL），`firefox_bridge` 逐条名单也不许出现。`.venv/bin/python build.py --check` **9 项全部通过**。
+- 未验证：仍无真机数据。装机核对加一条：`grep -ci misans /system_ext/etc/fonts_base.xml` 应为 0。
+
 ## 2026-10-06 · 缺字回退「语言区」修正：CJK 语言区必须自带主字体（此前被整族删除）
 
 - 主人指正：「部分场景有字体回退默认区的情况」。核对上游后确认这是真问题——AOSP `font_fallback.xml` 头注写明家族分三类（默认家族 / 命名家族 / **locale fallback family**），缺字时按「完整 BCP-47 标签（含 script）→ 仅语言 → **顺序**」匹配，语言区优先于默认区的文件顺序；`source.android.com/docs/core/fonts/custom-font-fallback` 也点明 Android 15 起可变字体配置写在 `font_fallback.xml`（示例就是 `<family lang="und-Ethi" supportedAxes="wght,ital">`）。

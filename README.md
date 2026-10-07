@@ -17,8 +17,9 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 缺字回退分两个区，两边都要放主字体（AOSP `font_fallback.xml` 头注：家族分默认家族、命名家族、**locale fallback family** 三类，缺字时按「完整 BCP-47 标签（含 script）→ 仅语言 → 顺序」匹配）：
 
 - **默认区**（不带 `lang` 的匿名家族，按文件顺序）：主字体作为一条匿名家族紧随默认家族，排在最前。
-- **语言区**（带 `lang` / `variant` 的 locale fallback family，按语言标签优先匹配）：中日韩语言区（`zh` / `zh-Hans` / `zh-Hant,zh-Bopo` / `ja` / `ko`…）一律把主字体前置，区内原有字件（`MiSansL3`、`NotoSansCJK`…）原样留在后面——**覆盖只加不减**。只往默认区插一条是不够的：中文场景缺字会先在语言区里命中厂商字体（如 `lang="zh"` 的 `MiSansL3`），主字体根本轮不到。
-- 非 CJK 语言区（`und-Arab` 之类）与 emoji 区（`und-Zsye`）逐字不动：那些字形主字体没有，插进去只会挡路。安装时把它投放到设备实际会读的每一份配置上（内容都是这同一份新语法）：AOSP 的 `font_fallback*.xml`，以及 ColorOS 的 `/system_ext/etc/fonts_base.xml` 与 `fonts_ule.xml`——**读哪份按厂商而定**，只换 AOSP 那份时 ColorOS 会继续用厂商配置，字体看起来「没生效」；**库存 `fonts.xml` 不再替换**（AOSP 16 头注已把这份文件标为 DEPRECATED，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备一份可替换配置都没有（Android 15 以下）时安装直接中止，不留下半套配置。
+- **语言区**（带 `lang` / `variant` 的 locale fallback family，按语言标签优先匹配）：中日韩语言区（`zh` / `zh-Hans` / `zh-Hant,zh-Bopo` / `ja` / `ko`…）一律把主字体前置，区内原有字件（`NotoSansCJK` 等）原样留在后面——**覆盖只加不减**。只往默认区插一条是不够的：中文场景缺字会先在语言区里命中厂商字体，主字体根本轮不到。
+- 非 CJK 语言区（`und-Arab` 之类）与 emoji 区（`und-Zsye`）逐字不动：那些字形主字体没有，插进去只会挡路。
+- **不要的厂商字体连引用一起清掉**：`MiSans`（模板里 `lang="zh"` 那条 `MiSansL3.otf`，以及火狐名单里的 `MiSans VF` / `MiSans TC` 等）在生成的配置与火狐名单里都不留——中文缺字不落到它上面，继续往默认区的补充字库（天珩 / Unicode 新平面等）走。清掉后空掉的家族节点一并删除，标注它的注释也删。安装时把它投放到设备实际会读的每一份配置上（内容都是这同一份新语法）：AOSP 的 `font_fallback*.xml`，以及 ColorOS 的 `/system_ext/etc/fonts_base.xml` 与 `fonts_ule.xml`——**读哪份按厂商而定**，只换 AOSP 那份时 ColorOS 会继续用厂商配置，字体看起来「没生效」；**库存 `fonts.xml` 不再替换**（AOSP 16 头注已把这份文件标为 DEPRECATED，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备一份可替换配置都没有（Android 15 以下）时安装直接中止，不留下半套配置。
 
 ## 构建
 
@@ -129,7 +130,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 未验证项的真机清单
 
-**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**仍无真机数据**：① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 2026-10-06 的**语言区改动**（CJK 语言区前置主字体）——装机后按 `grep -c Selffont /system_ext/etc/fonts_base.xml` 看条数应比旧包多，再挑一个主字体没有、厂商字体有的字看是否仍渲染成圆体。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**仍无真机数据**：① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 2026-10-06 的**语言区改动**（CJK 语言区前置主字体）与**清掉 MiSans 引用**——装机后按 `grep -c Selffont /system_ext/etc/fonts_base.xml` 看条数应比旧包多，`grep -ci misans` 应为 0，再挑几个生僻字看是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
@@ -151,7 +152,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 - 只支持带 `font_fallback*.xml` 的设备（Android 15+）：装在没有该文件的机器上会中止安装。真机验证过：Android 16 / OnePlus / KernelSU 一台（系统字体、火狐网页字体开关都已实测生效；别名字件实验实测无效后已删除），其他平台自担风险。**未验证**：纯 AOSP 机器的配置路径、CJK 语言区改动——装机核对清单见「未验证项的真机清单」。
 - 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork。上游领先的提交只动它自己的 Xposed 侧与文档（`fonts/`、`fonts.xml` 从 1717180003 起未变，已逐字节比对）：用 `-s ours` 记录了祖先关系（不再显示「落后」），但**不取它的代码**，只取字体资源（见 `LICENSES.md`）。
-- `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与 OEM 字体（如 MiSans）由设备提供，不打包。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
+- `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与其余 OEM 字体由设备提供，不打包（`MiSans` 不要，引用已在构建期清掉，见「字体」）。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
 - MFGA 基础包只取字体资源，绝不执行其代码（归属见 `LICENSES.md`）。
 - 主字体必须能被 fontTools 解析且含 `wght` 轴；`.ttf`/`.otf`/`.ttc` 之外的后缀、静态字体、缺空壳的基础包都直接拒绝。
