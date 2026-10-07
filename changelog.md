@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2026-10-07 · 真机复验通过（8 / 0 / 3）；本轮收尾
+
+- 主人装 `b2311f4` 之后的构建，**正常开机（不再重启循环）**，三条自查实测 **8 / 0 / 3**：`grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」一致）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。设备 `OnePlus/PLC110/OP60EDL1:16/BP2A.250605.015`（ColorOS / Android 16 / KernelSU）。
+- 至此本轮四项在真机上一起验过：卡开机修复（`f3a93ff`）、混族不变量全覆盖（`3f81229`）、火狐「本来字体优先」（`41e2c65`）、系统层五个命名族恢复本来字体（`b2311f4`）。
+- 顺带清掉设备上另一个模块 `zz_bootlog`（`author=me`，开机把 `logcat -b all` 灌进 `/data/local/tmp/bootlog`，不轮转、每次开机把上一次的挪成 `prev.log`，会一直长）：`ksud module uninstall zz_bootlog` → 在模块目录落一个 0 字节 `remove` 标记 → 重启后目录消失，实测已消失。对着 KernelSU 源码核过行为：`userspace/ksud/src/module.rs:805` 的 `uninstall_module()` 只「打标记」（`defs.rs:43` `REMOVE_FILE_NAME = "remove"`），提示走 `info!` 不进 stdout，所以命令**没有输出就是成功**；id 写错才会报 `Module <id> not found`。
+- 自救网仍在设备上（`/data/adb/post-fs-data.d/sf-guard.sh` 402 B + `/data/adb/boot-completed.d/sf-ok.sh` 74 B，均 755）：正常开机净效果为零，只在模块致崩时接管。要拆：`su -c 'rm -f /data/adb/post-fs-data.d/sf-guard.sh /data/adb/boot-completed.d/sf-ok.sh /data/adb/sf-boot-ok /data/adb/sf-fail-count'`。
+- 仍未验证（都只影响观感，不影响开机）：生僻字是否仍渲染成圆体；终端 / 代码类 App 的等宽是否回到 Droid Sans Mono；WebView 的 `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps`；这次刷机用的是 `.102`（旧格式，解一层）还是 `.103`（包直出）未记录——两者字体配置相同，所以 8 / 0 / 3 的结论对两者都成立。
+- 待办（主人：「哪天有空了再做」）：自制字体。另有此前挂着的重构三项未做：`AGENTS.md` 压缩、版本取数下沉到 workflow、`changelog.md` 压缩。
+
 ## 2026-10-07 · artifact 包直出（不再 zip 套 zip）；module.prop 作者字段不再自指
 
 - 主人：「让包直出不再 zip 套 zip」「selffont 不应该 by selffont 吧」。
