@@ -41,13 +41,24 @@ jobs:
             exit 1
           }
           echo "ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
+      # 包直出:artifact 本身就是可刷的模块包,不再 zip 套 zip——网页下载下来直接给管理器刷,
+      # 不用先解一层。upload-artifact 会把搜索路径的最近公共祖先当作包内根目录(官方 README),
+      # 所以上传目录内容 = 包内根就是 module.prop。代价:gh run download 会把内容摊进目标目录,
+      # 用 -D 指定一个空目录。
+      - name: Unpack for direct-flash artifact
+        run: |
+          rm -rf build/root
+          unzip -q "build/${ARTIFACT_NAME}.zip" -d build/root
+          test -f build/root/module.prop
+          test -f build/root/customize.sh
+          find build/root -maxdepth 1 | sort
       # CI 出包(不是发版):push 与 PR 都照传,名 = <项目名>-<五段版本>,留 5 天兜底;
       # 上传用 runner 自带令牌,不需要写权限。Release / tag / 正式 asset 一概不碰。
-      - name: Upload module zip (Actions artifact)
+      - name: Upload module (Actions artifact)
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
-          path: build/Selffont*.zip
+          path: build/root
           retention-days: 5
           if-no-files-found: error
   cleanup:

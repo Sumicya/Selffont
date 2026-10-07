@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-07 · artifact 包直出（不再 zip 套 zip）；module.prop 作者字段不再自指
+
+- 主人：「让包直出不再 zip 套 zip」「selffont 不应该 by selffont 吧」。
+- 之前 `upload-artifact` 的 `path` 是 `build/Selffont*.zip`，artifact 容器里装着模块 zip：网页下载下来要先解一层才能刷（`gh run download` 会自动解，所以走命令行看不出这个问题）。改成：构建后 `unzip` 到 `build/root`，上传**目录内容**——按 upload-artifact 官方 README「搜索路径的最近公共祖先作为包内根目录」，artifact 包内根就是 `module.prop`，下载即可直接刷。上传前 CI 会 `test -f build/root/module.prop` 与 `build/root/customize.sh`，并打印目录清单。
+- 代价：`gh run download` 会把内容摊进目标目录，得用 `-D` 指一个空目录（README 的下载示例已同步改）。
+- `module/module.prop`：`author=Selffont` → `author=Sumicya`。原值让管理器显示成「Selffont by Selffont」，自指没有信息量。基础包的归属说明仍在 `licenses/MFGA-base-LICENSES.md`，没丢。
+- 未验证：artifact 的包内布局只能靠 CI 实跑确认（本机取不到 Actions 的 blob 主机，TLS 握手超时）；`.sh` 的可执行位在「解包再重打包」之后是否保留未验证——KSU 是 `. customize.sh`、`sh action.sh` 这样调的，不依赖 +x，不影响安装。
+
 ## 2026-10-07 · 系统层：本来有自己字体的五个命名族不再被整族换成文渊
 
 - 接火狐那条的同一原则：「本来就是什么字体就应该是什么字体，被篡改的才恢复」。系统层同样有五族被本模块整族换成了文渊——那不是恢复谁，是我们自己改的。

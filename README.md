@@ -53,17 +53,17 @@ gh api --paginate 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_p
 
 - 三段版本数据（日期、当日序号、总序号）**缺一不可**：`build.py` 不再退化写四段、也不再出「非发行版本」的包；`module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**push 与 PR 都上传** `build/Selffont-<五段版本>.zip` 为 Actions artifact（名 = `Selffont-<五段版本>`，上传前先核对产物名符合五段格式，`retention-days: 5` 只是时间兜底）；出包成功后自动滚动清理旧 artifact——**跨分支、跨触发事件合计只留最近 5 个**：`selffont-` 前缀（不分大小写）只用于筛候选，归属再按 `workflow_run` 的运行记录核验（`repository_id` / `head_repository_id` 必须是本仓库），归属不明的对象保留不删，删完复核数量、超限就报错。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。清理 job 是唯一有写权限的 job（`actions: write`，只删 artifact），且不跑 PR 事件的代码——PR 产物照样计入清理范围，由下一次 push / 手动触发运行的清理 job 处理。
+CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**push 与 PR 都上传**模块包本身为 Actions artifact（名 = `Selffont-<五段版本>`；**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<五段版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合五段格式，`retention-days: 5` 只是时间兜底）；出包成功后自动滚动清理旧 artifact——**跨分支、跨触发事件合计只留最近 5 个**：`selffont-` 前缀（不分大小写）只用于筛候选，归属再按 `workflow_run` 的运行记录核验（`repository_id` / `head_repository_id` 必须是本仓库），归属不明的对象保留不删，删完复核数量、超限就报错。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。清理 job 是唯一有写权限的 job（`actions: write`，只删 artifact），且不跑 PR 事件的代码——PR 产物照样计入清理范围，由下一次 push / 手动触发运行的清理 job 处理。
 
 ```sh
-# 最近一次非 PR 运行的 artifact 就是模块 zip(算 id、验字节数、清下载残留)
+# 最近一次非 PR 运行的 artifact 就是模块包本身:下载下来直接刷,不用再解一层
 RUN=$(gh api 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=20' \
   --jq '[.workflow_runs[]|select(.event!="pull_request")][0].id')
-ART=$(gh api "repos/Sumicya/Selffont/actions/runs/$RUN/artifacts" --jq '.artifacts[0].id')
-curl -fL -H "Authorization: token $(gh auth token)" -o selffont.zip \
-  "https://api.github.com/repos/Sumicya/Selffont/actions/artifacts/$ART/zip"
-unzip -o selffont.zip && ls -l Selffont-*.zip      # 约 100 MB 量级才正常
-rm -f selffont.zip
+set -- $(gh api "repos/Sumicya/Selffont/actions/runs/$RUN/artifacts" --jq '.artifacts[0] | "\(.id) \(.name)"')
+curl -fL -H "Authorization: token $(gh auth token)" -o "$2.zip" \
+  "https://api.github.com/repos/Sumicya/Selffont/actions/artifacts/$1/zip"
+ls -l "$2.zip" && unzip -p "$2.zip" module.prop    # 约 100 MB 量级才正常
+# 用 gh run download 的话记得 -D 指一个空目录:artifact 是目录内容,会摊开
 
 # 滚动清理已自动执行(保留最近 5 个);要提前删(凭据需含 actions: write):
 gh api --paginate repos/Sumicya/Selffont/actions/artifacts \
