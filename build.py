@@ -336,13 +336,6 @@ def replace_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> Non
     family.append(primary_node(font_name, ladder))
 
 
-def prepend_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
-    """主字体插到家族最前，原有字件全部留在后面（覆盖只加不减）；family 的属性原样保留。"""
-    if any((node.text or "").strip() == font_name for node in family.findall("font")):
-        return  # 幂等：已经前置过就不重复插
-    family.insert(0, primary_node(font_name, ladder))
-
-
 def swap_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
     """CJK 语言区：删掉旧主字体与度量空壳；清空了的族换成主字体单字件，还有别的字件的族一个不动。
 
@@ -831,10 +824,11 @@ def fonts_xml():
                 if UNWANTED_FONTS.search((node.text or "").strip())], "配置里还留着不要的厂商字体"
     assert all(family.findall("font") for family in root.findall("family")), "有空家族节点"
     assert [f.get("lang") for f in root.findall("family") if f.get("lang") == "zh"] == ["zh"], "zh 语言区应保留"
-    for family in root.findall("family"):  # 真机卡开机的根因：同一族里混 supportedAxes 与带 weight/index 的字件
-        if family.get("lang") or family.get("variant"):
-            kinds = {node.get("supportedAxes") is not None for node in family.findall("font")}
-            assert len(kinds) == 1, f"语言区 {family.attrib} 混了 supportedAxes 字件与普通字件（真机卡开机）"
+    # 真机只实测了语言区混族卡开机；这里对全部族一视同仁，是保守护栏（命名族 / 默认族 / 匿名族 /
+    # 语言区）。哪天确需混写，先拿证据改这条，不要绕过它。
+    for family in root.findall("family"):
+        kinds = {node.get("supportedAxes") is not None for node in family.findall("font")}
+        assert len(kinds) == 1, f"族 {family.attrib} 混了 supportedAxes 字件与普通字件（真机实测语言区会卡开机）"
     def locales(document):
         return [(family.get("lang"), family.get("variant"),
                  [(n.text or "").strip() for n in family.findall("font")])
