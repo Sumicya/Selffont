@@ -1,5 +1,18 @@
 # 更新日志
 
+## 2026-10-07 · 系统层：本来有自己字体的五个命名族不再被整族换成文渊
+
+- 接火狐那条的同一原则：「本来就是什么字体就应该是什么字体，被篡改的才恢复」。系统层同样有五族被本模块整族换成了文渊——那不是恢复谁，是我们自己改的。
+- 前提先查过：`DroidSansMono.ttf` / `CutiveMono.ttf` / `ComingSoon.ttf` / `DancingScript-Regular.ttf` / `CarroisGothicSC-Regular.ttf` 五个字件真机确认都在 `/system/fonts`（不是把文渊换成空气）。
+- 改法（`build.py`）：`PRIMARY_FAMILIES` 从 8 个缩到 `{sans-serif, sans-serif-condensed, serif}`。`serif` 必须换（它本来放旧数字主字件 `100.ttf…900.ttf`，那些字件不打包，不换就是一族指不到东西的引用）；`sans-serif` / `sans-serif-condensed` 仍走度量空壳；其余五族逐字不动。
+- 自检：删掉旧的「小型大写家族也接管」断言（`sans-serif-smallcaps` / `cursive` / `monospace` 必须被接管），换成反向断言——被接管的命名族**只有 serif**，五族逐字等于模板且本来字件在位；另加一条通用不变量：凡不在接管名单、也不含旧主字件的命名族，产出必须逐字等于模板。`build_end_to_end` 同步改成「serif 在接管名单里、五族不在」。
+- 变异测试：把 `monospace` 放回 `PRIMARY_FAMILIES` → `fonts_xml` 与 `build_end_to_end` **双双 FAIL**。**第一版断言把期望从 `PRIMARY_FAMILIES` 推出来，变异只被 `build_end_to_end` 抓到（同义反复，`fonts_xml` 放过），已改成独立写死期望。**
+- 产物：192 族、70492 字节；引用主字体的族从 **16 降到 8**（命名族只剩 `serif`，另 7 个是匿名回退区与 CJK 语言区）；混族仍 0。
+- 影响（外观）：等宽场景（终端 / 代码 / `courier` 别名）从文渊变回真等宽字体；`cursive` 变回 Dancing Script、`casual`（CSS fantasy）变回 Coming Soon；`sans-serif-smallcaps` 变回 Carrois Gothic SC。中文不丢：这五族本来就没有中文，缺字照旧往语言区 / 默认区的文渊落。
+- 火狐不用动：`41e2c65` 已把火狐的 monospace / cursive / fantasy 改成本来字体在前，这次改完两边一致（此前系统里是文渊、火狐里是本来字体）。
+- 未验证：整包未真机验证；WebView 的 CSS `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps` 家族（从而从文渊变成 Carrois Gothic SC）没实测。
+- 已知既有矛盾（模板自带，本轮未动）：`fonts.xml` 里有 `<alias name="fantasy" to="serif"/>`，而 `serif` 被文渊接管 → Android 应用按名字要 `fantasy` 拿到文渊，WebView 的 CSS `fantasy` 走 `casual`（Coming Soon）。
+
 ## 2026-10-07 · 火狐名单：本来是什么字体就保持什么字体，被火狐篡改的才恢复
 
 - 主人：「本来就是什么字体就应该是什么字体。但火狐篡改字体就应该恢复被篡改的字体。」

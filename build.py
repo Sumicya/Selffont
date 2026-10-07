@@ -64,9 +64,15 @@ BASE_SHA256 = "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b"
 
 # ---------------------------------------------------------------- 配置数据
 CARRIER = "Roboto-Regular.ttf"  # 输入 fonts.xml 的默认家族必须保留的度量空壳
-PRIMARY_FAMILIES = {"sans-serif", "sans-serif-condensed", "serif", "monospace",
-                    "serif-monospace", "casual", "cursive", "sans-serif-smallcaps"}
+PRIMARY_FAMILIES = {"sans-serif", "sans-serif-condensed", "serif"}
 METRIC_FAMILIES = {"sans-serif", "sans-serif-condensed"}
+# 主字体接管的命名家族只剩 serif：它本来放旧数字主字件（100.ttf…900.ttf），那些字件不打包，不换就
+# 是一族指不到东西的引用。sans-serif / sans-serif-condensed 走 METRIC_FAMILIES 留度量空壳。
+# monospace / serif-monospace / casual / cursive / sans-serif-smallcaps 本来各有自己的字体
+# （DroidSansMono / CutiveMono / ComingSoon / DancingScript / CarroisGothicSC，五个字件 2026-10-07
+# 真机确认都在 /system/fonts）——本来是什么字体就保持什么字体，整族换成文渊是本模块自己改的，
+# 不是恢复谁。这五族本来就没有中文，缺字照旧往语言区 / 默认区的文渊落，覆盖不靠接管它们。
+# 火狐名单同一规则（见 NATIVE_FIRST），两边一致。
 OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}  # 输入配置里的旧数字主字体
 CJK_LANGS = {"zh", "ja", "ko"}  # 语言区里主字体要接管的 BCP-47 主语言子标签
 # 主人 2026-10-06 明确：不喜欢 MiSans。配置里连引用一起清掉，中文缺字不再落到它上面；
@@ -868,6 +874,29 @@ def fonts_xml():
         else:
             # 非 CJK 语言区（含 emoji 的 und-Zsye）逐字未改：主字体不进去，顺序也不动。
             assert got == files, f"非 CJK 语言区 {lang} 被改动：{got} != {files}"
+    # 命名族：该被接管的只有 PRIMARY_FAMILIES 减去度量家族（即 serif——它本来放旧数字主字件）；
+    # 其余命名族本来各有自己的字体（monospace=DroidSansMono、casual=ComingSoon…），逐字不动。
+    def named(document):
+        return {family.get("name"): [(n.text or "").strip() for n in family.findall("font")]
+                for family in document.findall("family") if family.get("name")}
+    template_named, ours_named = named(template_root), named(root)
+    assert {name for name, nodes in ours_named.items()
+            if any(text == "V.ttf" for text in nodes)} == {"serif"}, \
+        "被主字体接管的命名族应只有 serif（它本来放旧数字主字件，不换就是一族空引用）"
+    # 这五族本来各有自己的字体（2026-10-07 真机确认五个字件都在 /system/fonts）：
+    # 本来是什么字体就保持什么字体。期望值独立写死，不从 PRIMARY_FAMILIES 推——否则改常量
+    # 就自动改期望，断言成了同义反复（变异测试实测过：那样写抓不到回归）。
+    for name, native in (("monospace", "DroidSansMono.ttf"), ("serif-monospace", "CutiveMono.ttf"),
+                         ("casual", "ComingSoon.ttf"), ("cursive", "DancingScript-Regular.ttf"),
+                         ("sans-serif-smallcaps", "CarroisGothicSC-Regular.ttf")):
+        got = ours_named.get(name)
+        assert got == template_named[name] and native in got, \
+            f"{name} 应保持本来字体 {native}，实际 {got}"
+    for name, files in template_named.items():
+        if name in PRIMARY_FAMILIES or set(files) & OLD_PRIMARY:
+            continue
+        assert ours_named.get(name) == files, \
+            f"命名族 {name} 被改动：{ours_named.get(name)} != {files}"
     for family in root.findall("family"):
         for node in family.findall("font"):
             assert (node.text or "").strip() not in OLD_PRIMARY, "残留旧数字主字体"
@@ -876,10 +905,6 @@ def fonts_xml():
                     "主字体一律新语法：带 supportedAxes、无 axis 子节点"
                 assert node.get("weight") is None and node.get("style") is None, \
                     "带 supportedAxes 的字件不该再写 weight/style"
-    # 小型大写家族也接管：留在清单里的 CarroisGothicSC 会被火狐按文件名解析到。
-    for name in ("sans-serif-smallcaps", "cursive", "monospace"):
-        nodes = root.findall(f"family[@name='{name}']")[0].findall("font")
-        assert [(n.text.strip(), n.get("supportedAxes")) for n in nodes] == [("V.ttf", "wght,ital")], name
     # 注意：模板里空壳字件自带 supportedAxes（真机 dump 就是这么写的），断言只针对主字体节点。
     def carriers_of(document):
         return sorted((n.text.strip(), n.get("supportedAxes") or "", n.get("weight") or "", n.get("style") or "")
@@ -982,7 +1007,9 @@ def build_end_to_end():
                     for family in root.findall("family")}
 
         families = {name: nodes for name, nodes in ours_by_family(xml).items() if nodes}
-        assert {"serif", "monospace", "sans-serif-smallcaps"} <= set(families), "接管家族少了"
+        assert {"serif"} <= set(families), "接管家族少了"
+        assert not {"monospace", "serif-monospace", "casual", "cursive",
+                    "sans-serif-smallcaps"} & set(families), "本来有自己字体的命名族不该被接管"
         assert all(len(nodes) == 1 and nodes[0].get("supportedAxes") == "wght,ital"
                    and not nodes[0].findall("axis") and nodes[0].get("weight") is None
                    for nodes in families.values()), "应是一条 supportedAxes 字件"

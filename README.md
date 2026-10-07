@@ -1,6 +1,6 @@
 # Selffont
 
-Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃维护；一个 VF 文件内含 `wght` 100–900 + `ital` 真字重）接管系统字体家族。原生 `fonts.xml` 挂载，模块即全部交付，无伴侣应用。模块 zip 由本地构建产出，CI 只做校验。
+Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃维护；一个 VF 文件内含 `wght` 100–900 + `ital` 真字重）接管系统的主字体家族——**本来各有自己字体的命名族（等宽 / 手写 / 小型大写等）保持原样**，缺 CJK 时才落到文渊。原生 `fonts.xml` 挂载，模块即全部交付，无伴侣应用。模块 zip 由本地构建产出，CI 只做校验。
 
 ## 字体
 
@@ -130,7 +130,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 未验证项的真机清单
 
-**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**仍无真机数据**：① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 2026-10-06 的**语言区改动**（CJK 语言区前置主字体）与**清掉 MiSans 引用**——装机后按 `grep -c Selffont /system_ext/etc/fonts_base.xml` 看条数应比旧包多，`grep -ci misans` 应为 0，再挑几个生僻字看是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**仍无真机数据**：① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 2026-10-06 的**清掉 MiSans 引用**与 2026-10-07 的**卡开机修复 + 语言区改法 + 五个命名族恢复本来字体**——装机后按 `grep -c Selffont /system_ext/etc/fonts_base.xml` 应为 **8**（主字体只出现在匿名回退区、`serif` 与 CJK 语言区共 8 族；`monospace` 等五族已不再引用它），`grep -ci misans` 应为 0，再挑几个生僻字看是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管），并确认终端 / 代码类 App 的等宽字体不是圆体（应是 Droid Sans Mono）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
