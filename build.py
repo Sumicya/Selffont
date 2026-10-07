@@ -344,14 +344,18 @@ def prepend_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> Non
 
 
 def swap_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
-    """CJK 语言区：删掉旧主字体与度量空壳，主字体前置到最前，其余字件（NotoSansCJK 等）留后。
+    """CJK 语言区：删掉旧主字体与度量空壳；清空了的族换成主字体单字件，还有别的字件的族一个不动。
 
-    覆盖只加不减：语言区里原有的非主字体字件一个不动，只是排到主字体后面。
+    真机实测（ColorOS 16，26.10.7.4.98）：把主字体（supportedAxes）前置进 NotoSansCJK 的 .ttc 族、
+    Hentaigana 族，也就是同一族里混 supportedAxes 字件与带 index/weight 的字件，开机卡第一屏重启；
+    去掉这三处前置后正常开机。所以语言区族只能是纯主字体，或原样不动，不许混。
+    不丢覆盖：单字件族在文件里排在 Noto 同语言族之前，同语言缺字仍先落主字体。
     """
     for node in list(family.findall("font")):
         if (node.text or "").strip() in OLD_PRIMARY | {CARRIER}:
             family.remove(node)
-    prepend_fonts(family, font_name, ladder)
+    if not family.findall("font"):
+        family.append(primary_node(font_name, ladder))
 
 
 def is_cjk_locale(tag: str | None) -> bool:
@@ -372,8 +376,9 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> byte
     库存 fonts.xml 不再替换，所以没有 legacy 展开的第二份。
 
     缺字回退分两个区（AOSP font_fallback.xml 头注）：语言区（带 lang/variant 的 locale fallback
-    family）按「完整 BCP-47 标签 → 仅语言」优先匹配，默认区才按文件顺序。所以 CJK 语言区必须
-    自己带上主字体——只往默认区插一条，中文场景缺字时会先落到语言区里的厂商字体。
+    family）按「完整 BCP-47 标签 → 仅语言」优先匹配，默认区才按文件顺序。所以 CJK 语言区不能整族
+    删掉：原来只放旧主字体 / MiSans 的族换成主字体单字件；带 Noto CJK 等其他字件的族不动
+    （不往里混主字体，真机会卡开机），它们排在单字件族之后，同语言缺字仍先落主字体。
     """
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
     root = ET.fromstring(template, parser=parser)
@@ -399,7 +404,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> byte
         elif name in METRIC_FAMILIES and files == {CARRIER}:
             continue  # 度量家族保留空壳：主字体走匿名回退，这里只提供行度量
         elif locale and is_cjk_locale(lang) and not variant:
-            swap_fonts(family, font_name, ladder)  # CJK 语言区：清旧主字体、前置主字体、其余字件留后
+            swap_fonts(family, font_name, ladder)  # CJK 语言区：清空的族换主字体单字件，混有其他字件的族不动
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
             replace_fonts(family, font_name, ladder)  # 语言区只换字件，lang/variant 属性原样保留
     fallback = ET.Element("family")
@@ -814,7 +819,7 @@ def fonts_xml():
 
     # 语言区（locale fallback family）：缺字时按「完整 BCP-47 标签 → 仅语言 → 顺序」匹配，
     # 语言区优先于默认区顺序（AOSP font_fallback.xml 头注）。整族删掉会让中文场景的缺字
-    # 落到语言区里的厂商字体（Noto CJK 等），所以 CJK 语言区必须自带主字体。
+    # 落到语言区里的厂商字体（Noto CJK 等），所以原来只放旧主字体的 CJK 语言区换成主字体单字件。
     def locales(document):
         return {tuple(sorted(family.attrib.items())): [(n.text or "").strip() for n in family.findall("font")]
                 for family in document.findall("family") if family.get("lang") or family.get("variant")}
@@ -826,13 +831,10 @@ def fonts_xml():
                 if UNWANTED_FONTS.search((node.text or "").strip())], "配置里还留着不要的厂商字体"
     assert all(family.findall("font") for family in root.findall("family")), "有空家族节点"
     assert [f.get("lang") for f in root.findall("family") if f.get("lang") == "zh"] == ["zh"], "zh 语言区应保留"
-    for family in root.findall("family"):
-        if not is_cjk_locale(family.get("lang")) or family.get("variant"):
-            continue
-        nodes = family.findall("font")
-        assert nodes and (nodes[0].text or "").strip() == "V.ttf", \
-            f"CJK 语言区 {family.attrib} 的首个字件应是主字体"
-        assert nodes[0].get("supportedAxes") == "wght,ital", family.attrib
+    for family in root.findall("family"):  # 真机卡开机的根因：同一族里混 supportedAxes 与带 weight/index 的字件
+        if family.get("lang") or family.get("variant"):
+            kinds = {node.get("supportedAxes") is not None for node in family.findall("font")}
+            assert len(kinds) == 1, f"语言区 {family.attrib} 混了 supportedAxes 字件与普通字件（真机卡开机）"
     def locales(document):
         return [(family.get("lang"), family.get("variant"),
                  [(n.text or "").strip() for n in family.findall("font")])
@@ -841,10 +843,11 @@ def fonts_xml():
     assert [(lang, variant) for lang, variant, _ in before] == \
         [(lang, variant) for lang, variant, _ in after], "语言区家族被删、被加或被重排"
     for (lang, variant, files), (_, _, got) in zip(before, after):
+        kept = [name for name in files
+                if name not in OLD_PRIMARY | {CARRIER} and not UNWANTED_FONTS.search(name)]
         if is_cjk_locale(lang) and not variant:
-            kept = [name for name in files
-                    if name not in OLD_PRIMARY | {CARRIER} and not UNWANTED_FONTS.search(name)]
-            assert got == ["V.ttf"] + kept, f"CJK 语言区 {lang} 应前置主字体并保留 {kept}，实际 {got}"
+            # 清空的族换成主字体单字件；还有其他字件的族逐字不动（不混主字体）。
+            assert got == (kept or ["V.ttf"]), f"CJK 语言区 {lang} 应是 {kept or ['V.ttf']}，实际 {got}"
         elif set(files) & OLD_PRIMARY:
             assert got == ["V.ttf"], f"语言区 {lang} 的旧主字体应被主字体整体顶掉，实际 {got}"
         else:
@@ -971,13 +974,15 @@ def build_end_to_end():
         root = ET.fromstring(xml)
         assert {node.text.strip() for node in root.find("family[@name='sans-serif']").findall("font")} == {CARRIER}
         assert "P-Regular.ttf" in {node.text.strip() for node in root.iter("font")}
-        # 包内配置的语言区：CJK 语言区自带主字体（缺字时语言区优先于默认区顺序），原有字件留着。
+        # 包内配置的语言区：CJK 语言区有主字体单字件（语言区优先于默认区顺序），Noto 族原样留着、不混主字体。
         locale = [family for family in root.findall("family") if is_cjk_locale(family.get("lang"))]
         assert locale, "包内配置没有 CJK 语言区"
-        assert all((family.findall("font")[0].text or "").strip() == "P-Regular.ttf" for family in locale), \
-            "CJK 语言区应前置主字体"
+        assert any([(n.text or "").strip() for n in f.findall("font")] == ["P-Regular.ttf"] for f in locale), \
+            "CJK 语言区应有主字体单字件"
         assert any("NotoSansCJK-Regular.ttc" in [(node.text or "").strip() for node in family.findall("font")]
                    for family in locale), "语言区原有字件应保留（覆盖只加不减）"
+        assert not any("P-Regular.ttf" in [(n.text or "").strip() for n in f.findall("font")]
+                       and len(f.findall("font")) > 1 for f in locale), "语言区不许混主字体与其他字件（真机卡开机）"
         assert "MiSans" not in xml, "包内配置不该引用 MiSans"
         # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，前置仍是文渊。
         assert ", Noto Sans Pro\"" in config, "尾链未拼进火狐配置"
