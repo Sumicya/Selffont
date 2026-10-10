@@ -9,8 +9,10 @@
 版本号按全局规范的五段格式：yy.m.d.当日序号。总序号（展示不含 v），versionCode = 总序号。
 日期与两个序号在仓库唯一构建工作流 Build Selffont 一处算定（--query-github 现场查运行历史，
 不写死现值）；本地也可以手工传入，但三段缺一不可——五段格式不可豁免，取不到数就停，不出包。
-CI 里 --query-github 锚定本次运行（GITHUB_RUN_ID / GITHUB_RUN_NUMBER）：总序号 = 本次 run_number，
-日期与当日序号按本次运行的创建时间算，不拿查询时的最新运行冒充本次，重试复用同一版本。
+CI 里 --query-github 按规范第二十四版的「版本取数通用步骤」算：日期取本 run 的 created_at 换算
+UTC+8；当日序号 = 当天在本次之前已触发的运行数 + 1（含失败与取消）；总序号 = 历史成功出包数 + 1
+（失败不增加），并与已出包产物的最大总序号取大，换口径不回退；run_attempt > 1 复用第一次的版本号。
+取数只在 CI 里做，本地打包必须显式传 --date/--day/--build。
 
 自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
 全部现场从字体里读。主字体必须是含 wght 轴的可变字体——配置只出新语法（supportedAxes），
@@ -88,6 +90,7 @@ BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
+PROJECT = "Selffont"  # 产物名与 artifact 名的项目段：<项目名>-<五段版本>
 WORKFLOW = "build.yml"  # 版本取数的计数对象：仓库唯一构建工作流
 DEV_VERSION = "dev"     # 仓库里的非发行默认：没盖戳就不假装有正式序号
 VERSION_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+\.\d+$")  # 只认五段：计数规则不豁免格式
@@ -450,7 +453,7 @@ def default_output(prop: str) -> Path:
     if not VERSION_RE.fullmatch(core):
         raise ValueError(f"产物名需要五段版本号，实际 version={core!r}："
                          "先 --query-github 取数，或显式传 --date/--day/--build")
-    return ROOT / "build" / f"Selffont-{core}.zip"
+    return ROOT / "build" / f"{PROJECT}-{core}.zip"
 
 
 def version_core(date: str, day: str, build: str) -> str:
@@ -497,28 +500,48 @@ def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def count_day_runs(runs: list[dict], start: datetime, until: datetime | None = None) -> int:
-    """当日序号：当天（Asia/Shanghai）该工作流已开始的运行数（push / workflow_dispatch / PR 都算）。
+def day_index(runs: list[dict], start: datetime, moment: datetime, run_number: int) -> str:
+    """当日序号（第二十四版步骤 3）：当天（UTC+8）在本次运行之前已触发的运行数 + 1。
 
-    PR 也计入，因为 PR 同样出包（规范：push 与 PR 都出包），而当日序号只是当天第几次构建；
-    唯一性由总序号（本次 run_number）保证。until 给定时只数不晚于它的运行——锚定本次运行，
-    晚于本次的运行不影响本次的版本号。
+    失败与取消都算——它们确实占掉了当天的一次构建。排序用（创建时间, run_number）双键，
+    并发触发的两次运行不会因为时间戳相同而抢同一个号。
     """
-    return sum(1 for run in runs
-               if start <= parse_time(run["created_at"])
-               and (until is None or parse_time(run["created_at"]) <= until))
+    mine = (moment, run_number)
+    earlier = sum(1 for run in runs
+                  if start <= parse_time(run["created_at"])
+                  and (parse_time(run["created_at"]), int(run["run_number"])) < mine)
+    return str(earlier + 1)
 
 
-def pick_total(runs: list[dict]) -> str:
-    """总序号：该工作流最近一次运行的 run_number（单调递增的仓库既有计数）。"""
-    if not runs:
-        raise RuntimeError("该工作流没有任何运行，取不到总序号")
-    return str(max(int(run["run_number"]) for run in runs))
+def success_total(runs: list[dict]) -> int:
+    """总序号基数（第二十四版步骤 4）：本仓库历史成功出包的构建数。失败与取消不增加总序号。"""
+    return sum(1 for run in runs if run.get("conclusion") == "success")
 
 
-def gh_api(path: str, jq: str) -> list[dict]:
+def published_total() -> int:
+    """已出包产物里最大的总序号。衔接用：换口径后计数不许回退（取不到就是 0）。"""
+    rows = gh_api("repos/{owner}/{repo}/actions/artifacts?per_page=100", ".artifacts[]|{name}")
+    numbers = [int(row["name"].rsplit(".", 1)[1]) for row in rows if version_of(row["name"])]
+    return max(numbers, default=0)
+
+
+def reuse_attempt(run_id: str) -> str | None:
+    """重试（run_attempt > 1）复用第一次 attempt 已定的版本号（第二十四版步骤 5）：禁止重新加号。"""
+    rows = gh_api(f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}/artifacts", ".artifacts[]|{name}")
+    return next((core for core in map(version_of, (row["name"] for row in rows)) if core), None)
+
+
+def version_of(name: str) -> str | None:
+    """artifact 名 <项目名>-<五段版本> → 五段版本；不合规范就是 None。"""
+    prefix = PROJECT + "-"
+    core = name[len(prefix):] if name.startswith(prefix) else ""
+    return core if VERSION_RE.fullmatch(core) else None
+
+
+def gh_api(path: str, jq: str, paginate: bool = False) -> list[dict]:
     """调 gh api（继承当前凭据），按 jq 逐行出 JSON；失败就把原因原样抛出来，不静默编数。"""
-    result = subprocess.run(["gh", "api", "--jq", jq, path], capture_output=True, text=True)
+    command = ["gh", "api"] + (["--paginate"] if paginate else []) + ["--jq", jq, path]
+    result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"gh api 退出码 {result.returncode}")
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
@@ -533,48 +556,57 @@ def gh_api_object(path: str, jq: str = ".") -> dict:
 
 
 def current_run() -> dict | None:
-    """CI 里锚定本次运行的身份：GITHUB_RUN_ID + GITHUB_RUN_NUMBER（重试用同一身份 → 版本复用）。
+    """本次运行的身份：GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT / GITHUB_RUN_NUMBER。
 
-    本地没有这两个环境变量，返回 None，由 github_version_numbers 退到「最近一次运行」口径。
+    created_at 从本 run 对象取（第二十四版步骤 1：禁止 list 后取最新）。本地没有这些变量时
+    返回 None——取数只在 CI 里做，本地打包必须显式传 --date/--day/--build。
     """
-    run_id, run_number = os.environ.get("GITHUB_RUN_ID"), os.environ.get("GITHUB_RUN_NUMBER")
-    if not (run_id and run_number):
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not run_id:
         return None
     record = gh_api_object(f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}",
                            "{id: .id, run_number: .run_number, event: .event, created_at: .created_at}")
     if str(record["id"]) != str(run_id):
         raise RuntimeError(f"运行身份不符：API 返回 {record['id']}，环境里是 {run_id}")
+    record["attempt"] = int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1)
     return record
 
 
 def github_version_numbers(workflow: str = WORKFLOW, now: datetime | None = None) -> tuple[str, str, str]:
-    """从仓库唯一构建工作流的运行历史取数（现场查，不写死现值）：返回 （日期， 当日序号， 总序号）。
+    """按第二十四版「版本取数通用步骤」取数，返回（日期，当日序号，总序号）。
 
-    CI 里锚定本次运行（GITHUB_RUN_ID / GITHUB_RUN_NUMBER）：总序号 = 本次 run_number，日期 = 本次
-    运行创建时间换算到 UTC+8，当日序号 = 当天不晚于本次运行的运行数——不拿「查询时的最新运行」冒充
-    本次（同一提交并行跑 push 与 PR 时会撞号），重试复用同一身份所以版本不变。
-    本地没有这两个环境变量时退到「该工作流最近一次运行」口径（由人核对，本地打包用）。
-    按时间倒序翻页，翻到早于当天（Asia/Shanghai）零点的运行就停。
+    1. 输入只认本次运行的身份（run_id / run_attempt / 本 run 的 created_at），不 list 后取最新。
+    2. created_at 换算到 UTC+8 得 yy.m.d，月日不补零。
+    3. 当日序号 = 当天在本次运行之前已触发的运行数 + 1（含失败与取消）。
+    4. 总序号 = 本仓库历史成功出包数 + 1；失败与取消不增加总序号。
+    5. run_attempt > 1 直接复用第一次 attempt 的产物版本号，禁止重新加号。
+    6. 任一输入缺失或取数失败就抛——不出包、不上传、不编数。
+    衔接（步骤 7）：总序号与已出包产物的最大总序号取大后再 +1，换口径不回退，见 AGENTS.md。
+    只在 CI 里用；本地必须显式传 --date/--day/--build（本地序号规则写在 AGENTS.md）。
     """
     run = current_run()
-    if run:
-        moment = parse_time(run["created_at"]).astimezone(CLOCK)
-        total = check_number(str(run["run_number"]), "总序号", 1)
-    else:
-        moment, total = now or datetime.now(CLOCK), None
-    start = day_start(moment)
-    runs, page = [], 1
-    while page <= 10:  # 兜底上限：一天之内不可能翻 1000 条还没跨过当天零点
-        batch = gh_api(f"repos/{{owner}}/{{repo}}/actions/workflows/{workflow}"
-                       f"/runs?per_page=100&page={page}", ".workflow_runs[]")
-        if not batch:
-            break
-        runs += batch
-        if parse_time(batch[-1]["created_at"]) < start:
-            break
-        page += 1
+    if run is None:
+        raise RuntimeError("取数只在 CI 里做：环境里没有 GITHUB_RUN_ID。"
+                           "本地打包请显式传 --date/--day/--build（见 AGENTS.md 的本地序号规则）")
+    if run["attempt"] > 1:
+        core = reuse_attempt(str(run["id"]))
+        if not core:
+            raise RuntimeError(f"第 {run['attempt']} 次尝试取不到第一次 attempt 已定的版本号："
+                               "禁止重新加号，也不编数（规范第二十四版步骤 5）")
+        parts = core.split(".")
+        return ".".join(parts[:3]), parts[3], parts[4]
+    moment = parse_time(run["created_at"]).astimezone(CLOCK)
+    runs = all_runs(workflow)          # 总序号要数全部历史成功出包，不能只翻到当天零点
+    total = max(success_total(runs), published_total()) + 1
     return (f"{moment.year % 100}.{moment.month}.{moment.day}",
-            str(count_day_runs(runs, start, moment)), total or pick_total(runs))
+            day_index(runs, day_start(moment), moment, int(run["run_number"])),
+            check_number(str(total), "总序号", 1))
+
+
+def all_runs(workflow: str) -> list[dict]:
+    """完整分页取该工作流的全部运行记录（规范：完整分页，不截断历史）。"""
+    return gh_api(f"repos/{{owner}}/{{repo}}/actions/workflows/{workflow}/runs?per_page=100",
+                  ".workflow_runs[]|{run_number, conclusion, created_at}", paginate=True)
 
 
 # ---------------------------------------------------------------- 基础包（只取字体资源）
@@ -1165,33 +1197,34 @@ def version_stamp():
 
 @check
 def version_numbers():
-    """取数口径：锚定本次运行；当日序号只算当天不晚于本次运行的 push/手动触发，PR 不计入。"""
+    """取数口径（第二十四版「版本取数通用步骤」）：当日序号含失败与取消，总序号只数成功出包。"""
     now = datetime(2026, 10, 5, 9, 52, 23, tzinfo=CLOCK)   # 本次运行 09:52:23 UTC+8
     start = day_start(now)
-    runs = [{"run_number": 47, "event": "push", "created_at": "2026-10-05T02:00:00Z"},  # 晚于本次运行
-            {"run_number": 46, "event": "push", "created_at": "2026-10-05T01:52:23Z"},  # 本次运行
-            {"run_number": 45, "event": "push", "created_at": "2026-10-05T01:52:02Z"},
-            {"run_number": 44, "event": "pull_request", "created_at": "2026-10-05T00:10:00Z"},
-            {"run_number": 43, "event": "push", "created_at": "2026-10-04T15:00:00Z"}]  # 前一天的 23:00 UTC+8
-    # PR 也计入（都出包）：当天不晚于本次运行的 3 次（44 / 45 / 46），47 晚于本次不算。
-    assert count_day_runs(runs, start, now) == 3, count_day_runs(runs, start, now)
-    assert count_day_runs(runs, start) == 4, "不给 until 时按当天全部计（本地口径）"
-    assert pick_total(runs) == "47"
+    runs = [{"run_number": 47, "conclusion": None, "created_at": "2026-10-05T02:00:00Z"},      # 晚于本次
+            {"run_number": 46, "conclusion": "success", "created_at": "2026-10-05T01:52:23Z"},  # 本次自己
+            {"run_number": 45, "conclusion": "cancelled", "created_at": "2026-10-05T01:52:02Z"},
+            {"run_number": 44, "conclusion": "failure", "created_at": "2026-10-05T00:10:00Z"},
+            {"run_number": 43, "conclusion": "success", "created_at": "2026-10-04T15:00:00Z"}]  # 前一天 23:00 UTC+8
+    # 当日序号：当天在本次之前已触发的是 44 / 45（46 是本次、47 晚于本次、43 属前一天）→ 2 + 1 = 3
+    assert day_index(runs, start, now, 46) == "3", day_index(runs, start, now, 46)
+    # 同一时间戳的并发运行靠 run_number 分先后，不抢同一个号
+    clash = [{"run_number": 46, "conclusion": None, "created_at": "2026-10-05T01:52:23Z"},
+             {"run_number": 45, "conclusion": None, "created_at": "2026-10-05T01:52:23Z"}]
+    assert day_index(clash, start, now, 46) == "2", "并发同时刻必须按 run_number 分先后"
+    # 总序号基数只数成功出包：46 / 43 成功，45 取消、44 失败都不算
+    assert success_total(runs) == 2, success_total(runs)
+    assert version_of("Selffont-26.10.5.3.107") == "26.10.5.3.107"
+    assert version_of("Selffont-26.10.5.3") is None, "四段不合规，不认"
+    assert version_of("别的-26.10.5.3.107") is None, "项目段不符，不认"
     assert day_start(datetime(2026, 10, 5, 0, 30, tzinfo=CLOCK)) == datetime(2026, 10, 4, 16, 0, tzinfo=timezone.utc)
     assert parse_time("2026-10-05T01:52:23Z") == datetime(2026, 10, 5, 1, 52, 23, tzinfo=timezone.utc)
-    # 自检不联网，所以只验「没有 CI 身份」这条路径：临时摘掉环境变量（CI 里它们必然存在），
-    # 验完还原——断言不能依赖跑在哪个环境里。
-    saved = {key: os.environ.pop(key, None) for key in ("GITHUB_RUN_ID", "GITHUB_RUN_NUMBER")}
+    # 自检不联网，只验「没有 CI 身份」这条路径：临时摘掉环境变量（CI 里必然存在），验完还原。
+    saved = {key: os.environ.pop(key, None) for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")}
     try:
-        assert current_run() is None, "没有 CI 身份时不该锚定本次运行"
+        assert current_run() is None, "没有 GITHUB_RUN_ID 就不该编出运行身份"
     finally:
         os.environ.update({key: value for key, value in saved.items() if value is not None})
     assert all(os.environ.get(key) == saved[key] for key in saved if saved[key] is not None), "环境变量未还原"
-    try:
-        pick_total([])
-        raise AssertionError("空运行列表应报错，不该编数")
-    except RuntimeError:
-        pass
 
 
 # ---------------------------------------------------------------- 火狐（Gecko）接入

@@ -64,7 +64,10 @@ jobs:
   cleanup:
     name: Keep newest 5 artifacts
     needs: build
-    if: github.event_name != 'pull_request'   # 写权限 job 不跑未信任 PR 的代码(PR 产物照样计入清理范围)
+    # 写权限只给可信的默认分支构建 job(第二十四版「清理通用步骤」步骤 1)。PR 与非默认分支都不跑——
+    # 它们出的包照样计入同一保留窗口,由下一次 main 构建清理;分支期间超额由人工按 README 的
+    # gh api -X DELETE 收口,不为此把写权限交给分支代码。
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

@@ -1,7 +1,7 @@
 # Selffont 项目规则
 
-本文件承载本仓库常驻规则。全局工程规范以 Sumicya/selfs 的 `GLOBAL.md` 为唯一权威（第二十二版，2026-10-06）。
-**本仓库上次同步 = 第二十二版**；发现落后就把落后点报给主人，并在本轮更新本文件。
+本文件承载本仓库常驻规则。全局工程规范以 Sumicya/selfs 的 `GLOBAL.md` 为唯一权威（第二十四版，2026-10-10）。
+**本仓库上次同步 = 第二十四版**；发现落后就把落后点报给主人，并在本轮更新本文件。
 
 ## 全局规范（不抄条文，只记落位）
 
@@ -22,8 +22,10 @@
 - Actions artifact：`build.yml` 出包（名 = `Selffont-<五段版本>`，上传前核对产物名符合五段格式）并自动滚动清理，跨分支跨事件合计保留最近 5 个；筛选按 `selffont-` 前缀（不分大小写，含旧积压 `selffont-module`），归属按 `workflow_run` 的 `repository_id` / `head_repository_id` 核验，归属不明保留，完整分页、删除前打印完整清单、删完复核超限报错；要提前删可手动跑 README 的 `gh api -X DELETE`。
 - Release：本仓库现有 **0 个**（2026-10-06 现场核）；CI 不发版也不删 Release，清理 job 只读打印数量并在超过 1 个时告警。获准人工发布时，发布后的「只留最近 1 个 + 清理其专属关联 tag」由发布者做（CI 不拿 `contents` 写权限）。
 - 工作流写权限：`build.yml` 的 `cleanup` job（`actions: write`，只删 artifact）；其余一律只读；上传 artifact 不需要写权限。
-- 版本来源：五段 `yy.m.d.当日序号.总序号`，展示版本不含 `v`，`versionCode` = 总序号。取数在仓库唯一构建工作流的运行历史里现场查（`build.py --query-github` 或 README 给的 `gh api` 查法），不在文档/代码里写死现值。**三段缺一不可**：不退化四段、不出非发行包；`--query-github` 与手工 `--date/--day/--build` 不混用。仓库里的 `module/module.prop` 入库值是 `version=dev` / `versionCode=0`（只是入库默认，盖戳时被覆盖）。
-- 计数口径：**CI 锚定本次运行**——总序号 = 本次运行的 `run_number`（含 PR 运行，单调递增），日期 = 本次运行 `created_at` 换算到 Asia/Shanghai，当日序号 = 当天不晚于本次运行的运行数（`push` / `workflow_dispatch` / `pull_request` 都计入，因为都出包；唯一性由总序号保证）。重试复用同一身份所以版本不变。本地（无 CI 环境变量）退到「最近一次运行」口径，当天没有运行就明确报错。历史教训：旧口径取「查询时的最新运行」，同一提交并行的 push 与 PR 撞成同一个版本号（两条不同内容的 artifact 同名 `Selffont-26.10.5.26.92`）。
+- 版本来源：五段 `yy.m.d.当日序号.总序号`，展示版本不含 `v`，`versionCode` = 总序号。取数现场查运行历史（`build.py --query-github`），不在文档/代码里写死现值。**三段缺一不可**：不退化四段、不出非发行包；`--query-github` 与手工 `--date/--day/--build` 不混用。仓库里的 `module/module.prop` 入库值是 `version=dev` / `versionCode=0`（只是入库默认，盖戳时被覆盖）。
+- 计数口径（第二十四版「版本取数通用步骤」；实现留在 `build.py`，好让自检的断言继续覆盖它）：**输入只认本次运行的身份**——`GITHUB_RUN_ID` / `GITHUB_RUN_ATTEMPT`，`created_at` 从本 run 对象取，**禁止 list 后取最新**。日期 = `created_at` 换算 UTC+8 的 `yy.m.d`（月日不补零）。**当日序号** = 当天在本次运行之前已触发的运行数 + 1（含失败与取消，它们确实占掉当天一次构建；同一时刻的并发运行按 `run_number` 分先后，不抢号）。**总序号** = 本仓库历史成功出包的构建数 + 1，失败与取消不增加总序号；再与已出包产物的最大总序号取大后 + 1。**`run_attempt > 1` 直接复用第一次 attempt 的产物版本号**（从本 run 的 artifact 名读回来），禁止重新加号。任一输入缺失或取数失败就停，不出包、不上传、不编数。历史教训：更早的口径取「查询时的最新运行」，同一提交并行的 push 与 PR 撞成同一个版本号（两条不同内容的 artifact 同名 `Selffont-26.10.5.26.92`）。
+- 衔接规则（第二十四版步骤 7，防回退）：旧口径总序号 = `run_number`（含失败与 PR，2026-10-10 已到 106），新口径的历史成功出包数只有 75，直接切会让计数从 106 回退到 76。所以总序号取 `max(历史成功出包数, 已出包产物最大总序号) + 1`——**从 run 107 起按新口径**，序号继续单调递增，不回退不跳号。
+- 本地序号规则（第二十四版要求单独写明）：本地 `build.py` **不自己算号**，必须显式传 `--date/--day/--build`，三个数由打包的人负责可追溯；`--query-github` 只在 CI 里能用，环境里没有 `GITHUB_RUN_ID` 直接报错——不退到「最近一次运行」口径，也不拿当前时间冒充 CI 计数。
 - 历史 tag：`v3.0.0`（0d9ba81，2026-09-26）、`v26.9.30.39`（215cf25，2026-09-29）属已下线的旧发版链，按规范默认保留，不追溯改名、不改写历史。
 - 下载与安装：不发 Release。安装 = KernelSU 装本地构建或 CI artifact 的 zip + 重启；卸载 = KSU 删模块 + 重启；火狐接入 = `su -c 'sh /data/adb/modules/MFGA/firefox.sh'`。
 - 术语表：模块 zip = KernelSU 模块包；基础包 = MFGA 补充字库 ZIP（`build.py` 现场读取）；主字体 = 文渊圆体 VF；默认区 = 不带 `lang` 的匿名家族按文件顺序组成的缺字回退列表；语言区 = 带 `lang` / `variant` 的 locale fallback family（按语言标签优先匹配）；网页字体开关 = 火狐的 `browser.display.use_document_fonts`（压 = 0，放行 = 加 `Selffont:keep` 标记注释）；pref 尾链 = 构建期把补充字库内部家族名按 fonts.xml 顺序追加到火狐 `font.name-list.*` 末尾。
@@ -31,7 +33,7 @@
 ## CI 权限与清理
 
 - `build.yml`：`contents: read` + `actions: read`（只为读本工作流运行历史算版本号）；版本号在该 job 一处算定后写进产物元数据，构建配置只读它。出包用 `actions/upload-artifact`（push 与 PR 都传），上传不需要写权限。
-- `build.yml` 的 `cleanup` job：唯一写权限（`actions: write`），`needs: build` 出包成功后串行执行，PR 事件不跑（工作流定义来自 PR 的合并 ref，给它写权限等于执行未信任代码）；只删本项目 artifact（前缀筛候选 + `workflow_run` 核验归属），跨分支跨事件合计保留最近 5 个，完整分页、结构化字段、删除前打印完整清单、删完复核；不碰 Release / tag / 历史 tag。
+- `build.yml` 的 `cleanup` job：唯一写权限（`actions: write`，只删 artifact，`contents` 保持只读——本仓库 Release 数为 0 且 CI 不发版，用不上 `contents: write`，按最小化不申请），`needs: build` 出包成功后串行执行，**只在默认分支 `main` 上跑**（第二十四版「清理通用步骤」步骤 1：写权限只给可信的默认分支构建 job；PR 的合并 ref 与其他分支的代码都不可信）。只删本项目 artifact（前缀筛候选 + `workflow_run` 核验归属），跨分支跨事件合计保留最近 5 个，完整分页、结构化字段、删除前打印完整清单、删完复核；不碰 Release / tag / 历史 tag。**代价**：只在分支上推送时清理不触发，artifact 会暂时超过 5 个，由下一次 `main` 构建收口，急用按 README 的 `gh api -X DELETE` 手动删。
 - 规范自检：不设工作流，由 agent 在会话中完成（读 `AGENTS.md` / `GLOBAL.md`、核指针与版本戳、核权限与禁发版）。
 - 发版：本仓库没有 CI 发版流程（CI 发版未授权）；发版仍需主人对项目、版本、触发条件的明确允许。清理授权不等于发版授权。
 
@@ -39,7 +41,7 @@
 
 ## 项目取舍（与规范的关系）
 
-- 本项目 CI 只出包（Actions artifact）、不发版，因此「在一个来源固定日期与两个序号」落在唯一构建工作流 `Build` 上：CI 锚定本次运行身份取数（`build.py --query-github` 读 `GITHUB_RUN_ID` / `GITHUB_RUN_NUMBER`），本地打包可手工传 `--date/--day/--build`，或用 `--query-github` 走「最近一次运行」口径。
+- 本项目 CI 只出包（Actions artifact）、不发版，因此「在一个来源固定日期与两个序号」落在唯一构建工作流 `Build` 上：CI 锚定本次运行身份取数（`build.py --query-github` 读 `GITHUB_RUN_ID` / `GITHUB_RUN_ATTEMPT`），本地打包必须手工传 `--date/--day/--build`。
 - 网页字体默认压属激进修复：**已真机验证**（OnePlus / ColorOS 16，运行时开关切换生效）；别名字件实验**已删除**（真机实测 Gecko 字体清单不含未写进系统配置的字件，别名解析不到，且命中与否最终都渲染文渊），构建期开关 `--no-alias-fonts` 也随之删除。网页自带字体是构建期默认值（`--keep-web-fonts` 放行）+ 运行时覆盖（KernelSU 管理器「操作」按钮 = `module/action.sh`，等价 `web-fonts.sh keep|block|toggle`，状态文件在 `/data/local/tmp/selffont-web-fonts.state`），`customize.sh` / `firefox.sh` 重生成配置副本时按状态走，不覆盖运行时的选择。
 - 第二十二版承继的「只做新包与不做降级」在本仓库落成：只投放 `font_fallback*.xml`（新语法 `supportedAxes`），静态主字体、缺空壳的基础包、模板缺关键行、版本数据不全都直接失败，设备没有 `font_fallback*.xml` 时中止安装；改平台行为前先查上游并留证据（近例：语言区优先于默认区顺序，依据 AOSP `font_fallback.xml` 头注与 `source.android.com/docs/core/fonts/custom-font-fallback`；未真机验证的改动在 changelog 标「未验证」并留回退开关）。
 - 边界与限制以 README 为准；本文件的清单与 README 冲突时，先按 README 的事实改本文件。
