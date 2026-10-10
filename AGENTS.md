@@ -10,7 +10,7 @@
 - **改动落地**：任何本轮本地改动必须最终提交并推送到当前远端分支，任务结束不留未提交或未推送的改动。
 - **分支**：会话固定在工作分支提交并推送，不直接推 `main`；旧会话分支（PR 已合并）按要求删除，删前确认内容已进 `main`，未进的先带过来。
 - **Arena 会话**：主人当轮出现辱骂或同等强度的愤怒表达时，先输出不少于 1000 个汉字的书面检讨（错在哪、违反哪条、为何做错、如何纠正、如何防再犯），每满 100 个汉字标 `【累计100字】`、`【累计200字】` 递增，末尾不足百字注明实际总数；随后立刻继续办事，不另开一轮。
-- **CI 禁旧**：runner 钉具体镜像（`ubuntu-24.04`，不用 `ubuntu-latest`）；Action 用现行主版本（2026-10-06 核对 `checkout` / `setup-python` / `upload-artifact` 都是 v7），出现弃用警告当轮升级。
+- **CI 禁旧**：runner 钉具体镜像（`ubuntu-24.04`，不用 `ubuntu-latest`）；Action 用现行主版本（2026-10-10 核对 `checkout` / `setup-python` / `upload-artifact` 都是 v7），出现弃用警告当轮升级。
 
 ## 项目核对清单
 
@@ -43,5 +43,5 @@
 
 - 本项目 CI 只出包（Actions artifact）、不发版，因此「在一个来源固定日期与两个序号」落在唯一构建工作流 `Build` 上：CI 锚定本次运行身份取数（`build.py --query-github` 读 `GITHUB_RUN_ID` / `GITHUB_RUN_ATTEMPT`），本地打包必须手工传 `--date/--day/--build`。
 - 网页字体默认压属激进修复：**已真机验证**（OnePlus / ColorOS 16，运行时开关切换生效）；别名字件实验**已删除**（真机实测 Gecko 字体清单不含未写进系统配置的字件，别名解析不到，且命中与否最终都渲染文渊），构建期开关 `--no-alias-fonts` 也随之删除。网页自带字体是构建期默认值（`--keep-web-fonts` 放行）+ 运行时覆盖（KernelSU 管理器「操作」按钮 = `module/action.sh`，等价 `web-fonts.sh keep|block|toggle`，状态文件在 `/data/local/tmp/selffont-web-fonts.state`），`customize.sh` / `firefox.sh` 重生成配置副本时按状态走，不覆盖运行时的选择。
-- 第二十二版承继的「只做新包与不做降级」在本仓库落成：只投放 `font_fallback*.xml`（新语法 `supportedAxes`），静态主字体、缺空壳的基础包、模板缺关键行、版本数据不全都直接失败，设备没有 `font_fallback*.xml` 时中止安装；改平台行为前先查上游并留证据（近例：语言区优先于默认区顺序，依据 AOSP `font_fallback.xml` 头注与 `source.android.com/docs/core/fonts/custom-font-fallback`；未真机验证的改动在 changelog 标「未验证」并留回退开关）。
+- 「只做新包与不做降级」（第二十四版「先进性」）在本仓库落成：只投放 `font_fallback*.xml`（新语法 `supportedAxes`），静态主字体、缺空壳的基础包、模板缺关键行、版本数据不全都直接失败，设备没有 `font_fallback*.xml` 时中止安装；改平台行为前先查上游并留证据（近例：语言区优先于默认区顺序，依据 AOSP `font_fallback.xml` 头注与 `source.android.com/docs/core/fonts/custom-font-fallback`；未真机验证的改动在 changelog 标「未验证」并留回退开关）。
 - 边界与限制以 README 为准；本文件的清单与 README 冲突时，先按 README 的事实改本文件。
