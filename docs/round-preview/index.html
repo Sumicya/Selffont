@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Selffont Round SC VF 预览</title>
+<style>
+  @font-face {
+    font-family: 'Selffont Round SC';
+    src: url('SelffontRoundSC-VF.ttf');
+    font-weight: 100 900;
+  }
+  body { font-family: sans-serif; padding: 24px; max-width: 900px; margin: auto; }
+  .sample {
+    font-family: 'Selffont Round SC', sans-serif;
+    font-size: 72px;
+    line-height: 1.4;
+    margin: 16px 0;
+    word-break: break-all;
+  }
+  .controls { margin: 16px 0; }
+  label { font-size: 14px; color: #555; }
+  input[type=range] { width: 300px; vertical-align: middle; }
+  .note { color: #888; font-size: 13px; }
+  textarea { width: 100%; font-size: 16px; padding: 8px; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<h2>自制圆体 Selffont Round SC — 可变字体真实预览</h2>
+<p class="note">这是真实 .ttf 文件通过浏览器 @font-face 渲染，不是截图/PNG。拖动滑块实时变字重（含非锚点插值字重）。</p>
+<div class="controls">
+  <label>wght = <span id="wval">400</span></label><br>
+  <input type="range" id="wght" min="100" max="900" value="400" step="1">
+</div>
+<textarea id="text" rows="3">国回中日田了子心见贝由电 木大人永示圆体自制 风回云卷天气晴 0123456789 Aa</textarea>
+<div class="sample" id="sample">国回中日田了子心见贝由电</div>
+<p class="note">这一版新加了"逢角必圆"：国/回/田这类外框直角现在也会带一点圆，不再只圆笔画端头。</p>
+<script>
+  const slider = document.getElementById('wght');
+  const sample = document.getElementById('sample');
+  const wval = document.getElementById('wval');
+  const text = document.getElementById('text');
+  function update() {
+    sample.style.fontVariationSettings = `'wght' ${slider.value}`;
+    wval.textContent = slider.value;
+    sample.textContent = text.value;
+  }
+  slider.addEventListener('input', update);
+  text.addEventListener('input', update);
+  update();
+</script>
+</body>
+</html>
