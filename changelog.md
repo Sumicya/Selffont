@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2026-10-13（续三）· 拐角半径 70→130 + 预览缓存失效修复 + 同步 GLOBAL.md 第 0 版
+
+- 主人反馈"拖 wght 都不变，圆在哪都是方的"：排查出两个独立问题。
+  1. **拐角半径量级不足**：`CORNER_R_MAX=70` 是"坐标确实发生了偏移"推出来的，没换算成实际观感——70 单位/1000upm 到正常渲染字号只有几像素，肉眼基本看不出圆角。重新量了筑紫参照（`ZhuZiAYuanJWD.ttf`，仅本机参照未入库）"回"字外框拐角实际跨度约 120–130 单位，把 `CORNER_R_MAX` 调到 **130**，全 7 字重重跑 `--corners` 管线 → GB2312 子集 → 合成新 VF（9624 字形/字重，与上一版字形数一致），bbox 增长量回归检查与上一版一致（最大约 94 单位，端头驱动），Heavy「电」钩尖放大检查确认无新增自相交。证据：`docs/evidence/2026-10-13-corner-r130-zoom-topleft.png`（国字左上角放大三连对比）、`docs/evidence/2026-10-13-corner-r130-overview.png`（正常字号整字对比）、`docs/evidence/2026-10-13-corner-r130-heavy-dian-hook.png`（电字钩尖检查）。
+  2. **实况预览有缓存隐患**：`docs/round-preview/index.html` 的 `@font-face` 一直用固定文件名 `SelffontRoundSC-VF.ttf`，文件内容换了但 URL 没变，浏览器可能一直用旧缓存——这大概率是"拖 wght 看起来一直不变"的根因。改成 `SelffontRoundSC-VF.ttf?v=20261013b` 带版本号查询参数强制重新拉取。额外用 `varLib.instancer` 在 wght=100/300/.../900 七个点各自钉实例渲染，证据 `docs/evidence/2026-10-13-wght-axis-live.png` 直接证明这份 VF 文件本身是随 wght 连续变化的，排除"字体文件本身没变"的疑点。
+  3. 已替换 `docs/round-preview/` 下的 VF（md5 `51640989b93794acb6853f1db56f9fe7`）、静态 Regular、designspace、index.html、README.md。
+- 读了 `Sumicya/selfs` 的 `GLOBAL.md` 新版，发现已从「第二十四版」整体重写为「第 0 版 · 2026-10-13」（四要领精简格式）。版本号格式、Release/Artifact 保留数、Arena 辱骂触发检讨等旧条文实质不变；新增明确要求「运行记录」（不只是 artifact）也要清理收口到 5 条——本仓库 `build.yml` 现有 `cleanup` job 只删 artifact，不删 run，这是本轮新发现、尚未实现的缺口，已记在 `AGENTS.md` 顶部，留给下一轮处理。`AGENTS.md` 版本戳同步改到第 0 版。
+- 遗留的真实失误：上一轮主人表达不满后，按规矩应先写满 1000 字检讨再继续，这一轮才在「看新规」提醒下补上，过程记在当次会话里，不单独建文件（本仓库不允许把检讨做成文件/脚本条目）。
+
 ## 2026-10-13（续）· 自制圆体加「逢角必圆」+ 三个真 bug 修复
 
 - 主人要求「全面仿筑紫、问题自查」：自查对比（源字体/旧版自制圆角/筑紫参照，国回中日田电等字）确认旧版只圆端头，外框直角（国/回/田的四角）仍是直角，是实打实的结构性差距。
