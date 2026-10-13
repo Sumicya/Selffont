@@ -122,7 +122,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 未验证项的真机清单
 
-**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**2026-10-07 真机复验通过**（同一台设备）：装「清掉 MiSans 引用（10-06）+ 卡开机修复 + 语言区改法 + 五个命名族恢复本来字体（10-07）」之后的构建，**正常开机、不再重启循环**，三条自查实测 **8 / 0 / 3** —— `grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」逐项吻合）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。**仍无真机数据**：① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 三项只影响观感、不影响开机的观察——生僻字是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）、终端 / 代码类 App 的等宽字体是否回到 Droid Sans Mono（不该是圆体）、WebView 的 `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps`；③ artifact「包直出」格式实测用的是哪个包未记录（`.102` 旧格式解一层、`.103` 起直接刷，两者字体配置相同）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见上「泛型与家族名的坑」）。**2026-10-07 装机核对（配置层已核对，渲染层未验证）**（同一台设备）：装「清掉 MiSans 引用（10-06）+ 卡开机修复 + 语言区改法 + 五个命名族恢复本来字体（10-07）」之后的构建，**正常开机、不再重启循环**，三条自查 **8 / 0 / 3** —— `grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」逐项吻合）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。**这三条只覆盖配置层**：证明设备上那份配置的内容符合构建预期、模块挂上了；**渲染层没有任何证据**——字形是否变圆、角标数字是否被切、等宽是否回到 Droid Sans Mono，都不在这三条命令的射程里，需要设备截图，取证命令与存放位置见 `docs/evidence/`。**仍无真机数据**：① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 三项只影响观感、不影响开机的观察——生僻字是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）、终端 / 代码类 App 的等宽字体是否回到 Droid Sans Mono（不该是圆体）、WebView 的 `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps`；③ artifact「包直出」格式实测用的是哪个包未记录（`.102` 旧格式解一层、`.103` 起直接刷，两者字体配置相同）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
@@ -142,7 +142,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 
 ## 边界
 
-- 只支持带 `font_fallback*.xml` 的设备（Android 15+）：装在没有该文件的机器上会中止安装。真机验证过：Android 16 / OnePlus / KernelSU 一台（系统字体、火狐网页字体开关都已实测生效；别名字件实验实测无效后已删除），其他平台自担风险。**未验证**：纯 AOSP 机器的配置路径、CJK 语言区改动——装机核对清单见「未验证项的真机清单」。
+- 只支持带 `font_fallback*.xml` 的设备（Android 15+）：装在没有该文件的机器上会中止安装。装机核对过：Android 16 / OnePlus / KernelSU 一台。其中**配置层有命令输出为证**（三份配置的 `grep -c`、`/proc/mounts`）；**渲染层只有 2026-10-05 当次目视，未留图像**（系统字形变圆、火狐网页字体开关切换生效都属这一类）；别名字件实验留下了可复核的量化依据（20 个空格宽度与默认链相同、0.5em 未出现），判定无效后已删除。其他平台自担风险。**未验证**：纯 AOSP 机器的配置路径、CJK 语言区改动——装机核对清单见「未验证项的真机清单」。
 - 本仓库是 [MFGA](https://github.com/Numbersf/MakeFontsGreatAgain) 的 fork。上游领先的提交只动它自己的 Xposed 侧与文档（`fonts/`、`fonts.xml` 从 1717180003 起未变，已逐字节比对）：用 `-s ours` 记录了祖先关系（不再显示「落后」），但**不取它的代码**，只取字体资源（见 `LICENSES.md`）。
 - `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与其余 OEM 字体由设备提供，不打包（`MiSans` 不要，引用已在构建期清掉，见「字体」）。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
