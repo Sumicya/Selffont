@@ -30,7 +30,7 @@ for i in 1 2 3 4; do cp "/data/local/tmp/sf-$i.png" ~/Selffont/docs/evidence/ 2>
 ls -l ~/Selffont/docs/evidence/
 ```
 
-## 当前缺口（截至 2026-10-10，本目录只有这份说明，一张图都没有）
+## 当前缺口（截至 2026-10-13，本目录只有这份说明，一张图都没有）
 
 仓库连同全部提交历史里 png 的数量是 0。下列断言目前**只有文字**，没有图像证据：
 

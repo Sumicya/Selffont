@@ -24,7 +24,7 @@
 ## 2026-10-07 · 装机核对：配置层 8 / 0 / 3 已核对，渲染层未验证
 
 - **配置层（有证据）**：主人装 `b2311f4` 之后的构建，**正常开机（不再重启循环）**，三条自查 **8 / 0 / 3**：`grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」一致）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。设备 `OnePlus/PLC110/OP60EDL1:16/BP2A.250605.015`（ColorOS / Android 16 / KernelSU）。
-- **渲染层（无证据，本条当时被写成「真机复验通过」，属过头表述，2026-10-10 更正）**：字形是否变圆、角标数字是否被切、等宽是否回到 Droid Sans Mono，都不在那三条命令的射程里。取证方式与存放位置见 `docs/evidence/`。
+- **渲染层（无证据，本条当时被写成「真机复验通过」，属过头表述，2026-10-13 更正）**：字形是否变圆、角标数字是否被切、等宽是否回到 Droid Sans Mono，都不在那三条命令的射程里。取证方式与存放位置见 `docs/evidence/`。
 - 至此本轮四项改动在设备上装起来能正常开机、配置内容正确：卡开机修复（`f3a93ff`）、混族不变量全覆盖（`3f81229`）、火狐「本来字体优先」（`41e2c65`）、系统层五个命名族恢复本来字体（`b2311f4`）。
 - 顺带清掉设备上另一个模块 `zz_bootlog`（`author=me`，开机把 `logcat -b all` 灌进 `/data/local/tmp/bootlog`，不轮转、每次开机把上一次的挪成 `prev.log`，会一直长）：`ksud module uninstall zz_bootlog` → 在模块目录落一个 0 字节 `remove` 标记 → 重启后目录消失，实测已消失。对着 KernelSU 源码核过行为：`userspace/ksud/src/module.rs:805` 的 `uninstall_module()` 只「打标记」（`defs.rs:43` `REMOVE_FILE_NAME = "remove"`），提示走 `info!` 不进 stdout，所以命令**没有输出就是成功**；id 写错才会报 `Module <id> not found`。
 - 自救网仍在设备上（`/data/adb/post-fs-data.d/sf-guard.sh` 402 B + `/data/adb/boot-completed.d/sf-ok.sh` 74 B，均 755）：正常开机净效果为零，只在模块致崩时接管。要拆：`su -c 'rm -f /data/adb/post-fs-data.d/sf-guard.sh /data/adb/boot-completed.d/sf-ok.sh /data/adb/sf-boot-ok /data/adb/sf-fail-count'`。
