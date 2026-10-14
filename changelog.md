@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-14（续五）· 清理三判据落地 + 删掉「谁来做」字段，责任固定在 CI 清理 job
+
+- 主人核实：续四给的「两类清理需要 actions: write，命令交你」是跟 Qself 会话同款的违规——`GLOBAL.md` 这版把交接字段从四件（卡在哪一步、**谁来做**、拿什么做、怎么确认）改成三件，删掉「谁来做」，写死责任：超量 artifact/运行记录归 CI 清理 job（runner 自带 `GITHUB_TOKEN`，带 `actions: write`，与沙箱令牌不同源）；孤立 tag、已合入分支、被禁工作流文件归会话令牌（`contents`/`refs` 写在本仓可用）；创建 Release/tag/asset、合并或关闭 PR 只能主人发起。「沙箱令牌通常只对当前仓库有写权限」这句也被实测推翻：能力按权限类分不按仓库分，`actions` 写在本仓同样 403。
+- 本仓此前给的三条 `gh api -X DELETE` artifact 删除命令，按新条文定性是把 CI 清理 job 的默认授权活派给了主人，已撤回这个做法；改为把清理逻辑做进 `build.yml` 的 `cleanup` job，下次该 job 跑（合并到 `main` 或主人用有权限的凭据手动 `workflow_dispatch`）会自动处理，不需要人工跑命令。
+- `build.yml` 顶部新增 `env: SEGMENTS: "5"`（声明当前版本号段数）；`cleanup` job 改成三条判据：**数量**（当日之外每条序列 artifact 5 个、run 5 条，`build.yml` 与 `pr-check.yml` 的运行记录分开算，当日的不设上限——当日序号取自当日运行列表，删当日运行会抽走计数基准，这正是本轮 Gself 出现 `Gself-26.10.14.2.147`/`.2.148` 当日序号重复的成因）、**命名口径**（artifact 版本段数须等于 `SEGMENTS`，不符的当轮删，不豁免当日）、**产物来源**（`workflow_run` 事件是 `pull_request` 的一律删，不豁免当日）；`pr-check.yml` 不单挂清理作业，它的超量运行记录由这个 job 一并删。用真实仓库数据（114–119 的 artifact/run 记录）在沙箱里跑了一遍脚本逻辑（mock `gh api`，非真实触发），确认能精确识别并删除 `26.10.14.116/117/118` 三个四段旧口径产物，保留 `114`/`115`/`119`，不误删今天的产物与运行记录。
+- `AGENTS.md`/`README.md` 同步删掉「急用按 README 的 `gh api -X DELETE` 手动删」「要提前删可手动跑」这类把清理派给人工的句子，改成准确描述三判据与责任归属；README 的手动清理命令块改成只读查询，不再给删除命令。
+- 本轮未能触发一次真实 CI 运行验证清理 job（原因同续四：推会话分支不再触发 `build.yml`，沙箱令牌也没有 `actions: write` 去 `workflow_dispatch`），清理逻辑的正确性目前只有脚本层面的 mock 验证，真正在 Actions 里跑一遍要等合并到 `main` 或主人手动触发。
+
 ## 2026-10-14（续四）· 续三没堵住：run_number 在创建运行时就分配，拆成两个工作流文件才行
 
 - 主人指出续三的修法没堵住漏洞：`if: github.event_name != 'pull_request'` 只能让 `pull_request` 运行的构建步骤 skipped，拦不住 GitHub 在**运行创建的那一刻**就分配 `run_number`——Qself 实测五个号里三个被 PR 运行吃掉（`run_number` 271/273/275 全是 `pull_request` 事件），两个提交吃了五个号；Gself 更糟，两个都能出包的工作流各有独立 `run_number` 序列，出现过总序号 144 重复两次。`Sumicya/selfs` 的 GLOBAL.md（PR #6，commit `5e2b978`）据此再修：出包与 PR 校验必须是两个工作流文件，一个工作流不得同时接 `push` 与 `pull_request`。

@@ -8,6 +8,8 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+env:
+  SEGMENTS: "5"   # 当前版本号段数(正常五段);真要退化成四段的时期,把这改成 4 并在 AGENTS.md 写明原因
 permissions:
   contents: read
   actions: read          # 只为读本工作流的运行历史算版本号,不写
@@ -72,35 +74,45 @@ jobs:
           retention-days: 5
           if-no-files-found: error
   cleanup:
-    name: Keep newest 5 artifacts
+    name: Clean up by quantity / naming / source (三条判据)
     needs: build
     # 写权限只给可信的默认分支构建 job(规范:清理 job 权限最小化,只删本项目对象)。本工作流
     # 不接 pull_request,这里只按 ref 再做一道保险:非默认分支(如会话分支用 workflow_dispatch
-    # 触发出包)不跑清理——它们出的包照样计入同一保留窗口,由下一次 main 构建清理;分支期间
-    # 超额由人工按 README 的 gh api -X DELETE 收口,不为此把写权限交给分支代码。
+    # 触发出包)不给这个 job 写权限、不跑清理——它们出的对象在下一次 main 构建时由这个 job
+    # 按下面三条判据收口,清理责任固定在这里,不经会话令牌、不经人工。
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      actions: write        # 只删 Actions artifact;contents 保持只读,不碰 Release / tag
+      actions: write        # 只删 Actions artifact 与 run;contents 保持只读,不碰 Release / tag
     concurrency:
       group: selffont-artifacts
       cancel-in-progress: false
     steps:
-      - name: Delete old Selffont artifacts (full pagination, keep newest 5)
+      - name: Delete by quantity (day-exempt) / naming (SEGMENTS) / source (pull_request)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           KEEP: "5"
+          SEGMENTS: ${{ env.SEGMENTS }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys
+          from datetime import datetime, timedelta, timezone
+
+          CLOCK = timezone(timedelta(hours=8))
 
           keep_raw = os.environ["KEEP"].strip()
           if not keep_raw.isdigit() or int(keep_raw) < 1:
               sys.exit(f"KEEP 必须是正整数,收到 {keep_raw!r}")
           keep = int(keep_raw)
+          segments_raw = os.environ["SEGMENTS"].strip()
+          if not segments_raw.isdigit() or int(segments_raw) < 1:
+              sys.exit(f"SEGMENTS 必须是正整数,收到 {segments_raw!r}")
+          segments = int(segments_raw)
           repo = os.environ["REPO"]
+          current_run_id = int(os.environ["CURRENT_RUN_ID"])
 
           def api(path, jq=None, method=None):
               command = ["gh", "api"] + (["--jq", jq] if jq else []) + (["-X", method] if method else []) + [path]
@@ -109,77 +121,127 @@ jobs:
                   sys.exit(f"gh api {path} 失败:{result.stderr.strip()}")
               return result.stdout
 
+          def parse_time(value):
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          def today_start():
+              """当天(UTC+8)零点,换算回 UTC,跟 created_at 比。"""
+              now = datetime.now(CLOCK)
+              return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+          START = today_start()
           repo_id = int(json.loads(api(f"repos/{repo}", jq="{id: .id}"))["id"])
 
-          def artifacts():
-              """完整分页取 artifact;名字前缀只用于筛候选,归属另按运行记录核验。"""
+          def paginate(path_tpl, jq):
               rows, page = [], 1
               while True:
                   batch = [json.loads(line) for line in
-                           api(f"repos/{repo}/actions/artifacts?per_page=100&page={page}",
-                               jq=".artifacts[]|{id,name,created_at,size_in_bytes,workflow_run}").splitlines()
-                           if line.strip()]
+                           api(f"{path_tpl}&page={page}" if "?" in path_tpl else f"{path_tpl}?per_page=100&page={page}",
+                               jq=jq).splitlines() if line.strip()]
                   if not batch:
                       return rows
                   rows += batch
                   page += 1
 
-          rows = [row for row in artifacts() if row["name"].lower().startswith("selffont-")]
+          # ---- 两个工作流的运行记录,按 id 建事件映射(artifact 的"来源"判据要用) ----
+          def workflow_runs(workflow):
+              return paginate(f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=100",
+                               ".workflow_runs[]|{id,run_number,status,event,created_at}")
 
-          # 归属核验(规范:前缀只筛候选,归属结合工作流与运行记录;归属不明的不删):
-          # artifact 的 workflow_run 必须落在本仓库,否则视为别人的对象,跳过并打印。
+          build_runs = workflow_runs("build.yml")
+          try:
+              prcheck_runs = workflow_runs("pr-check.yml")
+          except SystemExit:
+              prcheck_runs = []  # 这个工作流文件在 main 上还没有任何运行记录时,接口会 404
+
+          event_by_run_id = {row["id"]: row["event"] for row in build_runs + prcheck_runs}
+
+          # ---- artifact:三条判据,口径与来源两条不豁免当日 ----
+          def artifacts():
+              """完整分页取 artifact;名字前缀只用于筛候选,归属另按运行记录核验。"""
+              return paginate("repos/{}/actions/artifacts?per_page=100".format(repo),
+                               ".artifacts[]|{id,name,created_at,size_in_bytes,workflow_run}")
+
           def owned(row):
               run = row.get("workflow_run") or {}
               return run.get("repository_id") == repo_id and run.get("head_repository_id") == repo_id
 
+          def name_segments(name):
+              """Selffont-26.10.14.4.119 -> 版本部分按 . 切出来的段数。"""
+              version = name.split("-", 1)[1] if "-" in name else ""
+              return len([part for part in version.split(".") if part])
+
+          rows = [row for row in artifacts() if row["name"].lower().startswith("selffont-")]
           unknown = [row for row in rows if not owned(row)]
           rows = [row for row in rows if owned(row)]
-          rows.sort(key=lambda row: row["created_at"], reverse=True)
-          print(f"匹配到 {len(rows)} 个本项目 artifact(另有 {len(unknown)} 个归属不明,保留),保留最近 {keep} 个;完整清单:")
-          for row in rows:
-              print(f"  {row['created_at']} {row['name']} {row['size_in_bytes']} 字节 id={row['id']}")
           for row in unknown:
-              print(f"  归属不明(保留) {row['created_at']} {row['name']} id={row['id']} workflow_run={row.get('workflow_run')}")
-          victims = rows[keep:]
-          for row in victims:
-              print(f"DELETE {row['created_at']} {row['name']} {row['size_in_bytes']} 字节 id={row['id']}")
+              print(f"归属不明(保留) {row['created_at']} {row['name']} id={row['id']} workflow_run={row.get('workflow_run')}")
+
+          def is_current(row):
+              run = row.get("workflow_run") or {}
+              return run.get("id") == current_run_id
+
+          criteria_victims = []
+          for row in rows:
+              if is_current(row):
+                  continue  # 不碰本次运行刚上传的 artifact
+              reasons = []
+              if name_segments(row["name"]) != segments:
+                  reasons.append(f"口径(段数={name_segments(row['name'])}≠SEGMENTS={segments})")
+              run_event = event_by_run_id.get((row.get("workflow_run") or {}).get("id"))
+              if run_event == "pull_request":
+                  reasons.append("来源(pull_request)")
+              if reasons:
+                  criteria_victims.append((row, reasons))
+
+          for row, reasons in criteria_victims:
+              print(f"DELETE(判据:{' + '.join(reasons)}) {row['created_at']} {row['name']} id={row['id']}")
               api(f"repos/{repo}/actions/artifacts/{row['id']}", method="DELETE")
 
-          # 删完复核:本项目 artifact 不得超过保留数;超了就报错(不回滚新产物、不动保留对象)。
+          survivors = [row for row in rows if row["id"] not in {r["id"] for r, _ in criteria_victims}]
+          non_today = sorted((row for row in survivors if parse_time(row["created_at"]) < START),
+                             key=lambda row: row["created_at"], reverse=True)
+          today_rows = [row for row in survivors if parse_time(row["created_at"]) >= START]
+          qty_victims = non_today[keep:]
+          print(f"artifact:判据删 {len(criteria_victims)} 个;当日 {len(today_rows)} 个(数量不设上限,不删);"
+                f"非当日 {len(non_today)} 个,保留最近 {keep} 个")
+          for row in qty_victims:
+              print(f"DELETE(判据:数量) {row['created_at']} {row['name']} id={row['id']}")
+              api(f"repos/{repo}/actions/artifacts/{row['id']}", method="DELETE")
+
           left = [row for row in artifacts() if row["name"].lower().startswith("selffont-") and owned(row)]
-          print(f"已删 {len(victims)} 个,复核后本项目 artifact {len(left)} 个(上限 {keep})")
-          if len(left) > keep:
-              sys.exit(f"清理后仍有 {len(left)} 个本项目 artifact,超过上限 {keep}")
+          left_non_today = [row for row in left if parse_time(row["created_at"]) < START]
+          print(f"复核:本项目 artifact 剩 {len(left)} 个,其中非当日 {len(left_non_today)} 个(上限 {keep})")
+          if len(left_non_today) > keep:
+              sys.exit(f"清理后非当日 artifact 仍有 {len(left_non_today)} 个,超过上限 {keep}")
+
           releases = json.loads(api(f"repos/{repo}/releases", jq="length"))
           print(f"Release 数:{releases}(规范上限 1。CI 不发版也不删 Release;"
                 "获准人工发布时由发布者做发布后清理)")
           if releases > 1:
               print("WARNING: Release 超过 1 个,需要获准的人工操作清理(CI 无 contents 写权限)")
 
-          # 运行记录:有产物仓保留 5 条(规范)。只删本工作流(build.yml)的运行记录,完整分页,
-          # 不碰仍在跑的运行,删除前打印完整清单。
-          def runs():
-              rows, page = [], 1
-              while True:
-                  batch = [json.loads(line) for line in
-                           api(f"repos/{repo}/actions/workflows/build.yml/runs?per_page=100&page={page}",
-                               jq=".workflow_runs[]|{id,run_number,status,created_at}").splitlines()
-                           if line.strip()]
-                  if not batch:
-                      return rows
-                  rows += batch
-                  page += 1
+          # ---- 运行记录:build.yml 与 pr-check.yml 各一条序列,数量判据,当日豁免,清理只留这一处 ----
+          def clean_runs(workflow, rows):
+              non_today_runs = sorted((row for row in rows if parse_time(row["created_at"]) < START),
+                                      key=lambda row: row["run_number"], reverse=True)
+              today_count = len(rows) - len(non_today_runs)
+              victims = [row for row in non_today_runs[keep:]
+                        if row["status"] != "in_progress" and row["id"] != current_run_id]
+              print(f"{workflow}:{len(rows)} 条运行记录,当日 {today_count} 条(不设上限),"
+                    f"非当日 {len(non_today_runs)} 条,保留最近 {keep} 条")
+              for row in victims:
+                  print(f"DELETE RUN({workflow}) {row['created_at']} run_number={row['run_number']} id={row['id']}")
+                  api(f"repos/{repo}/actions/runs/{row['id']}", method="DELETE")
+              left_rows = workflow_runs(workflow)
+              left_non_today = [row for row in left_rows if parse_time(row["created_at"]) < START]
+              print(f"{workflow}:复核剩 {len(left_rows)} 条,非当日 {len(left_non_today)} 条(上限 {keep})")
+              if len(left_non_today) > keep:
+                  sys.exit(f"{workflow} 清理后非当日运行记录仍有 {len(left_non_today)} 条,超过上限 {keep}")
 
-          run_rows = sorted(runs(), key=lambda row: row["run_number"], reverse=True)
-          run_victims = [row for row in run_rows[keep:] if row["status"] != "in_progress"]
-          print(f"匹配到 {len(run_rows)} 条 build.yml 运行记录,保留最近 {keep} 条;完整清单:")
-          for row in run_rows:
-              print(f"  {row['created_at']} run_number={row['run_number']} status={row['status']} id={row['id']}")
-          for row in run_victims:
-              print(f"DELETE RUN {row['created_at']} run_number={row['run_number']} id={row['id']}")
-              api(f"repos/{repo}/actions/runs/{row['id']}", method="DELETE")
-          left_runs = [row for row in runs()]
-          print(f"已删 {len(run_victims)} 条运行记录,复核后剩 {len(left_runs)} 条(上限 {keep})")
-          if len(left_runs) > keep:
-              sys.exit(f"清理后仍有 {len(left_runs)} 条运行记录,超过上限 {keep}")
+          clean_runs("build.yml", build_runs)
+          if prcheck_runs:
+              clean_runs("pr-check.yml", prcheck_runs)
+          else:
+              print("pr-check.yml:目前没有任何运行记录(还没有 PR 触发过),无需清理")
           PY
