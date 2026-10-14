@@ -4,7 +4,7 @@
 
 ## 全局规范（不抄条文，只记落位）
 
-`GLOBAL.md` 的条文不抄进本文件——本仓库怎么落位见下面「项目核对清单」「CI 权限与清理」「项目取舍」三节；冲突时以 `GLOBAL.md` 为准并当轮更新本文件。三条不在那三节里、必须常驻的（2026-10-14：`GLOBAL.md` 5dc0d28 整条删除了检讨条款，本文件同步删除，不再保留；错误照旧当轮改条文、当轮报结果，不另写检讨文书）：
+`GLOBAL.md` 的条文不抄进本文件——本仓库怎么落位见下面「项目核对清单」「CI 权限与清理」「项目取舍」三节；冲突时以 `GLOBAL.md` 为准并当轮更新本文件。三条不在那三节里、必须常驻的：
 
 - **改动落地**：任何本轮本地改动必须最终提交并推送到当前远端分支，任务结束不留未提交或未推送的改动。
 - **分支**：会话固定在工作分支提交并推送，不直接推 `main`（清理类删除不受此限）；会话分支删除的唯一判据是工作已继承进默认分支，删前用 `compare` 核对 `ahead_by=0`；PR 关闭而未合入、或仍挂开放 PR 的分支一律保留并报主人，不为凑数删。
@@ -36,6 +36,7 @@
 ## CI 权限与清理
 
 - 固定两个工作流文件，职责不混：**`build.yml`**（出包，唯一号源，只接 `push`[限 `main`] / `workflow_dispatch`）与 **`pr-check.yml`**（PR 校验，只接 `pull_request`，`contents: read`，不取号不出包不上传不清理）。禁止一个工作流文件同时接 `push` 与 `pull_request`——这正是外仓（Qself/Gself）刷号、号源分叉事故的根因：`run_number` 在运行创建时即分配，同一工作流收到 `push` 与 `pull_request` 双触发会各吃一个号，步骤级 `if` 只能跳过步骤、挡不住吃号。第三个工作流文件即冗余，发现即当轮合并或删除。
+- 已知风险（号源）：默认分支 `.github/workflows/build.yml` 仍含 `pull_request` 触发（现场核验 2026-10-14T06:53:50Z 附近，`contents/.github/workflows/build.yml?ref=main` 返回 `on: push: / pull_request: / workflow_dispatch:`，`push` 也未限定分支），从旧分支开的 PR 会按旧触发跑一次出包工作流、吃掉一个总序号；风险存续到本次交付（两工作流拆分 + `push` 限 `main`）进入默认分支为止。本会话不向非本会话的开放 PR 分支推送，也不做关闭 PR 的动作。当前只有会话分支一个开放 PR #7，其 head 已含拆分后的 `build.yml`（只接 `push`[限 `main`] / `workflow_dispatch`），暂无能触发该风险的载体。
 - `build.yml`：`contents: read` + `actions: read`（只为读本工作流运行历史算版本号）；版本号在该 job 一处算定后写进产物元数据，构建配置只读它。出包用 `actions/upload-artifact`，上传不需要写权限。
 - 清理逻辑只有一份脚本 `.github/scripts/cleanup.py`，两处调用共用（判据、排序、日志措辞都只写一遍，不许各写一份）：
   - `build.yml` 的 `cleanup` job：唯一写权限（`actions: write`，`CLEANUP_APPLY=true`），`contents` 保持只读——本仓库 Release 数为 0 且 CI 不发版，用不上 `contents: write`，按最小化不申请；`needs: build` 出包成功后串行执行，**只在默认分支 `main` 上跑**（`build.yml` 已不接 `pull_request`，这里按 `github.ref == 'refs/heads/main'` 再做一道保险：会话分支用 `workflow_dispatch` 触发出包时不给这个 job 写权限、不跑清理）。

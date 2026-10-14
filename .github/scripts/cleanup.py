@@ -136,7 +136,7 @@ def main() -> None:
     prcheck_runs = workflow_runs(PRCHECK_WORKFLOW)
     event_by_run_id = {row["id"]: row["event"] for row in build_runs + prcheck_runs}
 
-    print(f"=== Selffont 清理脚本：{MODE}，KEEP={KEEP}，SEGMENTS={SEGMENTS}，当前运行 id={CURRENT_RUN_ID} ===")
+    print(f"=== Selffont 清理脚本：{MODE}，KEEP={KEEP}，SEGMENTS={SEGMENTS}，当前运行 id={CURRENT_RUN_ID}，PREFIX=Selffont- ===")
 
     # ---------------- artifact：口径 → 来源 → 重复当日序号 → 数量 ----------------
     candidates = [row for row in all_artifacts() if row["name"].lower().startswith(PROJECT_PREFIX)]
