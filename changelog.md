@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-14 · 补齐 GLOBAL.md 新版落位缺口：版本取数简化 + 运行记录清理
+
+- 从 `Sumicya/selfs` 的 `arena/2d001a47-selfs` 分支（PR #6 未合并前的临时入口）读到 GLOBAL.md 最新文本：总序号改用本次 run 的 `run_number` 直接计数（不再查「历史成功出包数」），workflow 重建跳变时把基线记进本仓 `AGENTS.md`；当日序号改用「head 提交在当日默认分支提交序列里的位次」，取不到（PR 运行的常态）就退化四段，不再是「三段缺一不可」。
+- `build.py` 按新口径重写：删掉 `day_index`/`success_total`/`published_total`/`reuse_attempt`（不再需要），新增 `commit_position`/`day_commit_index`/`run_number_baseline`；`stamp_version`/`version_core`/`default_output` 都支持四段退化；新增 `VERSION_RE4`。查当日提交用 GitHub `commits?since=...&until=...` 接口，时间串统一用 `Z` 后缀（排查到query 串里 `+00:00` 的 `+` 会被当空格转义，时间窗整体挪位，取数会静默错）。9 项自检（含重写后的 `version_stamp`/`version_numbers`）全部通过。
+- 补上 2026-10-13 记录的落位缺口：`.github/workflows/build.yml` 的 `cleanup` job 现在也删 `build.yml` 自己的运行记录（保留最近 5 条，按 `run_number` 排序、跳过仍在跑的），之前只删 artifact。
+- 同步改完 `AGENTS.md`（去掉版本号戳、改写计数口径与 CI 清理两节）、`README.md`（版本号说明与清理手动命令）。核实本仓库目前没有 `RUN_NUMBER_BASELINE` 记录（最新 `run_number` = 115，连续无跳变，workflow 没重建过）。
+- 本轮顺带确认：GitHub Release 资产下载（`releases/download/...`）会跳转到 `release-assets.githubusercontent.com`，不在沙箱允许访问的主机名单里，握手直接断线；仓库里直接提交的字体 git blob（如参照字体 `vf/*.ttf`）可以用 `git/blobs` API 取，不受这条限制——取证方式记进 `AGENTS.md` 的验证分层一节。
+
 ## 2026-10-13（续三）· 拐角半径 70→130 + 预览缓存失效修复 + 同步 GLOBAL.md 第 0 版
 
 - 主人反馈"拖 wght 都不变，圆在哪都是方的"：排查出两个独立问题。

@@ -144,4 +144,31 @@ jobs:
                 "获准人工发布时由发布者做发布后清理)")
           if releases > 1:
               print("WARNING: Release 超过 1 个,需要获准的人工操作清理(CI 无 contents 写权限)")
+
+          # 运行记录:有产物仓保留 5 条(规范)。只删本工作流(build.yml)的运行记录,完整分页,
+          # 不碰仍在跑的运行,删除前打印完整清单。
+          def runs():
+              rows, page = [], 1
+              while True:
+                  batch = [json.loads(line) for line in
+                           api(f"repos/{repo}/actions/workflows/build.yml/runs?per_page=100&page={page}",
+                               jq=".workflow_runs[]|{id,run_number,status,created_at}").splitlines()
+                           if line.strip()]
+                  if not batch:
+                      return rows
+                  rows += batch
+                  page += 1
+
+          run_rows = sorted(runs(), key=lambda row: row["run_number"], reverse=True)
+          run_victims = [row for row in run_rows[keep:] if row["status"] != "in_progress"]
+          print(f"匹配到 {len(run_rows)} 条 build.yml 运行记录,保留最近 {keep} 条;完整清单:")
+          for row in run_rows:
+              print(f"  {row['created_at']} run_number={row['run_number']} status={row['status']} id={row['id']}")
+          for row in run_victims:
+              print(f"DELETE RUN {row['created_at']} run_number={row['run_number']} id={row['id']}")
+              api(f"repos/{repo}/actions/runs/{row['id']}", method="DELETE")
+          left_runs = [row for row in runs()]
+          print(f"已删 {len(run_victims)} 条运行记录,复核后剩 {len(left_runs)} 条(上限 {keep})")
+          if len(left_runs) > keep:
+              sys.exit(f"清理后仍有 {len(left_runs)} 条运行记录,超过上限 {keep}")
           PY

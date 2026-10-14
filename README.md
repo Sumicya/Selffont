@@ -34,18 +34,17 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成文渊）
 ```
 
-产物名跟版本走：`build/Selffont-<五段版本>.zip`；没有五段版本数据就不出包（规范：取数失败停止出包和上传，五段格式不可豁免）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
+产物名跟版本走：`build/Selffont-<版本>.zip`；没有规范版本数据就不出包（取数失败停止出包和上传）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
-**版本号（五段，展示不含 `v`）**：`yy.m.d.当日序号.总序号`（第四段 = 当日序号，第五段 = 总序号），`versionCode` = 第五段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
+**版本号（展示不含 `v`）**：五段 `yy.m.d.当日序号.总序号`，当日序号取不到时退化四段 `yy.m.d.总序号`；`versionCode` = 最后一段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
-- 计数对象 = 仓库唯一构建工作流 `Build Selffont`（`.github/workflows/build.yml`）的运行历史，现场查、不写死现值；取数在这一次运行里算定，构建只用算出的三个值。
-- **只认本次运行的身份**（`GITHUB_RUN_ID` / `GITHUB_RUN_ATTEMPT`，`created_at` 从本 run 对象取，不 list 后取最新）：日期 = `created_at` 换算 UTC+8 的 `yy.m.d`；**当日序号** = 当天在本次运行之前已触发的运行数 + 1（含失败与取消——它们确实占掉当天一次构建；同一时刻的并发运行按 `run_number` 分先后，不抢号）；**总序号** = 本仓库历史成功出包的构建数 + 1（失败与取消不增加总序号），并与已出包产物的最大总序号取大后再 + 1，换口径不回退。
-- **重试不重新加号**：`GITHUB_RUN_ATTEMPT > 1` 时从本 run 已上传的 artifact 名读回第一次 attempt 定下的版本号；读不到就报错停住，不编数。
-- **本地不算号**：`--query-github` 只在 CI 里能用，环境里没有 `GITHUB_RUN_ID` 直接报错；本地出包必须显式传齐 `--date/--day/--build`，三个数的可追溯性由打包的人负责（规范第二十四版要求本地口径单独写明，见 `AGENTS.md`）。
-- 衔接：旧口径的总序号 = `run_number`（含失败与 PR，2026-10-10 已到 106），新口径的历史成功出包数只有 75，直接切会回退到 76，所以取两者的最大值再 + 1——**从 run 107 起按新口径**，序号继续单调递增。
-- 三段版本数据（日期、当日序号、总序号）**缺一不可**：`build.py` 不再退化写四段、也不再出「非发行版本」的包；`module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
+- 计数对象 = 仓库唯一构建工作流 `Build`（`.github/workflows/build.yml`）本次运行的身份（`GITHUB_RUN_ID` / `GITHUB_RUN_NUMBER` / `GITHUB_SHA`，`created_at` 从本 run 对象取，不 list 后取最新），现场查、不写死现值。
+- **总序号** = 本次 run 的 `run_number`（含失败与 PR），按 `AGENTS.md` 记录的 `RUN_NUMBER_BASELINE` 相减；没记录过基线就用原值（本仓库目前没有这一行，workflow 没重建过）。`run_attempt` 不影响 `run_number`，重试天然复用同一个号。
+- **当日序号** = 本次 run 的 head 提交在当日（UTC+8）默认分支提交序列里的位次；head 不在默认分支历史里（PR 运行的常态）就取不到，版本号退化成四段，CI 日志写明原因。
+- **本地不算号**：`--query-github` 只在 CI 里能用，环境里没有 `GITHUB_RUN_ID` 直接报错；本地出包必须显式传齐 `--date/--build`（不传 `--day` 就是四段），数的可追溯性由打包的人负责（见 `AGENTS.md`）。
+- `module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**push 与 PR 都上传**模块包本身为 Actions artifact（名 = `Selffont-<五段版本>`；**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<五段版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合五段格式，`retention-days: 5` 只是时间兜底）；出包成功后自动滚动清理旧 artifact——**跨分支、跨触发事件合计只留最近 5 个**：`selffont-` 前缀（不分大小写）只用于筛候选，归属再按 `workflow_run` 的运行记录核验（`repository_id` / `head_repository_id` 必须是本仓库），归属不明的对象保留不删，删完复核数量、超限就报错。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。清理 job 是唯一有写权限的 job（`actions: write`，只删 artifact，`contents` 保持只读——本仓库 Release 数为 0 且 CI 不发版，按最小化不申请 `contents: write`），且**只在默认分支 `main` 上跑**：PR 的合并 ref 与其他分支的代码都不可信，不给写权限。代价是只在分支上推送时清理不触发、artifact 会暂时超过 5 个，由下一次 `main` 构建收口（急用下面的 `gh api -X DELETE` 手动删）。
+CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**push 与 PR 都上传**模块包本身为 Actions artifact（名 = `Selffont-<版本>`；**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合版本格式，`retention-days: 5` 只是时间兜底）；出包成功后自动滚动清理旧 artifact 与旧运行记录——**跨分支、跨触发事件各自合计只留最近 5 个**：`selffont-` 前缀（不分大小写）只用于筛候选 artifact，归属再按 `workflow_run` 的运行记录核验（`repository_id` / `head_repository_id` 必须是本仓库），归属不明的对象保留不删；运行记录只清理 `build.yml` 自己的（按 `run_number` 排序，跳过仍在跑的），删完都复核数量、超限就报错。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。清理 job 是唯一有写权限的 job（`actions: write`，删 artifact 与运行记录，`contents` 保持只读——本仓库 Release 数为 0 且 CI 不发版，按最小化不申请 `contents: write`），且**只在默认分支 `main` 上跑**：PR 的合并 ref 与其他分支的代码都不可信，不给写权限。代价是只在分支上推送时清理不触发、artifact/运行记录会暂时超过 5 个，由下一次 `main` 构建收口（急用下面的 `gh api -X DELETE` 手动删）。
 
 ```sh
 # 最近一次非 PR 运行的 artifact 就是模块包本身:下载下来直接刷,不用再解一层
@@ -57,10 +56,13 @@ curl -fL -H "Authorization: token $(gh auth token)" -o "$2.zip" \
 ls -l "$2.zip" && unzip -p "$2.zip" module.prop    # 约 100 MB 量级才正常
 # 用 gh run download 的话记得 -D 指一个空目录:artifact 是目录内容,会摊开
 
-# 滚动清理已自动执行(保留最近 5 个);要提前删(凭据需含 actions: write):
+# 滚动清理已自动执行(保留最近 5 个 artifact + 5 条运行记录);要提前删(凭据需含 actions: write):
 gh api --paginate repos/Sumicya/Selffont/actions/artifacts \
   --jq '.artifacts[] | "\(.created_at) \(.id) \(.name) \(.size_in_bytes)"'
 gh api -X DELETE repos/Sumicya/Selffont/actions/artifacts/<id>
+gh api --paginate repos/Sumicya/Selffont/actions/workflows/build.yml/runs \
+  --jq '.workflow_runs[] | "\(.created_at) \(.id) \(.run_number) \(.status)"'
+gh api -X DELETE repos/Sumicya/Selffont/actions/runs/<id>
 ```
 
 ## 安装 / 卸载

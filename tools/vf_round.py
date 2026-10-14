@@ -53,6 +53,35 @@ CORNER_SHORT_SHARED = 200              # 两个拐角之间的连接段短于这
                                         # 两头都不圆；国/回外框那种长边不受影响
 
 
+CORNER_COLLINEAR_TOL = 2.5  # 单位(1000upm)。detect_corners 专用的更严格共线判断：
+                            # straight[(i,j)] 原本的定义只看"i、j 之间有没有 on-curve
+                            # 点"，但这个条件对"中间插了好几个 off-curve 点、靠数量凑
+                            # 跨字重点数一致"的边够用——它没有检查这些 off-curve 点是否
+                            # 真的落在 i-j 的直线上。拐角削圆的公式假设两边都是真直线，
+                            # 如果其中一边其实是一段很浅的曲线（比如"戈"钩笔中部那种几
+                            # 个单位的轻微弯折，实测偏离直线约 4 个单位），按直线套用这
+                            # 套公式会裁错位置，在 Heavy 字重复现过自相交（"成"字戈钩
+                            # 实测复现）。这里额外核一遍所有中间点到弦的垂直距离，超过
+                            # 容差就不当拐角候选处理——跟本仓库"不确定就不碰"一致。
+
+
+def _collinear_enough(contour, i, j, n, tol=CORNER_COLLINEAR_TOL):
+    """i→j 之间的所有点（含 off-curve）是否都落在弦 i-j 的直线附近（容差 tol）。"""
+    ax, ay = contour[i][0], contour[i][1]
+    bx, by = contour[j][0], contour[j][1]
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return True
+    rng = range(i + 1, j) if i < j else (list(range(i + 1, n)) + list(range(0, j)))
+    for k in rng:
+        px, py = contour[k][0], contour[k][1]
+        cross = dx * (py - ay) - dy * (px - ax)
+        if abs(cross) / length > tol:
+            return False
+    return True
+
+
 def _contour_winding(contour, anchors):
     """锚点多边形的有向面积符号：正=逆时针，负=顺时针（标准数学 y 朝上坐标）。"""
     area = 0.0
@@ -101,11 +130,32 @@ def _point_covered(x, y, polys):
     return _winding_number(x, y, polys) != 0
 
 
-def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set):
-    """找"该不该仿筑紫逢角必圆"的直角拐角：两条长直线之间的凸角（不是自由端头、
-    不是尖锋、也不是 T 形接口留下的凹切口——凹切口用绕行方向的凸/凹判断剔除）。
-    返回 {anchor 原始点序号: half_radius_hint}（半径按该字重自己的边长重算，这里
-    只记录"要不要圆"这个结构决定，跟 cap/tip 共用同一套"检测一次、各字重复用"的模型）。
+def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_polys=None):
+    """找"该不该仿筑紫逢角必圆"的直角拐角——凸角和凹角都找，不是只找凸角。
+
+    上一版只认"转向跟轮廓绕行方向相同"的凸角（国/回/田外框的四个角），把转向相反的
+    一律当成"T 形接口留下的凹切口"跳过不碰。这个判断是错的：凹角（两条笔画相交内侧
+    形成的直角，比如"口"字内框四角、横竖相交的内侧角）跟 T 形接口在"转向跟整条轮廓
+    绕行方向相反"这一个几何特征上完全没法区分，上一版把两者混为一谈，导致凡是凹角
+    一律不处理——但凹角在筑紫这类丸ゴシック里跟凸角一样会削成小圆角（往里填一点点
+    让缺口变圆，不是往外切），是"逢角必圆"里真实存在、肉眼能看到的那一半，不是可以
+    跳过的边缘情况。
+
+    凸角：削圆是把尖角往内收一点（圆弧控制点取原顶点，端点在两边各退 r），削掉一点
+    突出的材料。凹角：同一套公式原样套用，几何效果反过来——圆弧端点落在两边上，控制
+    点仍是原顶点，但顶点此刻正对着"缺口"（背景），弧线比直接连两个端点的弦更靠近顶点，
+    相当于往缺口里填一点点材料，把直角缺口变成一个小圆角缺口——这正是内角该有的效果，
+    公式不用改，只需要不再按转向把它们滤掉。
+
+    凹角比凸角多一层真实风险：往缺口里"填"材料，如果这个缺口本身很窄（对面就是另一条
+    笔画，比如"回"字外框跟内框之间的间距、或者两条笔画交叉留下的窄缝），半径稍大就会
+    把缺口糊住，啃到不该碰的地方。这里用环绕数在削圆圆弧的大致探入深度处探一下背景：
+    如果探测点已经被（这个字形里任何轮廓的）材料盖住，说明这个"缺口"比半径窄，这一个
+    角不安全，跳过不碰，跟本仓库"不确定就不碰"的一贯原则一致；凸角没有这层风险（削圆
+    只会让材料变少，不会主动去够旁边的东西），不需要这层探测。
+
+    返回 {anchor 原始点序号}（半径按该字重自己的边长重算，这里只记录"要不要圆"这个
+    结构决定，跟 cap/tip 共用同一套"检测一次、各字重复用"的模型）。
     """
     if len(anchors) < 4:
         return set()
@@ -118,6 +168,8 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set):
         j = anchors[(k + 1) % len(anchors)]
         if not (straight.get((h, i)) and straight.get((i, j))):
             continue
+        if not (_collinear_enough(contour, h, i, n) and _collinear_enough(contour, i, j, n)):
+            continue  # straight[] 只看"中间没有 on-curve 点"，没查真共线，这里补一道
         d_in, len_in = _unit(contour[h], contour[i])
         d_out, len_out = _unit(contour[i], contour[j])
         if len_in < 4 or len_out < 4:
@@ -128,8 +180,18 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set):
         if not (CORNER_MIN_ANGLE <= angle <= CORNER_MAX_ANGLE):
             continue
         turn_sign = 1 if cross > 0 else -1
-        if turn_sign != winding:
-            continue  # 转向跟整条轮廓的绕行方向相反 = 凹切口（T 形接口的痕迹），不碰
+        is_concave = turn_sign != winding
+        if is_concave:
+            # 凹角：往缺口里填材料有风险，削圆前探一下缺口够不够宽，不够宽就不碰。
+            r_probe = min(len_in, len_out) * CORNER_R_RATIO
+            r_probe = min(r_probe, CORNER_R_MAX)
+            vx, vy = contour[i][0], contour[i][1]
+            p1 = (vx - d_in[0] * r_probe, vy - d_in[1] * r_probe)
+            p2 = (vx + d_out[0] * r_probe, vy + d_out[1] * r_probe)
+            apex = (0.25 * p1[0] + 0.5 * vx + 0.25 * p2[0],
+                    0.25 * p1[1] + 0.5 * vy + 0.25 * p2[1])
+            if all_polys is not None and _point_covered(apex[0], apex[1], all_polys):
+                continue  # 缺口比半径窄，探测点已经撞进材料里，不碰这个凹角
         # 半径按 min(len_in, len_out)*CORNER_R_RATIO（<0.5）取，天然不会吃穿任何一边，
         # 这里不需要再叠一层"边长须是半径几倍"的门槛（之前写的那层在两边长度接近时
         # 数学上永远不可能满足，等于把所有正常方角都滤掉了）。
@@ -163,7 +225,11 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set):
 
 
 def detect(glyph, glyf_table):
-    """只做判断，不改坐标。返回 (cap_plan, tip_plan, corner_plan)：
+    """只做结构判断，不涉及"切多大才安全"——那部分跟每个字重自己的绝对坐标
+    尺度有关（同一个比例，Heavy 的绝对半径比 Regular 大很多），不能只用参照
+    字重的坐标去判，必须在所有字重上都验证过才安全（见 plan_safety()）。
+    这里只回答"这个点结构上算不算尖锋/端头/拐角"，返回 (cap_plan, tip_plan,
+    corner_plan)：
     cap_plan[contour_idx] = {k 值集合}（k 是该轮廓 anchors 列表里的序号）
     tip_plan[contour_idx] = {anchor 原始点序号集合}
     corner_plan[contour_idx] = {anchor 原始点序号集合}
@@ -243,13 +309,223 @@ def detect(glyph, glyf_table):
             b = anchors[(k + 1) % len(anchors)]
             cap_anchor_points.add(i)
             cap_anchor_points.add(b)
-        corners = detect_corners(contour, n, anchors, straight, cap_anchor_points, tips)
+        corners = detect_corners(contour, n, anchors, straight, cap_anchor_points, tips, all_polys)
         if corners:
             corner_plan[c] = corners
     return cap_plan, tip_plan, corner_plan
 
 
-def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan):
+def _flatten_quad(p0, c, p1, steps=8):
+    pts = []
+    for k in range(steps + 1):
+        t = k / steps
+        mt = 1 - t
+        pts.append((mt * mt * p0[0] + 2 * mt * t * c[0] + t * t * p1[0],
+                    mt * mt * p0[1] + 2 * mt * t * c[1] + t * t * p1[1]))
+    return pts
+
+
+def _seg_cross(p1, p2, p3, p4):
+    """两条直线段 p1-p2、p3-p4 是不是真的交叉（不含端点重合/共线贴边这种
+    擦边情况，只认"穿过去了"）。"""
+    def _cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    d1 = _cross(p3, p4, p1)
+    d2 = _cross(p3, p4, p2)
+    d3 = _cross(p1, p2, p3)
+    d4 = _cross(p1, p2, p4)
+    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+
+
+def _tip_self_crosses(p1, q1, apex, q2, nxt, prev=None):
+    """尖锋削完之后会生成两段首尾相接于 apex 的弧（p1-q1-apex 和
+    apex-q2-nxt）。当 q2 把曲线往回拉的时候，第二段会贴着共享点 apex 附近
+    就立刻绕回去再切第一段一刀——折返点离 apex 可能很近，不能简单掐掉两头
+    贴着 apex 的那一小段再比（会把真正出问题的地方一起扔掉），这里按细分
+    的每一段逐一比对，只跳过"A 最后一段 vs B 第一段"这一对——它们本来就
+    共享 apex 这一个端点，不算交叉；其余所有组合（哪怕紧挨着 apex）都要
+    比。"""
+    A = _flatten_quad(p1, q1, apex, steps=24)
+    B = _flatten_quad(apex, q2, nxt, steps=24)
+    nA, nB = len(A) - 1, len(B) - 1
+    for i in range(nA):
+        for j in range(nB):
+            if i == nA - 1 and j == 0:
+                continue  # 共享 apex 这一个端点，跳过
+            if _seg_cross(A[i], A[i + 1], B[j], B[j + 1]):
+                return True
+    if prev is not None:
+        # 第三种折返：q1 把 A 拉弯以后，A 自己可能在快到 p1 的地方就绕回去，
+        # 切穿了"从上一个锚点直线走进 p1"这一段原本笔直的来路——这段来路
+        # 跟 A 共享 p1 这一个端点，要跳过"来路最后一段 vs A 第一段"这一对，
+        # 其余逐段比对（u25D43 实测复现过：交叉点几乎正好落在来路的延长线
+        # 上，离 p1 很近，不能只看 A 跟 B 两段自己）。
+        for k in range(nA):
+            if k == 0:
+                continue  # 共享 p1 这一个端点，跳过
+            if _seg_cross(prev, p1, A[k], A[k + 1]):
+                return True
+    return False
+
+
+def _compute_drop_set(contour, n, anchors, corner_idx, tip_idx):
+    """算出"被削进拐角/尖锋范围内、该整体丢弃的共线中间点"，返回一个按原始
+    点序号记的集合。只在参照字重上调用一次（detect() 里），所有字重原样
+    套用这个集合——不能让每个字重按自己的坐标距离各自决定丢几个点，不然
+    字重之间点数会对不上，没法再喂给 varLib.build 插值（实测 uni31E1 等
+    5618+ 个字形复现过这个问题）。"""
+    if not (corner_idx or tip_idx):
+        return set()
+    anchor_pos = {a: k for k, a in enumerate(anchors)}
+
+    def _corner_radius(i):
+        k = anchor_pos[i]
+        h = anchors[(k - 1) % len(anchors)]
+        j = anchors[(k + 1) % len(anchors)]
+        d_in, len_in = _unit(contour[h], contour[i])
+        d_out, len_out = _unit(contour[i], contour[j])
+        ratio_in = CORNER_SHARED_RATIO if h in corner_idx else CORNER_R_RATIO
+        ratio_out = CORNER_SHARED_RATIO if j in corner_idx else CORNER_R_RATIO
+        return min(len_in * ratio_in, len_out * ratio_out, CORNER_R_MAX)
+
+    def _tip_radius(i):
+        k = anchor_pos[i]
+        h = anchors[(k - 1) % len(anchors)]
+        j = anchors[(k + 1) % len(anchors)]
+        _, len_in = _unit(contour[h], contour[i])
+        _, len_out = _unit(contour[i], contour[j])
+        return min(TIP_R, len_in * 0.3, len_out * 0.3) * tip_idx[i]
+
+    corner_r = {i: _corner_radius(i) for i in corner_idx}
+    vertex_r = dict(corner_r)
+    for i in tip_idx:
+        vertex_r[i] = _tip_radius(i)
+
+    drop = set()
+    for k in range(len(anchors)):
+        i = anchors[k]
+        j = anchors[(k + 1) % len(anchors)]
+        interior = (list(range(i + 1, j)) if i < j
+                    else list(range(i + 1, n)) + list(range(0, j)))
+        if i in vertex_r and interior:
+            r_i = vertex_r[i]
+            vx, vy = contour[i][0], contour[i][1]
+            while interior and _unit((vx, vy), contour[interior[0]])[1] < r_i:
+                drop.add(interior.pop(0))
+        if j in vertex_r and interior:
+            r_j = vertex_r[j]
+            vx, vy = contour[j][0], contour[j][1]
+            while interior and _unit((vx, vy), contour[interior[-1]])[1] < r_j:
+                drop.add(interior.pop())
+    return drop
+
+
+def plan_safety(glyphs_by_weight, glyf_tables_by_weight, tip_plan, corner_plan):
+    """detect() 判完"结构上哪些点算尖锋/拐角"之后，"切多大才不会自己切出
+    自交"必须在每个字重自己的绝对坐标上分别验证——同一个比例，粗字重笔画
+    绝对尺寸大，削出来的半径/控制点间距也大，参照字重（通常是 Regular）
+    觉得安全的半径，套到 Heavy 上可能已经自交了（反过来，共线中间点该丢
+    几个也是同理：参照字重算出来的半径够不着的点，粗字重可能已经够得着，
+    不丢就会在粗字重上自交——uni31E1/glyph01063 等实测都复现过）。
+
+    这里对每个字重各自算一遍"尖锋缩水到多少才安全""该丢哪些共线点"，尖锋
+    缩水比例取所有字重里最保守（最小）的一个，共线点丢弃集合取所有字重的
+    并集（多丢几个冗余共线点不影响形状，只会更安全）——这样保证这一份决定
+    套到任何一个字重都安全，而且所有字重用的是同一份决定，削完点数/点序
+    不会对不上，能继续喂给 varLib.build 插值。
+
+    返回 (tip_shrink_plan, drop_plan)，两者都按 contour_idx 分组，结构
+    跟 tip_plan/corner_plan 一致。
+    """
+    tip_shrink_plan, drop_plan = {}, {}
+    contour_lists = {}
+    for wname, g in glyphs_by_weight.items():
+        glyf_table = glyf_tables_by_weight[wname]
+        if g.isComposite() or g.numberOfContours is None or g.numberOfContours <= 0:
+            return tip_shrink_plan, drop_plan
+        contour_lists[wname] = list(_split_contours(g, glyf_table))
+    contours_count = {len(v) for v in contour_lists.values()}
+    if len(contours_count) != 1:
+        return tip_shrink_plan, drop_plan  # 字重之间轮廓数都对不上，这里不碰，交给上层原样跳过
+    n_contours = contours_count.pop()
+    for c in range(n_contours):
+        tip_idx = tip_plan.get(c, set())
+        corner_idx = corner_plan.get(c, set())
+        if not (tip_idx or corner_idx):
+            continue
+        contours = [contour_lists[w][c] for w in contour_lists]
+        n = len(contours[0])
+        anchors = [i for i in range(n) if contours[0][i][2]]
+
+        shrink_per_vertex = {}
+        for i in tip_idx:
+            k = anchors.index(i)
+            h = anchors[(k - 1) % len(anchors)]
+            j = anchors[(k + 1) % len(anchors)]
+            worst_shrink = 1.0
+            for contour in contours:
+                d_in, len_in = _unit(contour[h], contour[i])
+                d_out, len_out = _unit(contour[i], contour[j])
+                r_tip = min(TIP_R, len_in * 0.3, len_out * 0.3)
+                vx, vy = contour[i][0], contour[i][1]
+                probe = (list(range(i + 1, j)) if i < j
+                         else list(range(i + 1, n)) + list(range(0, j)))
+                while probe and _unit((vx, vy), contour[probe[0]])[1] < r_tip:
+                    probe.pop(0)
+                shrink = 1.0
+                ok = False
+                for _ in range(6):
+                    rr = r_tip * shrink
+                    p1 = (vx + d_in[0] * rr, vy + d_in[1] * rr)
+                    p2 = (vx + d_out[0] * rr, vy + d_out[1] * rr)
+                    bis, _ = _unit(p1, p2)
+                    dist = rr * 0.9
+                    apex = ((p1[0] + p2[0]) / 2 + bis[0] * dist, (p1[1] + p2[1]) / 2 + bis[1] * dist)
+                    q1 = (vx + d_in[0] * rr * 0.2, vy + d_in[1] * rr * 0.2)
+                    q2 = (vx + d_out[0] * rr * 0.2, vy + d_out[1] * rr * 0.2)
+                    # q2 后面紧跟的那条曲线真正在哪里收尾：probe[0]（如果还剩）
+                    # 永远是 off-curve 控制点，不是曲线端点——q2 自己也是
+                    # off-curve，q2 跟 probe[0] 连续两个 off-curve 之间要插一个
+                    # 虚拟 on-curve 中点（TrueType 二次曲线规则），这才是 q2
+                    # 这条曲线真正的终点；probe 空的话端点就是下一个锚点 j。
+                    # q2 随 shrink 变化，这个中点也要跟着每次重算，不能在循环
+                    # 外算一次就固定（用错端点会让校验的曲线比实际画出来的长/
+                    # 短，可能漏判出一个真会自交的尖锋，u25D43 实测复现过）。
+                    if probe:
+                        pb = contour[probe[0]]
+                        nxt = ((q2[0] + pb[0]) / 2, (q2[1] + pb[1]) / 2)
+                    else:
+                        nxt = (contour[j][0], contour[j][1])
+                    # 字形最终落盘时坐标会取整（_write_back 里 round 成 int）——
+                    # 用浮点精度判"会不会自交"可能刚好把真正造成折返的那一点点
+                    # 取整误差漏掉（uni4D84 实测复现过：浮点算出来不自交，取整
+                    # 以后反而自交），这里按最终真正会写进字体的取整坐标来判。
+                    rp1, rq1, rapex, rq2, rnxt = (
+                        (round(p1[0]), round(p1[1])), (round(q1[0]), round(q1[1])),
+                        (round(apex[0]), round(apex[1])), (round(q2[0]), round(q2[1])),
+                        (round(nxt[0]), round(nxt[1])))
+                    rprev = (round(contour[h][0]), round(contour[h][1]))
+                    if not _tip_self_crosses(rp1, rq1, rapex, rq2, rnxt, prev=rprev):
+                        ok = True
+                        break
+                    shrink *= 0.5
+                worst_shrink = min(worst_shrink, shrink if ok else 0.0)
+            if worst_shrink > 0:
+                shrink_per_vertex[i] = worst_shrink
+            # 所有字重缩到最小都还会自交，放弃削这个尖锋——不收进
+            # shrink_per_vertex，apply_all 会把它当成普通锚点原样保留。
+
+        drops = set()
+        for contour in contours:
+            drops |= _compute_drop_set(contour, n, anchors, corner_idx, shrink_per_vertex)
+        if shrink_per_vertex:
+            tip_shrink_plan[c] = shrink_per_vertex
+        if drops:
+            drop_plan[c] = drops
+    return tip_shrink_plan, drop_plan
+
+
+def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan, drop_plan):
     """单趟组合应用：尖锋/端头/拐角三种变换在同一份原始锚点快照上一次性算完，
     不再分三次调用、不再在两次调用之间重新扫描锚点——避免前一遍改了点数后，
     后一遍按老的"第 k 个锚点"编号去套会对错位置（tip/cap 都会让锚点数变多）。
@@ -262,7 +538,7 @@ def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan):
     new_all = []
     for c, contour in enumerate(_split_contours(glyph, glyf_table)):
         n = len(contour)
-        tip_idx = tip_plan.get(c, set())
+        tip_idx = tip_plan.get(c, {})
         cap_ks = cap_plan.get(c, set())
         corner_idx = corner_plan.get(c, set())
         if not (tip_idx or cap_ks or corner_idx):
@@ -272,12 +548,22 @@ def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan):
         if not anchors:
             new_all.append(contour)
             continue
+        drops = drop_plan.get(c, set())
+        # 每个顶点自己用当前字重坐标重算方向向量/半径（下面 tip/corner 分支里
+        # 做），但"该不该把某个共线中间点整体丢掉"这件事不能按当前字重的坐标
+        # 距离现场判——不同字重同一处的绝对间距不一样，会导致有的字重判定
+        # "在范围内该丢"、另一些字重判定"不在范围内不丢"，削完两个字重点数
+        # 对不上，没法再喂给 varLib.build 插值（实测 uni31E1 等 5618+ 个字形
+        # 复现过）。drops 是 detect() 在参照字重上一次性判好、所有字重原样
+        # 套用的丢弃点集合。
         segs = []
         for k in range(len(anchors)):
             i = anchors[k]
             j = anchors[(k + 1) % len(anchors)]
             interior = (list(range(i + 1, j)) if i < j
                         else list(range(i + 1, n)) + list(range(0, j)))
+            if drops:
+                interior = [t for t in interior if t not in drops]
             segs.append({"a": i, "interior": interior, "cap": k in cap_ks})
         out = []
         skip_anchor = False
@@ -307,19 +593,25 @@ def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan):
                 out.append((bx, by, True))
                 skip_anchor = True
                 made += 1
-                out.extend(contour[t] for t in seg["interior"])
+                # 注意：这里不再把 seg["interior"] 原样接到弧线后面。这段 interior
+                # 是"削平头"之前那条直线 i→b 自己的共线冗余点（跨字重点数对齐用，
+                # 不是真弯）——平头弧把 i→b 整段都换成了一条新的鼓包弧线，这些老
+                # 直线上的点现在完全对不上弧线的新形状，原样接上去会在弧线末尾
+                # 后面再折回旧直线位置，形成自相交（"乱"等含共线端头的字实测
+                # 复现过）。丢掉它们，端头前后两段分别正常相连，形状不受影响。
                 continue
             if i in tip_idx:
                 h = anchors[(k - 1) % len(anchors)]
                 j = anchors[(k + 1) % len(anchors)]
                 d_in, len_in = _unit(contour[h], contour[i])
                 d_out, len_out = _unit(contour[i], contour[j])
-                # 哪些点是尖锋是按参照字重（Regular）的比例判出来的，但每个字重自己的
-                # 坐标不一样——粗字重同一个钩子，相邻线段可能比参照字重短很多，固定的
-                # TIP_R 偏移量会探出这段线段本身，削出来的弧线段自我交叉，变成一团乱线
-                # （Heavy 的"电"钩尖实测复现过）。这里按当前字重自己的线段长度封顶半径，
-                # 不再直接信一个跨字重通用的绝对值。
-                r_tip = min(TIP_R, len_in * 0.3, len_out * 0.3)
+                # 哪些点是尖锋、以及"切多大会自交所以要缩多少"，都是在参照字重上
+                # 一次性判好的（detect() 里算的 shrink 比例，tip_idx[i]）——这里
+                # 不能让每个字重各自临场再判一遍要不要缩/缩多少，否则字重之间切
+                # 出来的点数可能对不上，没法再喂给 varLib.build 插值。每个字重
+                # 只用自己的坐标重新算方向向量/半径，缩水比例原样套用参照字重的
+                # 决定。
+                r_tip = min(TIP_R, len_in * 0.3, len_out * 0.3) * tip_idx[i]
                 vx, vy = contour[i][0], contour[i][1]
                 p1 = (vx + d_in[0] * r_tip, vy + d_in[1] * r_tip)
                 p2 = (vx + d_out[0] * r_tip, vy + d_out[1] * r_tip)
@@ -333,6 +625,12 @@ def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan):
                 out.append(q1 + (False,))
                 out.append(apex + (True,))
                 out.append(q2 + (False,))
+                # 注意：这里不补 p2——p2 只是用来算 apex 朝哪个方向鼓出去的
+                # 几何辅助点，不是真正要落在轮廓上的点（试过把它接到 q2 后面，
+                # apex 跟 p2 几乎是贴在一起的两个点，中间硬插一段往回绕的弧，
+                # 反而在尖锋自己身上多切一刀自交，实测在非 GB2312 范围内新增
+                # 了 178 个自交字形，回滚）。q2 之后直接跟上面过滤剩下的
+                # interior/下一个锚点正常相连即可。
                 made += 1
             elif i in corner_idx:
                 h = anchors[(k - 1) % len(anchors)]
@@ -384,7 +682,7 @@ def main():
     parser.add_argument("instances", nargs="+", help="NAME=PATH.ttf，所有要同步圆角的字重实例")
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--corners", action="store_true",
-                         help="仿筑紫逢角必圆：L 形直角拐角（如国/回/田的外框角）也圆，默认关闭")
+                         help="仿筑紫逢角必圆：凸角（国/回/田外框角）和凹角（内框角、横竖相交内侧角）都圆，默认关闭")
     args = parser.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -403,15 +701,40 @@ def main():
     print(f"参照字重检测出 {len(cap_plans)} 个字形有端头、{len(tip_plans)} 个字形有尖锋、"
           f"{len(corner_plans)} 个字形有直角拐角" + ("（本次已套用）" if args.corners else "（本次未套用，加 --corners 打开）"))
 
+    # "切多大才安全"跟每个字重自己的绝对坐标尺度有关，必须在全部要出的字重
+    # 上都验证过才作数（见 plan_safety() 的注释）——这里先把所有实例字重都
+    # 加载进内存，再按字形逐个算一份"所有字重共用、对所有字重都安全"的
+    # 尖锋缩水比例/共线点丢弃集合，最后才真正落笔改坐标、分别存盘。
+    fonts, glyfs = {}, {}
     for spec in args.instances:
         name, path = spec.split("=", 1)
         font = TTFont(path)
-        glyf = font["glyf"]
+        fonts[name] = font
+        glyfs[name] = font["glyf"]
+
+    tip_shrink_plans, drop_plans = {}, {}
+    corner_plans_eff = corner_plans if args.corners else {}
+    for gname in ref_font.getGlyphOrder():
+        tip_idx_any = tip_plans.get(gname)
+        corner_idx_any = corner_plans_eff.get(gname)
+        if not (tip_idx_any or corner_idx_any):
+            continue
+        glyphs_by_weight = {w: glyfs[w][gname] for w in fonts}
+        tip_shrink_plan, drop_plan = plan_safety(
+            glyphs_by_weight, glyfs, tip_idx_any or {}, corner_idx_any or {})
+        if tip_shrink_plan:
+            tip_shrink_plans[gname] = tip_shrink_plan
+        if drop_plan:
+            drop_plans[gname] = drop_plan
+
+    for name, font in fonts.items():
+        glyf = glyfs[name]
         total = rounded = 0
         for gname in font.getGlyphOrder():
             g = glyf[gname]
-            made = apply_all(g, glyf, tip_plans.get(gname, {}), cap_plans.get(gname, {}),
-                              corner_plans.get(gname, {}) if args.corners else {})
+            made = apply_all(g, glyf, tip_shrink_plans.get(gname, {}), cap_plans.get(gname, {}),
+                              corner_plans_eff.get(gname, {}),
+                              drop_plans.get(gname, {}))
             if made:
                 rounded += 1
                 total += made
