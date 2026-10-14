@@ -44,7 +44,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 - **本地不算号**：`--query-github` 只在 CI 里能用，环境里没有 `GITHUB_RUN_ID` 直接报错；本地出包必须显式传齐 `--date/--build`（不传 `--day` 就是四段），数的可追溯性由打包的人负责（见 `AGENTS.md`）。
 - `module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI 拆成两个工作流：`.github/workflows/build.yml`（出包，只接 `push`[限 `main`] / `workflow_dispatch`）跑自检 + 一次构建并取号出包上传模块包本身为 Actions artifact；`.github/workflows/pr-check.yml`（PR 校验，只接 `pull_request`）只跑自检，不取号、不出包、不上传、不清理——两者是不同工作流文件，各有独立的 `run_number` 序列，PR 运行再多也碰不到 `build.yml` 的号段（同一提交若共用一个工作流文件会被 push 与 PR 各吃一个 `run_number`，外仓因此一夜把总序号刷了 50 多号，单靠步骤级 `if` 挡不住，必须拆文件）；artifact 名 = `Selffont-<版本>`，**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合版本格式，`retention-days: 5` 只是时间兜底）。出包成功后 `cleanup` job（唯一有写权限的 job，`actions: write`，**只在默认分支 `main` 上跑**）自动按三条判据滚动清理，`pr-check.yml` 不单挂清理作业，它的超量运行记录也由这个 job 一并删：**数量**（当日之外每条序列 artifact 5 个、run 5 条，序列按工作流分开计，当日的不设上限——当日序号取自当日运行列表，删当日运行会抽走计数基准，制造重复序号）、**命名口径**（产物版本段数必须等于 `build.yml` 顶部声明的 `env.SEGMENTS`，不符的当轮删，不豁免当日）、**产物来源**（`workflow_run` 事件是 `pull_request` 的产物一律删，不豁免当日——`build.yml` 已不接 `pull_request`，这条留给拆分前的历史遗留）；`selffont-` 前缀（不分大小写）只用于筛候选 artifact，归属再按 `workflow_run` 的 `repository_id` / `head_repository_id` 核验，归属不明的对象保留不删；三条判据都在清理 job 日志里打印命中清单与删除结果。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。会话分支用 `workflow_dispatch` 触发出包时不给清理 job 写权限、不跑清理，它产出的对象在下一次 `main` 构建时由清理 job 按上面三条判据收口，不需要人工介入。
+CI 拆成两个工作流：`.github/workflows/build.yml`（出包，只接 `push`[限 `main`] / `workflow_dispatch`）跑自检 + 一次构建并取号出包上传模块包本身为 Actions artifact；`.github/workflows/pr-check.yml`（PR 校验，只接 `pull_request`）只跑自检，不取号、不出包、不上传——两者是不同工作流文件，各有独立的 `run_number` 序列，PR 运行再多也碰不到 `build.yml` 的号段（同一提交若共用一个工作流文件会被 push 与 PR 各吃一个 `run_number`，外仓因此一夜把总序号刷了 50 多号，单靠步骤级 `if` 挡不住，必须拆文件）；artifact 名 = `Selffont-<版本>`，**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合版本格式，`retention-days: 5` 只是时间兜底）。
+
+清理逻辑只有一份脚本 `.github/scripts/cleanup.py`，两个工作流共用，靠 `CLEANUP_APPLY` 区分：`build.yml` 的 `cleanup` job（`actions: write`，`CLEANUP_APPLY=true`，**只在默认分支 `main` 上跑**）判定即删；`pr-check.yml` 的 `cleanup-preview` job（`actions: read`，`CLEANUP_APPLY=false`）只打印判据结论与将删名单，不调用 `DELETE`——这是会话侧够得着的真机证据，因为 `build.yml` 对会话分支天然不可达（push 限默认分支，`workflow_dispatch` 需要会话没有的 `actions: write`）。四条判据按固定顺序执行，前三条不豁免当日：**口径**（产物版本段数须等于顶部声明的 `env.SEGMENTS`）→ **来源**（`workflow_run` 事件是 `pull_request` 的产物一律删，这条留给拆分前的历史遗留）→ **重复当日序号**（同一天同一当日序号出现两次，保留总序号最大的）→ **数量**（当日之外每条序列 artifact 5 个、run 5 条，序列按工作流分开计，当日的不设上限——当日序号取自当日运行列表，删当日运行会抽走计数基准，制造重复序号）。**run 与 artifact 的承载关系**：删 run 连带删它的 artifact，承载被保留 artifact 的 run 不删、不计入 run 的数量上限；排序按 `run_started_at`，`id` 只作同刻 tiebreak。`selffont-` 前缀（不分大小写）只用于筛候选 artifact，归属再按 `workflow_run` 的 `repository_id` / `head_repository_id` 核验，归属不明的对象保留不删。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。会话分支用 `workflow_dispatch` 触发出包时不给 `cleanup` job 写权限、不跑清理，它产出的对象在下一次 `main` 构建时由该 job 按上述判据收口。
 
 ```sh
 # build.yml 不接 pull_request,其运行取回来的就是出包运行;最近一次的 artifact 就是模块包本身:
@@ -57,8 +59,10 @@ curl -fL -H "Authorization: token $(gh auth token)" -o "$2.zip" \
 ls -l "$2.zip" && unzip -p "$2.zip" module.prop    # 约 100 MB 量级才正常
 # 用 gh run download 的话记得 -D 指一个空目录:artifact 是目录内容,会摊开
 
-# 查看滚动清理的现状(只读,不删):清理由 cleanup job 用 runner 自带、带 actions: write 的令牌执行,
-# 不是会话令牌或人工的事——会话令牌对本仓库 actions 写同样是 403(实测,能力按权限类分不按仓库分,见 AGENTS.md)
+# 查看滚动清理的现状(只读,不删):清理逻辑是 .github/scripts/cleanup.py,由 build.yml 的
+# cleanup job 用 runner 自带、带 actions: write 的令牌执行,不是会话令牌或人工的事——会话令牌
+# 对本仓库 actions 写同样是 403(实测,能力按权限类分不按仓库分,见 AGENTS.md);pr-check.yml 的
+# cleanup-preview job 用同一份脚本跑只读预演,日志就是会话侧够得着的真机证据
 gh api --paginate repos/Sumicya/Selffont/actions/artifacts \
   --jq '.artifacts[] | "\(.created_at) \(.id) \(.name) \(.size_in_bytes)"'
 gh api --paginate repos/Sumicya/Selffont/actions/workflows/build.yml/runs \

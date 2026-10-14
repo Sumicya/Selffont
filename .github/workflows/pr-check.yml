@@ -10,6 +10,8 @@ name: PR check
 # 总序号，PR 运行再多也不会影响出包工作流（build.yml）的号段。
 on:
   pull_request:
+env:
+  SEGMENTS: "5"   # 跟 build.yml 保持同一个值,预演判据才对得上真删
 permissions:
   contents: read
 jobs:
@@ -26,3 +28,24 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Selfcheck (packager, metric normalization, module scripts)
         run: python build.py --check
+  cleanup-preview:
+    name: Cleanup preview (预演,只打印不删)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read   # 只读,不申请 write——这个 job 不删任何东西
+    steps:
+      - uses: actions/checkout@v7
+      # 跟 build.yml 的 cleanup job 共用同一份 .github/scripts/cleanup.py,CLEANUP_APPLY=false
+      # 时脚本只打印判据结论与将删名单,不调用 DELETE。出包工作流只在 push(限默认分支)与
+      # workflow_dispatch 触发,会话分支推送碰不到它,会话令牌也没有 actions: write 去手动
+      # dispatch——这个预演 job 是会话侧唯一够得着的真机证据,不是真删的替代品。
+      - name: 清理判据预演（口径 / 来源 / 重复当日序号 / 数量，均只打印）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: "5"
+          SEGMENTS: ${{ env.SEGMENTS }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CLEANUP_APPLY: "false"
+        run: python3 .github/scripts/cleanup.py

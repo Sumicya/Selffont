@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2026-10-14（续六）· 补三处条文洞：死锁、重复当日序号判据、run/artifact 承载关系
+
+- 主人指出续五收尾那句「要等合并到 main 或你用有权限的凭据手动触发一次」本身违规（同时提合并、把清理派给主人），而且这是三条各自正确的条文叠加出的死锁：出包工作流只接 push[main]/workflow_dispatch（为了号段不被 PR 吃）＋ 会话不推默认分支（更早的规则）＋ 会话令牌 `actions` 写 403（实测），三条叠起来导致清理 job 对会话分支永远不可达，而旧条文没给会话除「等合并」「求主人」「交命令」之外的第四种说法——三个都违规。
+- 新解法：清理逻辑只写一份 `.github/scripts/cleanup.py`，`build.yml`（`actions: write`，`CLEANUP_APPLY=true`）和新增的 `pr-check.yml` 的 `cleanup-preview` job（`actions: read`，`CLEANUP_APPLY=false`）共用；预演只打印判据结论与将删名单，不调用 `DELETE`，这是会话侧够得着的真机证据，真删仍然只等出包工作流的下一次真实运行（push 到 `main`，或拥有 `actions: write` 的一方 `workflow_dispatch`），不写成「等合并」或「需要谁去做」。
+- 新增第三条判据（原「数量/口径/来源」三条扩成四条）：**重复当日序号**——同一天同一当日序号出现两次，保留总序号最大的一个，其余按判据删；Selffont 目前没有实际重复，脚本按通用逻辑实现并用构造数据验证过。
+- 补上 run 与 artifact 的承载关系：删 run 会连带删它名下的 artifact，所以**承载被保留 artifact 的 run 不删、不计入 run 的数量上限**，上限只按「不承载保留对象的 run」计；排序统一按 `run_started_at`（而不是 `id` 或 `created_at`），`id` 只在同一时刻时作 tiebreak。
+- `build.yml` 的 `cleanup` job 改成调用共享脚本（`CLEANUP_APPLY=true`），原来内联的 Python 删到只剩一行 `run:`；头部注释里关于「会话分支用 workflow_dispatch 验证」的描述改成准确的「对会话分支天然不可达,预演才是真机证据」。
+- 用真实仓库数据加构造的重复当日序号/PR来源/承载场景，在沙箱里 mock `gh api` 跑过两种模式（`CLEANUP_APPLY=true`/`false`）的脚本逻辑，确认能正确识别 `26.10.14.116/117/118` 三个口径违规、构造的重复当日序号与 PR 来源案例，且正确保护当前运行产出的 artifact 与承载被保留 artifact 的 run。这仍然是脚本层 mock，不是真实 Actions 运行；本轮额外开了一个从本会话分支到 `main` 的 PR（不要求合并，只是为了让 `pr-check.yml` 的 `cleanup-preview` job 真实跑一次，拿到会话侧能够到的唯一真机证据），日志见本轮汇报链接。
+
 ## 2026-10-14（续五）· 清理三判据落地 + 删掉「谁来做」字段，责任固定在 CI 清理 job
 
 - 主人核实：续四给的「两类清理需要 actions: write，命令交你」是跟 Qself 会话同款的违规——`GLOBAL.md` 这版把交接字段从四件（卡在哪一步、**谁来做**、拿什么做、怎么确认）改成三件，删掉「谁来做」，写死责任：超量 artifact/运行记录归 CI 清理 job（runner 自带 `GITHUB_TOKEN`，带 `actions: write`，与沙箱令牌不同源）；孤立 tag、已合入分支、被禁工作流文件归会话令牌（`contents`/`refs` 写在本仓可用）；创建 Release/tag/asset、合并或关闭 PR 只能主人发起。「沙箱令牌通常只对当前仓库有写权限」这句也被实测推翻：能力按权限类分不按仓库分，`actions` 写在本仓同样 403。

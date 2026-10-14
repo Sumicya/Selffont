@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""Selffont CI 清理：出包工作流（build.yml）与 PR 校验工作流（pr-check.yml）共用这一份脚本，
+靠 CLEANUP_APPLY 区分两种调用——不许各写一份，真删逻辑只有一处：
+
+- 出包工作流：actions: write + CLEANUP_APPLY=true，判定即执行删除。
+- PR 校验工作流：actions: read + CLEANUP_APPLY=false，只打印判据结论与将删名单，不调用
+  DELETE。这是会话侧能拿到的唯一真机证据——出包工作流只在 push（限默认分支）与
+  workflow_dispatch 触发，会话分支推送不触发它，会话令牌也没有 actions: write 去手动
+  dispatch，真删天然只能等出包工作流的下一次真实运行，不等于「等合并」或「要主人去点」。
+
+判据顺序固定，不许调换：
+  artifact：口径（版本段数 != SEGMENTS）→ 来源（workflow_run 事件是 pull_request）→
+            重复当日序号（同一天同一当日序号出现两次，保留总序号最大的）→ 数量（当日之外
+            每条序列保留最近 KEEP 个，当日不设上限）。
+  run：承载（run 的 workflow_run 下还挂着被保留的 artifact——删 run 会连带删它的
+       artifact，承载保留对象的 run 不删、不计入数量上限）→ 数量（不承载保留对象的 run 里，
+       当日之外每条序列保留最近 KEEP 条，按 run_started_at 排序，id 只在同一时刻时作 tiebreak，
+       不单独使用；当日不设上限）。
+
+run_number 序列按工作流分开计（build.yml 与 pr-check.yml 各一条），数量判据各自独立计算。
+"""
+import json
+import os
+import subprocess
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
+CLOCK = timezone(timedelta(hours=8))
+PROJECT_PREFIX = "selffont-"
+BUILD_WORKFLOW = "build.yml"
+PRCHECK_WORKFLOW = "pr-check.yml"
+
+
+def env_int(name: str) -> int:
+    raw = os.environ[name].strip()
+    if not raw.isdigit() or int(raw) < 1:
+        sys.exit(f"{name} 必须是正整数，收到 {raw!r}")
+    return int(raw)
+
+
+def env_bool(name: str) -> bool:
+    raw = os.environ[name].strip().lower()
+    if raw not in ("true", "false"):
+        sys.exit(f"{name} 必须是 true/false，收到 {raw!r}")
+    return raw == "true"
+
+
+KEEP = env_int("KEEP")
+SEGMENTS = env_int("SEGMENTS")
+APPLY = env_bool("CLEANUP_APPLY")
+REPO = os.environ["REPO"]
+CURRENT_RUN_ID = int(os.environ["CURRENT_RUN_ID"])
+MODE = "真删(CLEANUP_APPLY=true)" if APPLY else "预演,不删(CLEANUP_APPLY=false)"
+
+
+def api(path: str, jq: str | None = None, method: str | None = None) -> str:
+    command = ["gh", "api"] + (["--jq", jq] if jq else []) + (["-X", method] if method else []) + [path]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.exit(f"gh api {path} 失败：{result.stderr.strip()}")
+    return result.stdout
+
+
+def paginate(path: str, jq: str) -> list[dict]:
+    rows, page = [], 1
+    sep = "&" if "?" in path else "?"
+    while True:
+        batch = [json.loads(line) for line in
+                 api(f"{path}{sep}per_page=100&page={page}", jq=jq).splitlines() if line.strip()]
+        if not batch:
+            return rows
+        rows += batch
+        page += 1
+
+
+def parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def today_start() -> datetime:
+    now = datetime.now(CLOCK)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def is_today(timestamp: str, start: datetime) -> bool:
+    return parse_time(timestamp) >= start
+
+
+def act(kind: str, path: str, label: str) -> None:
+    if APPLY:
+        api(path, method="DELETE")
+        print(f"DELETE[{kind}] {label}")
+    else:
+        print(f"将删[{kind}](预演，未执行 DELETE) {label}")
+
+
+def workflow_runs(workflow: str) -> list[dict]:
+    try:
+        return paginate(f"repos/{REPO}/actions/workflows/{workflow}/runs",
+                        ".workflow_runs[]|{id,run_number,status,event,created_at,run_started_at}")
+    except SystemExit:
+        return []  # 工作流文件还没有任何运行记录时,接口 404
+
+
+def name_segments(name: str) -> int:
+    version = name.split("-", 1)[1] if "-" in name else ""
+    return len([part for part in version.split(".") if part])
+
+
+def version_parts(name: str):
+    """<项目名>-yy.m.d.当日序号.总序号 -> (日期, 当日序号, 总序号)；段数不够就是 None。"""
+    version = name.split("-", 1)[1] if "-" in name else ""
+    parts = [part for part in version.split(".") if part]
+    if len(parts) < 5:
+        return None
+    return ".".join(parts[:3]), parts[3], parts[4]
+
+
+def all_artifacts() -> list[dict]:
+    return paginate(f"repos/{REPO}/actions/artifacts",
+                    ".artifacts[]|{id,name,created_at,size_in_bytes,workflow_run}")
+
+
+def main() -> None:
+    start = today_start()
+    repo_id = int(json.loads(api(f"repos/{REPO}", jq="{id: .id}"))["id"])
+    build_runs = workflow_runs(BUILD_WORKFLOW)
+    prcheck_runs = workflow_runs(PRCHECK_WORKFLOW)
+    event_by_run_id = {row["id"]: row["event"] for row in build_runs + prcheck_runs}
+
+    print(f"=== Selffont 清理脚本：{MODE}，KEEP={KEEP}，SEGMENTS={SEGMENTS}，当前运行 id={CURRENT_RUN_ID} ===")
+
+    # ---------------- artifact：口径 → 来源 → 重复当日序号 → 数量 ----------------
+    candidates = [row for row in all_artifacts() if row["name"].lower().startswith(PROJECT_PREFIX)]
+
+    def owned(row: dict) -> bool:
+        run = row.get("workflow_run") or {}
+        return run.get("repository_id") == repo_id and run.get("head_repository_id") == repo_id
+
+    unknown = [row for row in candidates if not owned(row)]
+    candidates = [row for row in candidates if owned(row)]
+    for row in unknown:
+        print(f"保留[artifact](归属不明,不判定) {row['created_at']} {row['name']} id={row['id']} "
+              f"workflow_run={row.get('workflow_run')}")
+
+    def is_current(row: dict) -> bool:
+        run = row.get("workflow_run") or {}
+        return run.get("id") == CURRENT_RUN_ID
+
+    survivors, criteria_victims = [], []
+    for row in candidates:
+        if is_current(row):
+            print(f"保留[artifact](本次运行刚产出,不判定) {row['created_at']} {row['name']} id={row['id']}")
+            survivors.append(row)
+            continue
+        segs = name_segments(row["name"])
+        if segs != SEGMENTS:
+            criteria_victims.append((row, f"口径(段数={segs}≠SEGMENTS={SEGMENTS})"))
+            continue
+        run_event = event_by_run_id.get((row.get("workflow_run") or {}).get("id"))
+        if run_event == "pull_request":
+            criteria_victims.append((row, "来源(workflow_run 事件是 pull_request)"))
+            continue
+        survivors.append(row)
+
+    groups: dict[tuple, list] = defaultdict(list)
+    no_group = []
+    for row in survivors:
+        parsed = version_parts(row["name"])
+        if parsed is None:
+            no_group.append(row)
+            continue
+        date, day_index, total = parsed
+        groups[(date, day_index)].append((int(total), row))
+
+    after_dup = list(no_group)
+    for (date, day_index), group in groups.items():
+        group.sort(key=lambda pair: pair[0], reverse=True)
+        after_dup.append(group[0][1])
+        for total, row in group[1:]:
+            criteria_victims.append(
+                (row, f"重复当日序号 {date}.{day_index}(保留总序号最大的 {group[0][0]},此对象总序号 {total})"))
+
+    for row, reason in criteria_victims:
+        act("artifact", f"repos/{REPO}/actions/artifacts/{row['id']}",
+            f"{row['created_at']} {row['name']} id={row['id']} 判据:{reason}")
+
+    non_today = sorted((row for row in after_dup if not is_today(row["created_at"], start)),
+                       key=lambda row: row["created_at"], reverse=True)
+    today_rows = [row for row in after_dup if is_today(row["created_at"], start)]
+    qty_victims = non_today[KEEP:]
+    print(f"artifact:候选 {len(candidates)} 个,口径/来源/重复三条共删 {len(criteria_victims)} 个;"
+          f"当日 {len(today_rows)} 个(数量不设上限,不判定);非当日 {len(non_today)} 个,保留最近 {KEEP} 个")
+    for index, row in enumerate(non_today):
+        if index < KEEP:
+            continue
+        act("artifact", f"repos/{REPO}/actions/artifacts/{row['id']}",
+            f"{row['created_at']} {row['name']} id={row['id']} 判据:数量(非当日第 {index + 1} 新,超过 {KEEP})")
+
+    kept_artifacts = today_rows + non_today[:KEEP]
+    retained_run_ids = {(row.get("workflow_run") or {}).get("id") for row in kept_artifacts}
+    retained_run_ids.discard(None)
+
+    if APPLY:
+        left = [row for row in all_artifacts() if row["name"].lower().startswith(PROJECT_PREFIX) and owned(row)]
+        left_non_today = [row for row in left if not is_today(row["created_at"], start)]
+        print(f"复核:artifact 剩 {len(left)} 个,非当日 {len(left_non_today)} 个(上限 {KEEP})")
+        if len(left_non_today) > KEEP:
+            sys.exit(f"清理后非当日 artifact 仍有 {len(left_non_today)} 个,超过上限 {KEEP}")
+    else:
+        print(f"预演推算:artifact 若真删,应剩 {len(kept_artifacts)} 个(当日 {len(today_rows)} + "
+              f"非当日保留 {min(len(non_today), KEEP)})")
+
+    releases = json.loads(api(f"repos/{REPO}/releases", jq="length"))
+    print(f"Release 数:{releases}(规范上限 1。CI 不发版也不删 Release;获准人工发布时由发布者做发布后清理)")
+    if releases > 1:
+        print("WARNING: Release 超过 1 个,需要获准的人工操作清理(CI 无 contents 写权限)")
+
+    # ---------------- run：承载 → 数量 ----------------
+    def clean_runs(workflow: str, rows: list[dict]) -> None:
+        if not rows:
+            print(f"{workflow}:目前没有任何运行记录,无需清理")
+            return
+        carrying = [row for row in rows if row["id"] in retained_run_ids]
+        not_carrying = [row for row in rows if row["id"] not in retained_run_ids]
+        for row in carrying:
+            print(f"保留[run,{workflow}](承载被保留的 artifact,不计入数量上限) "
+                  f"{row['run_started_at']} run_number={row['run_number']} id={row['id']}")
+        non_today = sorted((row for row in not_carrying if not is_today(row["run_started_at"], start)),
+                           key=lambda row: (row["run_started_at"], row["id"]), reverse=True)
+        today_rows = [row for row in not_carrying if is_today(row["run_started_at"], start)]
+        print(f"{workflow}:{len(rows)} 条运行记录,承载保留 artifact {len(carrying)} 条(不计入上限),"
+              f"当日 {len(today_rows)} 条(不设上限,不判定),非当日(不承载) {len(non_today)} 条,"
+              f"保留最近 {KEEP} 条")
+        for index, row in enumerate(non_today):
+            if index < KEEP:
+                continue
+            if row["status"] == "in_progress":
+                print(f"保留[run,{workflow}](仍在运行,不删) {row['run_started_at']} "
+                      f"run_number={row['run_number']} id={row['id']}")
+                continue
+            if row["id"] == CURRENT_RUN_ID:
+                print(f"保留[run,{workflow}](本次运行自己,不删) {row['run_started_at']} "
+                      f"run_number={row['run_number']} id={row['id']}")
+                continue
+            act("run", f"repos/{REPO}/actions/runs/{row['id']}",
+                f"{workflow} {row['run_started_at']} run_number={row['run_number']} id={row['id']} "
+                f"判据:数量(非当日且不承载保留对象,第 {index + 1} 新,超过 {KEEP})")
+        if APPLY:
+            left_rows = workflow_runs(workflow)
+            left_non_today = [row for row in left_rows
+                              if row["id"] not in retained_run_ids and not is_today(row["run_started_at"], start)]
+            print(f"{workflow}:复核剩 {len(left_rows)} 条,非当日不承载 {len(left_non_today)} 条(上限 {KEEP})")
+            if len(left_non_today) > KEEP:
+                sys.exit(f"{workflow} 清理后非当日不承载运行记录仍有 {len(left_non_today)} 条,超过上限 {KEEP}")
+
+    clean_runs(BUILD_WORKFLOW, build_runs)
+    clean_runs(PRCHECK_WORKFLOW, prcheck_runs)
+
+
+if __name__ == "__main__":
+    main()
