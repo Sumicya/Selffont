@@ -38,18 +38,19 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 **版本号（展示不含 `v`）**：五段 `yy.m.d.当日序号.总序号`，当日序号取不到时退化四段 `yy.m.d.总序号`；`versionCode` = 最后一段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
-- 计数对象 = 仓库唯一构建工作流 `Build`（`.github/workflows/build.yml`）本次运行的身份（`GITHUB_RUN_ID` / `GITHUB_RUN_NUMBER`，`created_at` 从本 run 对象取，不 list 后取最新），现场查、不写死现值。**只有 push 与 `workflow_dispatch` 才取号**，`pull_request` 运行从取号这步起全部跳过。
-- **总序号** = 本次 run 的 `run_number`，按 `AGENTS.md` 记录的 `RUN_NUMBER_BASELINE` 相减；没记录过基线就用原值（本仓库目前没有这一行，workflow 没重建过）。`run_attempt` 不影响 `run_number`，重试天然复用同一个号。同一提交被 push 与 PR 双触发会各吃一个 `run_number`，这是外仓实测过的真事故（一夜刷了 50 多号），所以 PR 运行禁止取号，不是靠运气不撞上。
-- **当日序号** = 本次 run 在当日（UTC+8）本仓「出包运行」（push/`workflow_dispatch`，按开始时间排序）里的位次，从 1 起；取不到就是四段，CI 日志写明原因。**不按 head 提交在提交序列里的位次取数**——并发运行会抢同一个名次，是已经踩过的坑（当日序号重复、乱序），不是假设性风险。
+- 计数对象 = 仓库的出包工作流 `Build`（`.github/workflows/build.yml`）本次运行的身份（`GITHUB_RUN_ID` / `GITHUB_RUN_NUMBER`，`created_at` 从本 run 对象取，不 list 后取最新），现场查、不写死现值。`build.yml` 只接 `push`（限默认分支 `main`）与 `workflow_dispatch`；PR 校验是独立的 `pr-check.yml`（只接 `pull_request`），物理上碰不到 `build.yml` 的运行身份。
+- **总序号** = 本次 run 的 `run_number`，按 `AGENTS.md` 记录的 `RUN_NUMBER_BASELINE` 相减；没记录过基线就用原值（本仓库目前没有这一行，workflow 没重建过）。`run_attempt` 不影响 `run_number`，重试天然复用同一个号。**`run_number` 在运行创建时就分配，跟步骤级 `if` 无关**——同一提交若让 push 与 pull_request 共用一个工作流文件会各吃一个 `run_number`，这是外仓实测过的真事故（一夜刷了 50 多号）；本仓库堵的办法是把 PR 校验拆进独立的 `pr-check.yml`，让它有自己的 `run_number` 序列，不是靠跳步骤去挡。
+- **当日序号** = 本次 run 在当日（UTC+8）`build.yml` 运行里按开始时间排序的位次，从 1 起；取不到就是四段，CI 日志写明原因。**不按 head 提交在提交序列里的位次取数**——并发运行会抢同一个名次，是已经踩过的坑（当日序号重复、乱序），不是假设性风险。
 - **本地不算号**：`--query-github` 只在 CI 里能用，环境里没有 `GITHUB_RUN_ID` 直接报错；本地出包必须显式传齐 `--date/--build`（不传 `--day` 就是四段），数的可追溯性由打包的人负责（见 `AGENTS.md`）。
 - `module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI（`.github/workflows/build.yml`）跑自检 + 一次构建：**只有 push 与 `workflow_dispatch` 才取号出包并上传**模块包本身为 Actions artifact，**`pull_request` 运行只跑自检，不取号、不出包、不上传**（同一提交被 push 与 PR 双触发会各吃一个 `run_number`，此前没防住过，外仓因此一夜把总序号刷了 50 多号，这是明确禁止的）；artifact 名 = `Selffont-<版本>`，**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合版本格式，`retention-days: 5` 只是时间兜底）；出包成功后自动滚动清理旧 artifact 与旧运行记录——**跨分支、跨触发事件各自合计只留最近 5 个**：`selffont-` 前缀（不分大小写）只用于筛候选 artifact，归属再按 `workflow_run` 的运行记录核验（`repository_id` / `head_repository_id` 必须是本仓库），归属不明的对象保留不删；运行记录只清理 `build.yml` 自己的（按 `run_number` 排序，跳过仍在跑的），删完都复核数量、超限就报错。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。清理 job 是唯一有写权限的 job（`actions: write`，删 artifact 与运行记录，`contents` 保持只读——本仓库 Release 数为 0 且 CI 不发版，按最小化不申请 `contents: write`），且**只在默认分支 `main` 上跑**：PR 的合并 ref 与其他分支的代码都不可信，不给写权限。代价是只在分支上推送时清理不触发、artifact/运行记录会暂时超过 5 个，由下一次 `main` 构建收口（急用下面的 `gh api -X DELETE` 手动删）。
+CI 拆成两个工作流：`.github/workflows/build.yml`（出包，只接 `push`[限 `main`] / `workflow_dispatch`）跑自检 + 一次构建并取号出包上传模块包本身为 Actions artifact；`.github/workflows/pr-check.yml`（PR 校验，只接 `pull_request`）只跑自检，不取号、不出包、不上传、不清理——两者是不同工作流文件，各有独立的 `run_number` 序列，PR 运行再多也碰不到 `build.yml` 的号段（同一提交若共用一个工作流文件会被 push 与 PR 各吃一个 `run_number`，外仓因此一夜把总序号刷了 50 多号，单靠步骤级 `if` 挡不住，必须拆文件）；artifact 名 = `Selffont-<版本>`，**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合版本格式，`retention-days: 5` 只是时间兜底）；出包成功后自动滚动清理旧 artifact 与旧运行记录——**跨分支、跨触发事件各自合计只留最近 5 个**：`selffont-` 前缀（不分大小写）只用于筛候选 artifact，归属再按 `workflow_run` 的运行记录核验（`repository_id` / `head_repository_id` 必须是本仓库），归属不明的对象保留不删；运行记录只清理 `build.yml` 自己的（按 `run_number` 排序，跳过仍在跑的），删完都复核数量、超限就报错。**CI 出包 ≠ CI 发版**：不发 Release、不建正式 tag、不写正式 asset（本仓库现有 Release 数 = 0，规范上限 1；真要人工发布，发布后的数量清理由发布者做，CI 不拿 `contents` 写权限）；版本号由 `actions: read` 现场查运行历史算定。清理 job 是唯一有写权限的 job（`actions: write`，删 artifact 与运行记录，`contents` 保持只读——本仓库 Release 数为 0 且 CI 不发版，按最小化不申请 `contents: write`），且**只在默认分支 `main` 上跑**：`build.yml` 已不接 `pull_request`，这里按 `github.ref == 'refs/heads/main'` 再做一道保险，会话分支用 `workflow_dispatch` 出包时不给写权限、不跑清理。代价是只在分支上触发时清理不执行、artifact/运行记录会暂时超过 5 个，由下一次 `main` 构建收口（急用下面的 `gh api -X DELETE` 手动删）。
 
 ```sh
-# 最近一次非 PR 运行的 artifact 就是模块包本身:下载下来直接刷,不用再解一层
+# build.yml 不接 pull_request,其运行取回来的就是出包运行;最近一次的 artifact 就是模块包本身:
+# 下载下来直接刷,不用再解一层
 RUN=$(gh api 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=20' \
-  --jq '[.workflow_runs[]|select(.event!="pull_request")][0].id')
+  --jq '.workflow_runs[0].id')
 set -- $(gh api "repos/Sumicya/Selffont/actions/runs/$RUN/artifacts" --jq '.artifacts[0] | "\(.id) \(.name)"')
 curl -fL -H "Authorization: token $(gh auth token)" -o "$2.zip" \
   "https://api.github.com/repos/Sumicya/Selffont/actions/artifacts/$1/zip"

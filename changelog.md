@@ -1,5 +1,16 @@
 # 更新日志
 
+## 2026-10-14（续四）· 续三没堵住：run_number 在创建运行时就分配，拆成两个工作流文件才行
+
+- 主人指出续三的修法没堵住漏洞：`if: github.event_name != 'pull_request'` 只能让 `pull_request` 运行的构建步骤 skipped，拦不住 GitHub 在**运行创建的那一刻**就分配 `run_number`——Qself 实测五个号里三个被 PR 运行吃掉（`run_number` 271/273/275 全是 `pull_request` 事件），两个提交吃了五个号；Gself 更糟，两个都能出包的工作流各有独立 `run_number` 序列，出现过总序号 144 重复两次。`Sumicya/selfs` 的 GLOBAL.md（PR #6，commit `5e2b978`）据此再修：出包与 PR 校验必须是两个工作流文件，一个工作流不得同时接 `push` 与 `pull_request`。
+- 本仓库此前没有并发 PR，没有实际吃过号，但 `build.yml` 的 `on:` 里仍然同时挂着 `push`/`pull_request`/`workflow_dispatch`，属于规范明令禁止的配置，早晚复现同款问题，这次一并拆掉：
+  - 新增 `.github/workflows/pr-check.yml`：只接 `pull_request`，`contents: read`，只跑 `python build.py --check`，不取号、不出包、不上传、不清理，拥有自己独立的 `run_number` 序列，`build.py` 从不读它。
+  - `.github/workflows/build.yml` 的 `on:` 改成 `push`（`branches: [main]`）+ `workflow_dispatch`，彻底移除 `pull_request`；四处 `if: github.event_name != 'pull_request'` 全部删除（工作流级隔离后不再需要步骤级判断）；`cleanup` job 的触发条件简化为只判 `github.ref == 'refs/heads/main'`。
+  - 代价：本仓库此前依赖推送会话分支触发 `build.yml` 来验证取数逻辑，现在推会话分支不再触发出包，要验证得用 `workflow_dispatch` 手动触发（需要 `actions: write`；本会话沙箱令牌只有 `actions: read`，这次改动完成后无法自行触发一次真实 CI 运行来端到端验证，只做了 `build.py --check` 9 项自检与 YAML 语法校验，真正的工作流级隔离效果要等主人手动 `workflow_dispatch` 或合并到 `main` 才能现场看到）。
+  - `build.py`/`AGENTS.md`/`README.md` 同步修正表述：不再说「PR 运行从某一步起跳过」，改成准确的「`pull_request` 物理上碰不到 `build.yml` 的运行身份，因为它是另一个工作流文件」。
+- 顺带做了一次文档核真：`AGENTS.md`「历史 tag」一行此前写着 `v3.0.0`、`v26.9.30.39` 两个 tag「按规范默认保留」，但这两个 tag 早就被主人在「续二」那轮用自己的凭据亲手删掉了（见下面「续二」条目），这行文字当时没跟着更新；现场核验（`gh api .../tags` 与 `git ls-remote --tags`）确认目前 0 个 tag，已更正文档。
+- 清理现状（现场核验，非估算）：Actions artifact 6 个（`114`/`115`/`119` 是正确的五段版本，`116`/`117`/`118` 是续三 bug 期间产出的旧口径四段版本，按规范「同仓不得并存两种取数口径」应清掉）、`build.yml` 运行记录 6 条（超保留上限 5 条 1 条）——两类清理都需要 `actions: write`，本会话沙箱令牌对本仓库同样只有 `actions: read`（403，与「续二」记录的边界一致），命令已交主人，见当轮汇报。
+
 ## 2026-10-14（续三）· 堵刷号漏洞：PR 运行不取号不出包，当日序号改数出包运行
 
 - 主人在 Qself 查出刷号真事故：`arena/e207d38d-qself` 一夜之间总序号从 220 刷到 271，根因是旧版 GLOBAL.md「总序号 = 本次 run 的 run_number（含 PR 运行）」这条，同一提交被 push 与 pull_request 双触发各吃一个号；Gself 还查出号源分叉（基线相减与 run_number 原值同仓并存）。GLOBAL.md 已改：出包运行只认 `push`/`workflow_dispatch`，`pull_request` 运行不取号、不出包、不上传；当日序号改成「当日该仓出包运行按开始时间排的位次」，明令禁止按 head 提交在提交序列里的位次取数（并发运行会竞态，Qself 实测出现过当日序号 5 重复两次）；新增禁止空提交刷号、禁止为触发 CI 而推送。

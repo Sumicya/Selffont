@@ -7,12 +7,15 @@
                    [--build 总序号] [--day 当日序号] [--date YY.M.D] [--query-github]
 
 版本号按全局规范：yy.m.d.当日序号。总序号（五段，展示不含 v），versionCode = 总序号。
-日期与两个序号在仓库唯一构建工作流 Build 一处算定（--query-github 现场查运行历史，不写死
-现值）；本地也可以手工传入。总序号（必填）= 本次 run 的 run_number（只认 push/workflow_dispatch
-两种出包运行，PR 运行不取号、不出包、不上传，取自运行上下文，不查历史）；workflow 重建造成
-号段跳变时把重建前最大号记成 AGENTS.md 里的 `RUN_NUMBER_BASELINE = N` 并相减，没记就用原值，
-不判失败。当日序号 = 本次 run 在当日（UTC+8）本仓「出包运行」里按开始时间排的位次；取不到
-（查询暂时没同步到自己这条运行等异常情况）就退化成四段 yy.m.d.总序号，CI 日志里写明退化原因。
+日期与两个序号在仓库的出包工作流 Build（.github/workflows/build.yml）一处算定（--query-github
+现场查运行历史，不写死现值）；本地也可以手工传入。总序号（必填）= 本次 run 的 run_number，
+取自运行上下文，不查历史。build.yml 只接 push（限默认分支）与 workflow_dispatch 两种事件——
+pull_request 固定走独立的 pr-check.yml，物理上碰不到这个文件的 run_number 序列，总序号不会
+被 PR 运行吃掉（注意：单靠步骤级 if 跳过构建步骤堵不住，run_number 在运行创建时就已经分配，
+必须是两个独立工作流文件）；workflow 重建造成号段跳变时把重建前最大号记成 AGENTS.md 里的
+`RUN_NUMBER_BASELINE = N` 并相减，没记就用原值，不判失败。当日序号 = 本次 run 在当日（UTC+8）
+本仓 build.yml 的运行里按开始时间排的位次；取不到（查询暂时没同步到自己这条运行等异常情况）
+就退化成四段 yy.m.d.总序号，CI 日志里写明退化原因。
 取数只在 CI 里做，本地打包必须显式传 --date/--day/--build（本地不传 --day 也按四段处理）。
 
 自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
@@ -92,7 +95,7 @@ MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
 PROJECT = "Selffont"  # 产物名与 artifact 名的项目段：<项目名>-<版本>
-WORKFLOW = "build.yml"  # 版本取数的计数对象：仓库唯一构建工作流
+WORKFLOW = "build.yml"  # 版本取数的计数对象：仓库的出包工作流（PR 校验在独立的 pr-check.yml，不碰这个号段）
 DEV_VERSION = "dev"     # 仓库里的非发行默认：没盖戳就不假装有正式序号
 VERSION_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+\.\d+$")   # 五段：日期.当日序号.总序号
 VERSION_RE4 = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+$")       # 四段退化：当日序号取不到时用
@@ -561,6 +564,8 @@ def day_run_index(moment: datetime, run_id: int) -> str | None:
     规范明令禁止按 head 提交在提交序列里的位次取数——并发的 push 与 PR 运行会抢同一个名次，
     实测出现过当日序号重复、乱序（如 5 重复两次、4 排在 6 之后），根因是两次运行同一个 head
     提交、位次天然相同，而「出包运行」本身（push/workflow_dispatch）互不重叠、各有独立顺序。
+    这里按 event 过滤 push/workflow_dispatch 只是第二道保险——本工作流（build.yml）已经不接
+    pull_request 事件（校验走独立的 pr-check.yml），查到的运行天然不会混进 PR 运行。
     """
     start = day_start(moment)
     todays, page = [], 1
@@ -1442,7 +1447,7 @@ def main() -> None:
     parser.add_argument("--day", help="当日序号：不传就是四段版本 yy.m.d.总序号（默认读 $SELFFONT_DAY）")
     parser.add_argument("--date", help="版本日期 YY.M.D（默认读 $SELFFONT_DATE）")
     parser.add_argument("--query-github", action="store_true",
-                        help="用 gh 现场查仓库唯一工作流的运行历史取齐三段版本数据；CI 里锚定本次运行，"
+                        help="用 gh 现场查仓库出包工作流（build.yml）的运行历史取齐三段版本数据；CI 里锚定本次运行，"
                              "取不到就报错停止（不出包、不上传），不与 --build/--day/--date 混用")
     parser.add_argument("--keep-web-fonts", action="store_true",
                         help="放行网页自带字体（图标字体等）；默认压成文渊")
