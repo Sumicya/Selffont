@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Selffont CI 清理：出包工作流（build.yml）与 PR 校验工作流（pr-check.yml）共用这一份脚本，
-靠 CLEANUP_APPLY 区分两种调用——不许各写一份，真删逻辑只有一处：
+靠 CLEANUP_APPLY 区分调用，真删逻辑只有一处（不许各写一份）：
 
-- 出包工作流：actions: write + CLEANUP_APPLY=true，判定即执行删除。
-- PR 校验工作流：actions: read + CLEANUP_APPLY=false，只打印判据结论与将删名单，不调用
-  DELETE。这是会话侧能拿到的唯一真机证据——出包工作流只在 push（限默认分支）与
-  workflow_dispatch 触发，会话分支推送不触发它，会话令牌也没有 actions: write 去手动
-  dispatch，真删天然只能等出包工作流的下一次真实运行，不等于「等合并」或「要主人去点」。
+- 两个工作流的清理 job 现在都是 actions: write + CLEANUP_APPLY=true，判定即执行删除。
+  2026-10-14 之前的版本把真删只挂在 build.yml 上（它只在 push[限默认分支] / workflow_dispatch
+  触发，会话分支天然碰不到），导致「预演已证、待出包工作流首次运行」这句话在会话侧永远等不到——
+  从 03:35Z 挂到 07:11Z 一次真删都没发生，根因是把「清理只留一份脚本」误写成了「真删只挂一处」，
+  而那一处正好会话够不着。现在改成两处都真删：build.yml 的 cleanup job（push 到默认分支时跑）与
+  pr-check.yml 的 cleanup job（pull_request 事件时跑，会话推送同仓 PR 即可触发，不是 fork 的
+  pull_request 里 GITHUB_TOKEN 能拿到工作流声明的写权限）；两处挂同一个 concurrency group
+  （selffont-artifacts）串行，不会同时跑互相打架。
+- DELETE 调用本身会降级：对面是 fork 仓库发起的 PR 时，GITHUB_TOKEN 只有只读权限，DELETE 返回
+  403——这种情况下打一条 ::warning:: annotation、跳过这一条继续往下走，不让整个 job 变红、也不让
+  脚本中途退出；只有真正执行成功的删除才打 DELETE[...] 日志，没成功的仍然算「将删」。
 
 判据顺序固定，不许调换：
   artifact：口径（版本段数 != SEGMENTS）→ 来源（workflow_run 事件是 pull_request）→
@@ -32,6 +38,7 @@ CLOCK = timezone(timedelta(hours=8))
 PROJECT_PREFIX = "selffont-"
 BUILD_WORKFLOW = "build.yml"
 PRCHECK_WORKFLOW = "pr-check.yml"
+
 
 
 def env_int(name: str) -> int:
@@ -95,11 +102,18 @@ def is_today(timestamp: str, start: datetime) -> bool:
 
 
 def act(kind: str, path: str, label: str) -> None:
-    if APPLY:
-        api(path, method="DELETE")
-        print(f"DELETE[{kind}] {label}")
-    else:
+    """真删单条对象；DELETE 本身失败（典型场景:fork 发起的 pull_request，GITHUB_TOKEN 只读，
+    返回 403）时只打 ::warning:: annotation 并继续,不用 sys.exit 把整个脚本/job 弄红,也不当
+    真的删掉了——降级为"将删"但明确标出失败原因,下一轮同样的判据还会再打一次。"""
+    if not APPLY:
         print(f"将删[{kind}](预演，未执行 DELETE) {label}")
+        return
+    result = subprocess.run(["gh", "api", "-X", "DELETE", path], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"::warning::{label} 删除失败：{result.stderr.strip()[:180]}"
+              f"（fork PR 或权限不足，本次降级为预演，不计入已删，继续下一条）")
+        return
+    print(f"DELETE[{kind}] {label}")
 
 
 def workflow_runs(workflow: str) -> list[dict]:

@@ -1,5 +1,6 @@
 name: PR check
-# 独立的 PR 校验工作流：只接 pull_request，只读权限，不取号、不出包、不上传、不清理。
+# 独立的 PR 校验工作流：只接 pull_request，selfcheck job 只读、不取号、不出包、不上传；
+# cleanup job 真删（见下）。
 #
 # 拆出这个文件的原因（规范明令、外仓实测过真事故）：run_number 在运行创建的那一刻就由
 # GitHub 分配，跟工作流文件里有没有步骤级 if 无关——哪怕出包步骤写了
@@ -8,10 +9,18 @@ name: PR check
 # 同时触发时就会各吃一个号，总序号段必然留洞、乱跳。唯一堵得住的办法是让 pull_request
 # 完全走另一个工作流文件：它有自己独立的 run_number 序列，build.py 从不读它、从不用它算
 # 总序号，PR 运行再多也不会影响出包工作流（build.yml）的号段。
+#
+# 2026-10-14 教训：这个文件的 cleanup job 曾经是只读预演（actions: read，CLEANUP_APPLY=false），
+# 真删只挂在 build.yml 上——但 build.yml 只在 push(限默认分支)/workflow_dispatch 触发，会话
+# 既不推默认分支、令牌又没有 actions: write 去手动 dispatch，导致真删在会话侧永远等不到，待删
+# 对象能挂几个小时一次都没删。实测同仓分支发起的 pull_request 事件里 GITHUB_TOKEN 能拿到工作流
+# 声明的权限（不是 fork 才只读），所以把真删也挂到这里：会话推送到同仓开的 PR 就会触发，
+# 四个条件判据（口径/来源/重复当日序号/数量）照常算，DELETE 失败(典型是 fork PR 权限不足)时
+# 打 warning 降级为预演并继续，不让 job 变红。
 on:
   pull_request:
 env:
-  SEGMENTS: "5"   # 跟 build.yml 保持同一个值,预演判据才对得上真删
+  SEGMENTS: "5"   # 跟 build.yml 保持同一个值,两处判据才算的是同一套口径
 permissions:
   contents: read
 jobs:
@@ -28,24 +37,28 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Selfcheck (packager, metric normalization, module scripts)
         run: python build.py --check
-  cleanup-preview:
-    name: Cleanup preview (预演,只打印不删)
+  cleanup:
+    name: Cleanup (四判据真删)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      actions: read   # 只读,不申请 write——这个 job 不删任何东西
+      actions: write   # 真删 artifact/run;pull_request 事件里这个权限对同仓 PR 真实生效,
+                       # 对 fork 发起的 PR 仍然只读,DELETE 会 403,脚本自己降级打 warning
+    concurrency:
+      group: selffont-artifacts   # 跟 build.yml 的 cleanup job 同一个 group,两处真删串行
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
-      # 跟 build.yml 的 cleanup job 共用同一份 .github/scripts/cleanup.py,CLEANUP_APPLY=false
-      # 时脚本只打印判据结论与将删名单,不调用 DELETE。出包工作流只在 push(限默认分支)与
-      # workflow_dispatch 触发,会话分支推送碰不到它,会话令牌也没有 actions: write 去手动
-      # dispatch——这个预演 job 是会话侧唯一够得着的真机证据,不是真删的替代品。
-      - name: 清理判据预演（口径 / 来源 / 重复当日序号 / 数量，均只打印）
+      # 跟 build.yml 的 cleanup job 共用同一份 .github/scripts/cleanup.py,CLEANUP_APPLY=true,
+      # 判定即执行删除。会话推送到同仓发起的 PR（不是 fork）就会触发,不用等 build.yml 的下一次
+      # push/workflow_dispatch；DELETE 失败(fork PR 权限不足等)时脚本打 warning 降级为预演继续,
+      # 不让这个 job 变红。
+      - name: Cleanup (四判据真删)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           KEEP: "5"
           SEGMENTS: ${{ env.SEGMENTS }}
           CURRENT_RUN_ID: ${{ github.run_id }}
-          CLEANUP_APPLY: "false"
+          CLEANUP_APPLY: "true"
         run: python3 .github/scripts/cleanup.py

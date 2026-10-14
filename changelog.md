@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-14（续八）· 真删从未触发过：从「只挂 build.yml」改成两工作流都真删
+
+- 主人指出根本问题：真删只挂在 `build.yml` 上，而该工作流只在 push 到默认分支或 `workflow_dispatch` 时跑——会话不推默认分支、令牌又没有 `actions: write` 去手动 dispatch，`pr-check.yml` 原来的 `cleanup-preview` job 是只读预演（`actions: read`，`CLEANUP_APPLY=false`）。结果是 Selffont 的 `116`/`117`/`118` 从 03:35Z 挂到 07:11Z，一次真删都没发生，之前几轮报告里的「预演已证、待出包工作流首次运行」其实永远等不到那个「首次运行」。根因：把「清理逻辑只留一份脚本」误实现成了「真删只挂一处」，而那一处正好会话够不着。依据：`Sumicya/selfs` `GLOBAL.md` commit `b0594d3`。
+- 改法：`pr-check.yml` 的 `cleanup-preview` job 改名 `cleanup`，权限从 `actions: read` 改成 `actions: write`，`CLEANUP_APPLY` 从 `"false"` 改成 `"true"`，判定即真删。依据：GitHub 对**同仓**分支发起的 `pull_request` 事件，`GITHUB_TOKEN` 能拿到工作流声明的权限（只有 **fork** 发起的 PR 才会被强制降为只读）；会话推送到同仓开的 PR（如 #7）就会触发这个 job，是会话侧真正够得着的真删入口，不再是"预演代替真删"。`build.yml` 的 `cleanup` job 不变（仍然真删，`push` 到默认分支时跑）。两个 job 挂同一个 `concurrency` group `selffont-artifacts`（`cancel-in-progress: false`）串行执行，避免两边同时删同一批对象打架。
+- `cleanup.py` 的 `act()` 函数改成 DELETE 失败时降级：fork 发起的 PR 里 `GITHUB_TOKEN` 只读，`DELETE` 会 403——原来的通用 `api()` 遇非零退出码直接 `sys.exit`，会把整个 job 弄红、中断脚本；现在 DELETE 专用路径捕获失败，打一条 `::warning::` annotation 并继续处理下一条，不计入「已删」，不让 job 变红也不谎报删除成功。Selffont 当前 4 个开放 PR 里（此仓只有 #7）都是同仓分支，不是 fork，理论上用不到降级分支，但脚本仍按通用场景实现，防御未来出现的 fork PR。
+- `build.yml`、`pr-check.yml` 顶部注释与 job 内注释同步改写，不再描述「预演是会话侧唯一够得着的真机证据」；`AGENTS.md`/`README.md` 对应段落改写，`116`/`117`/`118` 的状态由「待出包工作流首次运行」改记「待下一次 PR 校验运行」。
+- 验证：沙箱 mock 两种场景——（1）正常 DELETE 成功：打印 `DELETE[artifact] ...`，脚本正常跑完；（2）模拟 403：打印 `::warning::...删除失败...降级为预演...`，脚本仍然正常跑完不触发 `sys.exit`。真机验证留给推送后的下一次 `pr-check.yml` 真实运行（会由本次推送自动触发，因为 PR #7 仍开着），结果见本轮汇报。
+
 ## 2026-10-14 — 常驻条目由四条改三条
 
 - `AGENTS.md` 开头「全局规范（不抄条文，只记落位）」一节原有「四条必须常驻」，其中「Arena 会话」一条要求辱骂触发 1000 字书面检讨；`Sumicya/selfs` 的 `GLOBAL.md` 整条删除了这项检讨条款（commit `5dc0d28`），本仓库同步把该条从常驻清单里删掉，改成三条（改动落地、分支、CI 禁旧）。删除依据记在本条目，`AGENTS.md` 正文不再带「检讨」字样本身（连说明性文字也不带），避免「活文件里出现这个词」与「这项规则已被删除」自相矛盾。

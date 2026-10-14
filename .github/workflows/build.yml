@@ -2,10 +2,11 @@ name: Build
 # 出包工作流，唯一号源：只接 push（限默认分支 main）与 workflow_dispatch。
 # pull_request 固定走独立的 pr-check.yml——不是靠这边的步骤级 if 挡,是两个工作流文件各有
 # 独立的 run_number 序列,PR 事件物理上碰不到这个文件的号段(真实根因见 pr-check.yml 顶部注释)。
-# 调试 CI 的推送不该吃号,push 触发器只认默认分支;会话分支的真机验证走 pr-check.yml 的
-# cleanup-preview 预演(actions: read,只打印不删),不是靠这个工作流的 workflow_dispatch——
-# 会话令牌没有 actions: write 去手动 dispatch 它,这个工作流对会话分支天然不可达,预演才是
-# 会话侧唯一够得着的真机证据。
+# 调试 CI 的推送不该吃号,push 触发器只认默认分支。这个工作流对会话分支天然不可达(push 限默认
+# 分支、workflow_dispatch 需要会话没有的 actions: write);2026-10-14 之前真删只挂在这一个
+# 文件上,导致会话侧永远等不到真删——现在 pr-check.yml 的 cleanup job 也真删(同仓 pull_request
+# 事件里 GITHUB_TOKEN 能拿到声明的写权限,会话推送到同仓开的 PR 即可触发,与这里共用同一份
+# .github/scripts/cleanup.py、同一个 concurrency group 串行),这个工作流不再是唯一的真删入口。
 on:
   push:
     branches: [ main ]
@@ -80,8 +81,10 @@ jobs:
     needs: build
     # 写权限只给可信的默认分支构建 job(规范:清理 job 权限最小化,只删本项目对象)。本工作流
     # 不接 pull_request,这里只按 ref 再做一道保险:非默认分支(如会话分支用 workflow_dispatch
-    # 触发出包)不给这个 job 写权限、不跑清理——它们出的对象在下一次 main 构建时由这个 job
-    # 按脚本里的四条判据收口,清理责任固定在这里,不经会话令牌、不经人工。
+    # 触发出包)不给这个 job 写权限、不跑清理。这不是唯一的真删入口——pr-check.yml 的 cleanup
+    # job 同样真删,会话推送到同仓 PR 即可触发,不用等这里的下一次 main 构建;两处共用同一份
+    # .github/scripts/cleanup.py、同一个 concurrency group(selffont-artifacts)串行,不经
+    # 会话令牌、不经人工去手动点。
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
