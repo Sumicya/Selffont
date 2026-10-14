@@ -95,8 +95,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
-      # 真删:脚本与 pr-check.yml 的 cleanup-preview 共用同一份 .github/scripts/cleanup.py,
-      # 靠 CLEANUP_APPLY 区分——这里是 true,判定即执行删除;脚本内部判据顺序与说明见该文件。
+      # 真删:脚本与 pr-check.yml 的 cleanup job 共用同一份 .github/scripts/cleanup.py,
+      # 两处都是 CLEANUP_APPLY=true,判定即执行删除;脚本内部判据顺序与说明见该文件。
       - name: Delete by criteria (口径 / 来源 / 重复当日序号 / 数量)
         env:
           GH_TOKEN: ${{ github.token }}
