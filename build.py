@@ -8,12 +8,12 @@
 
 版本号按全局规范：yy.m.d.当日序号。总序号（五段，展示不含 v），versionCode = 总序号。
 日期与两个序号在仓库唯一构建工作流 Build 一处算定（--query-github 现场查运行历史，不写死
-现值）；本地也可以手工传入。总序号（必填）= 本次 run 的 run_number（含 PR 运行，取自运行
-上下文，不查历史）；workflow 重建造成号段跳变时把重建前最大号记成 AGENTS.md 里的
-`RUN_NUMBER_BASELINE = N` 并相减，没记就用原值，不判失败。当日序号 = 本次 run 的 head 提交
-在当日（UTC+8）默认分支提交序列里的位次；取不到（常见于 PR：head 还不在默认分支历史里）
-就退化成四段 yy.m.d.总序号，CI 日志里写明退化原因。取数只在 CI 里做，本地打包必须显式传
---date/--day/--build（本地不传 --day 也按四段处理）。
+现值）；本地也可以手工传入。总序号（必填）= 本次 run 的 run_number（只认 push/workflow_dispatch
+两种出包运行，PR 运行不取号、不出包、不上传，取自运行上下文，不查历史）；workflow 重建造成
+号段跳变时把重建前最大号记成 AGENTS.md 里的 `RUN_NUMBER_BASELINE = N` 并相减，没记就用原值，
+不判失败。当日序号 = 本次 run 在当日（UTC+8）本仓「出包运行」里按开始时间排的位次；取不到
+（查询暂时没同步到自己这条运行等异常情况）就退化成四段 yy.m.d.总序号，CI 日志里写明退化原因。
+取数只在 CI 里做，本地打包必须显式传 --date/--day/--build（本地不传 --day 也按四段处理）。
 
 自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
 全部现场从字体里读。主字体必须是含 wght 轴的可变字体——配置只出新语法（supportedAxes），
@@ -92,6 +92,7 @@ MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
 PROJECT = "Selffont"  # 产物名与 artifact 名的项目段：<项目名>-<版本>
+WORKFLOW = "build.yml"  # 版本取数的计数对象：仓库唯一构建工作流
 DEV_VERSION = "dev"     # 仓库里的非发行默认：没盖戳就不假装有正式序号
 VERSION_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+\.\d+$")   # 五段：日期.当日序号.总序号
 VERSION_RE4 = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+$")       # 四段退化：当日序号取不到时用
@@ -478,7 +479,7 @@ def stamp_version(prop: str, build: str | None, day: str | None = None, date: st
     """盖戳：version = yy.m.d.[当日序号.]总序号（展示不含 v），versionCode = 总序号（KSU 靠它比新旧）。
 
     总序号、日期必填，缺一就抛错停在这里，调用方（build / CI）不出包、不上传——不编数，也不
-    静默产半成品。当日序号取不到（常见于 PR）允许退化成四段，调用方负责在日志里写明原因。
+    静默产半成品。当日序号取不到（查询异常）允许退化成四段，调用方负责在日志里写明原因。
     """
     missing = [label for label, value in (("总序号", build), ("日期", date)) if not value]
     if missing:
@@ -502,12 +503,12 @@ def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def commit_position(shas: list[str], head: str) -> str | None:
-    """当日序号核心：head 在 shas（当天默认分支提交 sha，按时间从早到晚排好）里的位次（从 1 起）。
+def run_rank(ids: list[int], run_id: int) -> str | None:
+    """当日序号核心：run_id 在 ids（当天出包运行 id，按开始时间从早到晚排好）里的位次（从 1 起）。
 
-    head 不在里面（常见于 PR：head 还没进默认分支历史）就是 None，调用方负责退化成四段。
+    run_id 不在里面（查询暂时没同步到自己这条运行，或 API 异常）就是 None，调用方负责退化成四段。
     """
-    return str(shas.index(head) + 1) if head in shas else None
+    return str(ids.index(run_id) + 1) if run_id in ids else None
 
 
 def run_number_baseline() -> int:
@@ -538,7 +539,7 @@ def gh_api_object(path: str, jq: str = ".") -> dict:
 
 
 def current_run() -> dict | None:
-    """本次运行的身份：GITHUB_RUN_ID / GITHUB_RUN_NUMBER / GITHUB_SHA。
+    """本次运行的身份：GITHUB_RUN_ID / GITHUB_RUN_NUMBER。
 
     created_at 从本 run 对象取（不 list 后取最新）。本地没有 GITHUB_RUN_ID 时返回 None——
     取数只在 CI 里做，本地打包必须显式传 --date/--day/--build。
@@ -553,33 +554,45 @@ def current_run() -> dict | None:
     return record
 
 
-def day_commit_index(moment: datetime) -> str | None:
-    """当日序号：本次 run 的 head 提交（GITHUB_SHA）在当日（UTC+8）默认分支提交序列里的位次。
+def day_run_index(moment: datetime, run_id: int) -> str | None:
+    """当日序号：当日（UTC+8）本工作流「出包运行」（push / workflow_dispatch，不含 pull_request）
 
-    head 不在默认分支历史里（常见于 PR 运行）就是 None，调用方负责退化成四段。
+    按开始时间从早到晚排序后，本次 run 的位次。取不到就是 None，调用方负责退化成四段。
+    规范明令禁止按 head 提交在提交序列里的位次取数——并发的 push 与 PR 运行会抢同一个名次，
+    实测出现过当日序号重复、乱序（如 5 重复两次、4 排在 6 之后），根因是两次运行同一个 head
+    提交、位次天然相同，而「出包运行」本身（push/workflow_dispatch）互不重叠、各有独立顺序。
     """
-    head = os.environ.get("GITHUB_SHA")
-    if not head:
-        return None
     start = day_start(moment)
-    end = start + timedelta(days=1)
-    # since/until 用 Z 后缀而不是 +00:00——查询串里的 "+" 容易被当成空格转义，时间窗会悄悄挪位。
-    to_z = lambda dt: dt.isoformat().replace("+00:00", "Z")
-    rows = gh_api("repos/{owner}/{repo}/commits"
-                  f"?sha=main&since={to_z(start)}&until={to_z(end)}&per_page=100",
-                  ".[]|{sha}", paginate=True)
-    shas = [row["sha"] for row in rows]
-    return commit_position(list(reversed(shas)), head)   # API 给的是新到旧，翻成当天从早到晚
+    todays, page = [], 1
+    while page <= 10:  # 兜底上限：一天之内不可能翻 1000 条还没跨过当天零点
+        batch = gh_api(f"repos/{{owner}}/{{repo}}/actions/workflows/{WORKFLOW}"
+                       f"/runs?per_page=100&page={page}",
+                       ".workflow_runs[]|{id,event,created_at}")
+        if not batch:
+            break
+        stop = False
+        for row in batch:
+            if parse_time(row["created_at"]) < start:
+                stop = True
+                break
+            todays.append(row)
+        if stop:
+            break
+        page += 1
+    picked = sorted((row for row in todays if row["event"] in ("push", "workflow_dispatch")),
+                    key=lambda row: row["created_at"])
+    return run_rank([int(row["id"]) for row in picked], run_id)
 
 
 def github_version_numbers() -> tuple[str, str | None, str]:
     """现场取数，返回（日期，当日序号或 None，总序号）：
 
-    1. 输入只认本次运行的身份（run_id / 本 run 的 created_at / GITHUB_SHA），不 list 后取最新。
+    1. 输入只认本次运行的身份（run_id / 本 run 的 created_at），不 list 后取最新。
     2. created_at 换算到 UTC+8 得 yy.m.d，月日不补零。
     3. 总序号 = 本次 run 的 run_number，按 AGENTS.md 的 RUN_NUMBER_BASELINE 相减（没记就是 0）。
-    4. 当日序号 = head 提交在当日默认分支提交序列里的位次；取不到就是 None（调用方退化四段）。
-    只在 CI 里用；本地必须显式传 --date/--day/--build（本地序号规则写在 AGENTS.md）。
+    4. 当日序号 = 本次 run 在当日「出包运行」（push/workflow_dispatch）里按开始时间排的位次；
+       取不到就是 None（调用方退化四段）。只在 CI 里用；本地必须显式传
+       --date/--day/--build（本地序号规则写在 AGENTS.md）。
     """
     run = current_run()
     if run is None:
@@ -588,7 +601,7 @@ def github_version_numbers() -> tuple[str, str | None, str]:
     moment = parse_time(run["created_at"]).astimezone(CLOCK)
     total = int(run["run_number"]) - run_number_baseline()
     return (f"{moment.year % 100}.{moment.month}.{moment.day}",
-            day_commit_index(moment),
+            day_run_index(moment, int(run["id"])),
             check_number(str(total), "总序号", 1))
 
 
@@ -627,7 +640,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             raise ValueError("版本号只认一个来源：--query-github 与 --build/--day/--date 不能混用")
         date, day, build_num = github_version_numbers()  # 取数失败直接抛：不编数、不出非发行包
         if day is None:
-            warnings.append("当日序号取不到（head 提交不在默认分支历史里，常见于 PR 运行），"
+            warnings.append("当日序号取不到（查询暂时没同步到本次运行等异常情况），"
                             "版本号退化成四段 yy.m.d.总序号")
     prop = stamp_version((ROOT / "module/module.prop").read_text(encoding="utf-8"),
                          build_num, day=day, date=date)
@@ -1148,7 +1161,7 @@ def version_stamp():
     assert VERSION_RE.fullmatch("26.9.30.3.42")
     for bad in ("26.9.30", "26.9.30.3.42.7", "dev"):
         assert not VERSION_RE.fullmatch(bad), bad
-    # 当日序号取不到时允许退化四段（PR 运行常见：head 还没进默认分支历史）。
+    # 当日序号取不到时允许退化四段（PR 运行不走这条路径，这里只测退化本身的格式与断言）。
     degraded = stamp_version(prop, "42", day=None, date="26.9.30")
     assert "version=26.9.30.42" in degraded and "versionCode=42" in degraded, degraded
     assert VERSION_RE4.fullmatch("26.9.30.42")
@@ -1188,19 +1201,17 @@ def version_stamp():
 
 @check
 def version_numbers():
-    """取数口径：总序号直接用 run_number（按 AGENTS.md 的基线相减），当日序号用提交位次。"""
-    assert commit_position(["a", "b", "c"], "b") == "2"
-    assert commit_position(["a", "b", "c"], "zzz") is None, "head 不在当天默认分支历史里就是 None"
-    assert commit_position([], "a") is None
+    """取数口径：总序号直接用 run_number（按 AGENTS.md 的基线相减），当日序号用出包运行排序位次。"""
+    assert run_rank([10, 20, 30], 20) == "2"
+    assert run_rank([10, 20, 30], 99) is None, "run_id 不在当天出包运行里就是 None"
+    assert run_rank([], 10) is None
     assert run_number_baseline() == 0, "本仓库未记录过重建基线，应该直接用 run_number 原值"
     assert day_start(datetime(2026, 10, 5, 0, 30, tzinfo=CLOCK)) == datetime(2026, 10, 4, 16, 0, tzinfo=timezone.utc)
     assert parse_time("2026-10-05T01:52:23Z") == datetime(2026, 10, 5, 1, 52, 23, tzinfo=timezone.utc)
     # 自检不联网，只验「没有 CI 身份」这条路径：临时摘掉环境变量（CI 里必然存在），验完还原。
-    saved = {key: os.environ.pop(key, None) for key in ("GITHUB_RUN_ID", "GITHUB_SHA")}
+    saved = {key: os.environ.pop(key, None) for key in ("GITHUB_RUN_ID",)}
     try:
         assert current_run() is None, "没有 GITHUB_RUN_ID 就不该编出运行身份"
-        assert day_commit_index(datetime(2026, 10, 5, 9, 52, 23, tzinfo=CLOCK)) is None, \
-            "没有 GITHUB_SHA 就取不到当日序号"
     finally:
         os.environ.update({key: value for key, value in saved.items() if value is not None})
     assert all(os.environ.get(key) == saved[key] for key in saved if saved[key] is not None), "环境变量未还原"

@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-14（续三）· 堵刷号漏洞：PR 运行不取号不出包，当日序号改数出包运行
+
+- 主人在 Qself 查出刷号真事故：`arena/e207d38d-qself` 一夜之间总序号从 220 刷到 271，根因是旧版 GLOBAL.md「总序号 = 本次 run 的 run_number（含 PR 运行）」这条，同一提交被 push 与 pull_request 双触发各吃一个号；Gself 还查出号源分叉（基线相减与 run_number 原值同仓并存）。GLOBAL.md 已改：出包运行只认 `push`/`workflow_dispatch`，`pull_request` 运行不取号、不出包、不上传；当日序号改成「当日该仓出包运行按开始时间排的位次」，明令禁止按 head 提交在提交序列里的位次取数（并发运行会竞态，Qself 实测出现过当日序号 5 重复两次）；新增禁止空提交刷号、禁止为触发 CI 而推送。
+- Selffont 本仓排查：`arena/7478d6df-selffont` 没有并发 PR，不是刷号那种事故，但当日序号用的正是刚才被禁掉的「head 提交位次」口径，且产物已经连续退化成四段（`26.10.14.116/117/118`）——这是上一轮规则本身的缺陷早晚会复现的问题，不是这次才引入的新 bug。
+- `build.py` 改用 `day_run_index()`：按当日（UTC+8）本工作流 `push`/`workflow_dispatch` 运行的开始时间排序取位次，不再查提交历史；原来的 `commit_position`/`day_commit_index` 删除。`.github/workflows/build.yml` 给「Build (version stamped)」「Stage artifact name」「Unpack for direct-flash artifact」「Upload module」四步都加了 `if: github.event_name != 'pull_request'`，PR 运行只跑 Selfcheck。
+- 顺带修了一个更早引入的真 bug：上一轮解某次 git 冲突时把 `WORKFLOW = "build.yml"` 这行常量误删了，此前没人引用过所以一直没炸，这次给 `day_run_index()` 用到才发现，已补回。
+- `AGENTS.md`/`README.md` 同步去掉所有「含 PR 运行」「push 与 PR 都传」的表述，改成「只有 push/`workflow_dispatch` 才取号出包，PR 运行只做校验」。9 项自检全部通过，`day_run_index` 用当前仓库真实 run（116/117/118）现场验证：run 118 在当天是第 3 个出包运行，结果正确。
+
 ## 2026-10-14（续二）· 主人确认沙箱令牌权限边界：tag 能删，artifact/run 不能
 
 - 主人用自己的凭据删掉了孤立 tag `v26.9.30.39`、`v3.0.0`（本仓库现有 Release 数 0，两个历史 tag 都没有对应 Release，按规范属孤立 tag，已报过、由主人主动发起删除，这次核实确实是主人亲手跑的命令）。

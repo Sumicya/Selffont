@@ -25,7 +25,11 @@ jobs:
         run: python build.py --check
       # 版本号在这一处算定:build.py --query-github 锚定本次运行(GITHUB_RUN_ID / GITHUB_RUN_NUMBER),
       # 不拿查询时的最新运行冒充本次;重试用同一身份,版本自然复用。取不到数就停,不出包不上传。
+      # 只在 push/workflow_dispatch 上出包取号:PR 运行只跑上面的 Selfcheck 做校验,不取号、不
+      # 出包、不上传——同一提交被 push 与 PR 双触发会各吃一个 run_number,规范明令禁止(实测
+      # 外仓一夜之间把总序号刷了 50 多号),所以从这一步开始 PR 事件直接跳过。
       - name: Build (version stamped)
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python build.py --query-github
@@ -33,6 +37,7 @@ jobs:
       # 版本允许五段(yy.m.d.当日序号.总序号)或当日序号取不到时退化的四段(yy.m.d.总序号)——
       # 跟 build.py 的 VERSION_RE / VERSION_RE4 保持同一套正则,别只认五段把合法的退化包拦下来。
       - name: Stage artifact name (Selffont-<版本>)
+        if: github.event_name != 'pull_request'
         run: |
           zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont*.zip' -print -quit)")
           test -n "$zip_file"
@@ -48,15 +53,18 @@ jobs:
       # 所以上传目录内容 = 包内根就是 module.prop。代价:gh run download 会把内容摊进目标目录,
       # 用 -D 指定一个空目录。
       - name: Unpack for direct-flash artifact
+        if: github.event_name != 'pull_request'
         run: |
           rm -rf build/root
           unzip -q "build/${ARTIFACT_NAME}.zip" -d build/root
           test -f build/root/module.prop
           test -f build/root/customize.sh
           find build/root -maxdepth 1 | sort
-      # CI 出包(不是发版):push 与 PR 都照传,名 = <项目名>-<版本>,留 5 天兜底;
+      # CI 出包(不是发版):只有 push 与 workflow_dispatch 传,名 = <项目名>-<版本>,留 5 天兜底;
+      # PR 运行只做校验,不出包不上传(上面三步已跳过,这步天然没有产物,同样加条件保险)。
       # 上传用 runner 自带令牌,不需要写权限。Release / tag / 正式 asset 一概不碰。
       - name: Upload module (Actions artifact)
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
@@ -66,7 +74,7 @@ jobs:
   cleanup:
     name: Keep newest 5 artifacts
     needs: build
-    # 写权限只给可信的默认分支构建 job(第二十四版「清理通用步骤」步骤 1)。PR 与非默认分支都不跑——
+    # 写权限只给可信的默认分支构建 job(规范:清理 job 权限最小化,只删本项目对象)。PR 与非默认分支都不跑——
     # 它们出的包照样计入同一保留窗口,由下一次 main 构建清理;分支期间超额由人工按 README 的
     # gh api -X DELETE 收口,不为此把写权限交给分支代码。
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
