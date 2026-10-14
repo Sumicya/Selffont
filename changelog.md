@@ -7,6 +7,8 @@
 - 补上 2026-10-13 记录的落位缺口：`.github/workflows/build.yml` 的 `cleanup` job 现在也删 `build.yml` 自己的运行记录（保留最近 5 条，按 `run_number` 排序、跳过仍在跑的），之前只删 artifact。
 - 同步改完 `AGENTS.md`（去掉版本号戳、改写计数口径与 CI 清理两节）、`README.md`（版本号说明与清理手动命令）。核实本仓库目前没有 `RUN_NUMBER_BASELINE` 记录（最新 `run_number` = 115，连续无跳变，workflow 没重建过）。
 - 本轮顺带确认：GitHub Release 资产下载（`releases/download/...`）会跳转到 `release-assets.githubusercontent.com`，不在沙箱允许访问的主机名单里，握手直接断线；仓库里直接提交的字体 git blob（如参照字体 `vf/*.ttf`）可以用 `git/blobs` API 取，不受这条限制——取证方式记进 `AGENTS.md` 的验证分层一节。
+- 补上最后一处遗漏：`build.yml` 的「Stage artifact name」步骤之前只接受五段版本号的正则，会把合法退化出的四段版本产物拦下来不让上传——现在跟 `build.py` 的 `VERSION_RE`/`VERSION_RE4` 对齐，五段、四段都认。`AGENTS.md` 里两处写死「五段版本」的措辞也一并改成「版本」。
+- 这一轮同时发现并顺手收口了此前好几轮已经做完但一直没提交推送的改动（`module/module.prop` 作者字段、`module/geckoview-config.yaml` 的字体回退顺序修正、`build.yml` 的产物直出与归属核验、`tools/round.py`/`tools/vf_round.py` 自制圆体圆角化工具链、`docs/round-preview/`、`docs/evidence/`）——核对过内容与会话记录一致、彼此不冲突，跟本轮改动一起提交推送，工作树收尾干净。
 
 ## 2026-10-13（续三）· 拐角半径 70→130 + 预览缓存失效修复 + 同步 GLOBAL.md 第 0 版
 

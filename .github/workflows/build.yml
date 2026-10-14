@@ -29,15 +29,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python build.py --query-github
-      # 出包前核对命名一致性:产物名与 artifact 名统一 Selffont-<五段版本>,不合规范就不上传。
-      - name: Stage artifact name (Selffont-<五段版本>)
+      # 出包前核对命名一致性:产物名与 artifact 名统一 Selffont-<版本>,不合规范就不上传。
+      # 版本允许五段(yy.m.d.当日序号.总序号)或当日序号取不到时退化的四段(yy.m.d.总序号)——
+      # 跟 build.py 的 VERSION_RE / VERSION_RE4 保持同一套正则,别只认五段把合法的退化包拦下来。
+      - name: Stage artifact name (Selffont-<版本>)
         run: |
           zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont*.zip' -print -quit)")
           test -n "$zip_file"
           ls -l "build/$zip_file"
           name="${zip_file%.zip}"
-          echo "$name" | grep -Eq '^Selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+\.[0-9]+$' || {
-            echo "产物名不符合规范的五段版本格式:$name" >&2
+          echo "$name" | grep -Eq '^Selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+(\.[0-9]+)?$' || {
+            echo "产物名不符合规范的版本格式(五段或退化四段):$name" >&2
             exit 1
           }
           echo "ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
@@ -52,7 +54,7 @@ jobs:
           test -f build/root/module.prop
           test -f build/root/customize.sh
           find build/root -maxdepth 1 | sort
-      # CI 出包(不是发版):push 与 PR 都照传,名 = <项目名>-<五段版本>,留 5 天兜底;
+      # CI 出包(不是发版):push 与 PR 都照传,名 = <项目名>-<版本>,留 5 天兜底;
       # 上传用 runner 自带令牌,不需要写权限。Release / tag / 正式 asset 一概不碰。
       - name: Upload module (Actions artifact)
         uses: actions/upload-artifact@v7
