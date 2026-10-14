@@ -15,7 +15,9 @@
   run：承载（run 的 workflow_run 下还挂着被保留的 artifact——删 run 会连带删它的
        artifact，承载保留对象的 run 不删、不计入数量上限）→ 数量（不承载保留对象的 run 里，
        当日之外每条序列保留最近 KEEP 条，按 run_started_at 排序，id 只在同一时刻时作 tiebreak，
-       不单独使用；当日不设上限）。
+       不单独使用；当日不设上限）。run_started_at 缺失（一直排队没真正开始过）时退回 created_at，
+       不当场报错；status 不是 completed（queued/waiting/requested/in_progress 等）一律不删，
+       不只挡 in_progress 一种状态。
 
 run_number 序列按工作流分开计（build.yml 与 pr-check.yml 各一条），数量判据各自独立计算。
 """
@@ -76,6 +78,11 @@ def paginate(path: str, jq: str) -> list[dict]:
 
 def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def run_time(row: dict) -> str:
+    """排序/当日判定统一用 run_started_at；run 未真正开始过(如一直排队)该字段缺失时退回 created_at。"""
+    return row.get("run_started_at") or row["created_at"]
 
 
 def today_start() -> datetime:
@@ -226,31 +233,31 @@ def main() -> None:
         not_carrying = [row for row in rows if row["id"] not in retained_run_ids]
         for row in carrying:
             print(f"保留[run,{workflow}](承载被保留的 artifact,不计入数量上限) "
-                  f"{row['run_started_at']} run_number={row['run_number']} id={row['id']}")
-        non_today = sorted((row for row in not_carrying if not is_today(row["run_started_at"], start)),
-                           key=lambda row: (row["run_started_at"], row["id"]), reverse=True)
-        today_rows = [row for row in not_carrying if is_today(row["run_started_at"], start)]
+                  f"{run_time(row)} run_number={row['run_number']} id={row['id']}")
+        non_today = sorted((row for row in not_carrying if not is_today(run_time(row), start)),
+                           key=lambda row: (run_time(row), row["id"]), reverse=True)
+        today_rows = [row for row in not_carrying if is_today(run_time(row), start)]
         print(f"{workflow}:{len(rows)} 条运行记录,承载保留 artifact {len(carrying)} 条(不计入上限),"
               f"当日 {len(today_rows)} 条(不设上限,不判定),非当日(不承载) {len(non_today)} 条,"
               f"保留最近 {KEEP} 条")
         for index, row in enumerate(non_today):
             if index < KEEP:
                 continue
-            if row["status"] == "in_progress":
-                print(f"保留[run,{workflow}](仍在运行,不删) {row['run_started_at']} "
+            if row["status"] != "completed":
+                print(f"保留[run,{workflow}](status={row['status']}≠completed,未跑完不删) {run_time(row)} "
                       f"run_number={row['run_number']} id={row['id']}")
                 continue
             if row["id"] == CURRENT_RUN_ID:
-                print(f"保留[run,{workflow}](本次运行自己,不删) {row['run_started_at']} "
+                print(f"保留[run,{workflow}](本次运行自己,不删) {run_time(row)} "
                       f"run_number={row['run_number']} id={row['id']}")
                 continue
             act("run", f"repos/{REPO}/actions/runs/{row['id']}",
-                f"{workflow} {row['run_started_at']} run_number={row['run_number']} id={row['id']} "
+                f"{workflow} {run_time(row)} run_number={row['run_number']} id={row['id']} "
                 f"判据:数量(非当日且不承载保留对象,第 {index + 1} 新,超过 {KEEP})")
         if APPLY:
             left_rows = workflow_runs(workflow)
             left_non_today = [row for row in left_rows
-                              if row["id"] not in retained_run_ids and not is_today(row["run_started_at"], start)]
+                              if row["id"] not in retained_run_ids and not is_today(run_time(row), start)]
             print(f"{workflow}:复核剩 {len(left_rows)} 条,非当日不承载 {len(left_non_today)} 条(上限 {KEEP})")
             if len(left_non_today) > KEEP:
                 sys.exit(f"{workflow} 清理后非当日不承载运行记录仍有 {len(left_non_today)} 条,超过上限 {KEEP}")

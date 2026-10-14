@@ -4,11 +4,10 @@
 
 ## 全局规范（不抄条文，只记落位）
 
-`GLOBAL.md` 的条文不抄进本文件——本仓库怎么落位见下面「项目核对清单」「CI 权限与清理」「项目取舍」三节；冲突时以 `GLOBAL.md` 为准并当轮更新本文件。四条不在那三节里、必须常驻的：
+`GLOBAL.md` 的条文不抄进本文件——本仓库怎么落位见下面「项目核对清单」「CI 权限与清理」「项目取舍」三节；冲突时以 `GLOBAL.md` 为准并当轮更新本文件。三条不在那三节里、必须常驻的（2026-10-14：`GLOBAL.md` 5dc0d28 整条删除了检讨条款，本文件同步删除，不再保留；错误照旧当轮改条文、当轮报结果，不另写检讨文书）：
 
 - **改动落地**：任何本轮本地改动必须最终提交并推送到当前远端分支，任务结束不留未提交或未推送的改动。
 - **分支**：会话固定在工作分支提交并推送，不直接推 `main`（清理类删除不受此限）；会话分支删除的唯一判据是工作已继承进默认分支，删前用 `compare` 核对 `ahead_by=0`；PR 关闭而未合入、或仍挂开放 PR 的分支一律保留并报主人，不为凑数删。
-- **Arena 会话**：主人当轮出现辱骂或同等强度的愤怒表达时，先输出不少于 1000 个汉字的书面检讨（错在哪、违反哪条、为何做错、如何纠正、如何防再犯），每满 100 个汉字标 `【累计100字】`、`【累计200字】` 递增，末尾不足百字注明实际总数；随后立刻继续办事，不另开一轮。
 - **CI 禁旧**：runner 钉具体镜像（`ubuntu-24.04`，不用 `ubuntu-latest`）；Action 用现行主版本（2026-10-10 核对 `checkout` / `setup-python` / `upload-artifact` 都是 v7），出现弃用警告当轮升级。
 
 
@@ -19,7 +18,8 @@
 - **缺字回退分两个区**（AOSP `font_fallback.xml` 头注：默认家族 / 命名家族 / locale fallback family 三类，缺字按「完整 BCP-47 标签 → 仅语言 → 顺序」匹配）：默认区放一条匿名主字体家族紧随默认家族；**中日韩语言区（`zh` / `zh-Hans` / `zh-Hant,zh-Bopo` / `ja` / `ko`…）必须自带主字体**（前置，区内原有 `NotoSansCJK` 等字件留在后面，覆盖只加不减）——只往默认区插一条时，中文场景缺字会先在语言区命中厂商字体，主字体轮不到（旧实现整族删掉了 5 个 CJK 语言区，2026-10-06 修正）。非 CJK 语言区（`und-Arab` 等）与 emoji 区（`und-Zsye`）逐字不动，自检逐条比对。
 - 不要的厂商字体：`MiSans`（主人 2026-10-06 明确不喜欢）。构建期把配置里的 `MiSansL3.otf` 引用、标注它的注释、以及火狐名单里的 `MiSans VF` / `MiSans TC` 等一并清掉；清空的家族节点删除，不留空节点。清掉后中文缺字由默认区的补充字库接管（覆盖靠基础包，不靠厂商字体）；自检有**字面**断言（`"MiSans" not in xml`），改匹配式也绕不过去。
 - 产物：模块 zip `Selffont-<版本>.zip`（约 100 MB = 主字体约 46 MiB + 补充字库约 54 MiB + 配置脚本；只带一份 VF，不按字重复制）。产物由本地 `build.py` 产出，CI 也产一份并传成 Actions artifact（只有 `build.yml` 的 push/`workflow_dispatch` 运行才取号出包上传；PR 校验是独立的 `pr-check.yml`，只跑自检，物理上碰不到 `build.yml` 的号段，不出包，取包命令见 README）；仓库不发 Release，文档里不写 Release 下载入口。
-- Actions artifact：`build.yml` 出包（名 = `Selffont-<版本>`，上传前核对产物名符合五段或退化四段的版本格式）；清理脚本 `.github/scripts/cleanup.py`（`build.yml` 与 `pr-check.yml` 共用这一份，`CLEANUP_APPLY` 区分真删/预演）按四条判据自动滚动清理（口径：版本段数须等于 `SEGMENTS`；来源：`workflow_run` 事件是 `pull_request` 的一律删；重复当日序号：同日同当日序号出现两次，保留总序号最大的；数量：当日之外每条序列 5 个），前三条不豁免当日；筛选按 `selffont-` 前缀（不分大小写，含旧积压 `selffont-module`），归属按 `workflow_run` 的 `repository_id` / `head_repository_id` 核验，归属不明保留，完整分页、删除前打印完整清单、删完复核超限报错。清理责任固定在出包工作流的 CI job（runner 自带、带 `actions: write` 的令牌，与会话令牌不同源），不经会话令牌、不经人工——会话令牌对本仓库 `actions` 写同样是 403（实测，能力按权限类分不按仓库分）；会话侧够得着的真机证据是 `pr-check.yml` 的 `cleanup-preview` job（`actions: read`，`CLEANUP_APPLY=false`，只打印不删）。
+- Actions artifact：`build.yml` 出包（名 = `Selffont-<版本>`，上传前核对产物名符合五段或退化四段的版本格式）；清理脚本 `.github/scripts/cleanup.py`（`build.yml` 与 `pr-check.yml` 共用这一份，`CLEANUP_APPLY` 区分真删/预演）按四条判据自动滚动清理（口径：版本段数须等于 `SEGMENTS`；来源：`workflow_run` 事件是 `pull_request` 的一律删；重复当日序号：同日同当日序号出现两次，保留总序号最大的；数量：当日之外每条序列 5 个），前三条不豁免当日；筛选按 `selffont-` 前缀（不分大小写，含旧积压 `selffont-module`），归属按 `workflow_run` 的 `repository_id` / `head_repository_id` 核验，归属不明保留，完整分页、删除前打印完整清单、删完复核超限报错。
+- 口径分界点：`Selffont-26.10.14.116`、`.117`、`.118` 三个四段产物出自 2026-10-14 00:21–01:17 的三次 push 运行（rn=116 id=38489755640、rn=117 id=38493032268、rn=118 id=38494935027，均按 `run_started_at` 实测），当期取不到当日序号而退化四段；自 rn=119（`Selffont-26.10.14.4.119`，id=38497534833，01:46）起恢复五段。三个四段产物按口径判据（段数 4 ≠ `SEGMENTS=5`）待出包工作流首次运行删除，状态记「待出包工作流首次运行」；删除前名单（`gh api repos/Sumicya/Selffont/actions/artifacts`，取值 2026-10-14T04:15:56Z）共 6 条：`.5.114`、`.6.115`、`.116`、`.117`、`.118`、`.4.119`，三个四段产物仍在列。清理责任固定在出包工作流的 CI job（runner 自带、带 `actions: write` 的令牌，与会话令牌不同源），不经会话令牌、不经人工——会话令牌对本仓库 `actions` 写同样是 403（实测，能力按权限类分不按仓库分）；会话侧够得着的真机证据是 `pr-check.yml` 的 `cleanup-preview` job（`actions: read`，`CLEANUP_APPLY=false`，只打印不删）。
 - Release：本仓库现有 **0 个**（2026-10-06 现场核）；CI 不发版也不删 Release，清理脚本只读打印数量并在超过 1 个时告警。获准人工发布时，发布后的「只留最近 1 个 + 清理其专属关联 tag」由发布者做（CI 不拿 `contents` 写权限）。
 - 工作流写权限：`build.yml` 的 `cleanup` job（`actions: write`，调 `.github/scripts/cleanup.py`，`CLEANUP_APPLY=true`）；`pr-check.yml` 的 `cleanup-preview` job 只读（`actions: read`，`CLEANUP_APPLY=false`）；其余一律只读；上传 artifact 不需要写权限。
 - 版本来源：五段 `yy.m.d.当日序号.总序号`，当日序号取不到时退化四段 `yy.m.d.总序号`；展示版本不含 `v`，`versionCode` = 总序号。取数现场查运行历史（`build.py --query-github`），不在文档/代码里写死现值；`--query-github` 与手工 `--date/--day/--build` 不混用。仓库里的 `module/module.prop` 入库值是 `version=dev` / `versionCode=0`（只是入库默认，盖戳时被覆盖）。
@@ -41,7 +41,7 @@
   - `build.yml` 的 `cleanup` job：唯一写权限（`actions: write`，`CLEANUP_APPLY=true`），`contents` 保持只读——本仓库 Release 数为 0 且 CI 不发版，用不上 `contents: write`，按最小化不申请；`needs: build` 出包成功后串行执行，**只在默认分支 `main` 上跑**（`build.yml` 已不接 `pull_request`，这里按 `github.ref == 'refs/heads/main'` 再做一道保险：会话分支用 `workflow_dispatch` 触发出包时不给这个 job 写权限、不跑清理）。
   - `pr-check.yml` 的 `cleanup-preview` job：只读（`actions: read`，`CLEANUP_APPLY=false`），只打印判据结论与将删名单，不调用 `DELETE`；`pr-check.yml` 不单独清理任何对象，它自己的超量运行记录也由 `build.yml` 的 `cleanup` job 一并删（清理只留一处，真删只有一处）。
   - 判据顺序固定，口径/来源/重复当日序号三条不豁免当日，只有数量判据当日豁免：**口径**（artifact 版本段数须等于 `build.yml`/`pr-check.yml` 顶部 `env.SEGMENTS` 声明值，不符的当轮删——包括当次 `build.py` 取数失败退化出的四段包，退化不是不删的理由）→ **来源**（`workflow_run` 事件是 `pull_request` 的 artifact 一律删）→ **重复当日序号**（同一天同一当日序号出现两次，保留总序号最大的那个，其余删；若命中记一行分界点在本文件）→ **数量**（当日之外，`build.yml`、`pr-check.yml` 各自的运行记录与本项目 artifact 各自一条序列，保留最近 5 个）。
-  - **run 与 artifact 的承载关系**：删 run 会连带删它名下的 artifact，所以承载「被保留 artifact」的 run 不删、不计入 run 的数量上限，上限只按「不承载保留对象的 run」计；排序一律按 `run_started_at`（UTC+8 判断当日），`id` 只在同一时刻时作 tiebreak。脚本内固定顺序：先算 artifact（口径→来源→重复当日序号→数量），再算 run（承载→数量）。
+  - **run 与 artifact 的承载关系**：删 run 会连带删它名下的 artifact，所以承载「被保留 artifact」的 run 不删、不计入 run 的数量上限，上限只按「不承载保留对象的 run」计；排序一律按 `run_started_at`（UTC+8 判断当日），`id` 只在同一时刻时作 tiebreak；`run_started_at` 缺失（一直排队没真正开始过）时退回 `created_at`，不当场报错。`status` 不是 `completed`（`queued`/`waiting`/`requested`/`in_progress` 等）的 run 一律不删，不只挡 `in_progress` 一种状态。脚本内固定顺序：先算 artifact（口径→来源→重复当日序号→数量），再算 run（承载→数量）。
   - 不碰 Release / tag / 历史 tag。**代价**：只在分支上用 `workflow_dispatch` 出包时 `cleanup` job 不触发，这些对象在下一次 `main` 构建时由该 job 收口；会话分支够得着的真机证据是 `cleanup-preview` 的预演日志，不是靠「等合并」或人工触发——`build.yml` 对会话分支天然不可达（push 限默认分支、`workflow_dispatch` 需要会话没有的 `actions: write`），这是设计本身，不是阻塞，汇报里不把它写成「需要主人做什么」。
 - 规范自检：不设工作流，由 agent 在会话中完成（读 `AGENTS.md` / `GLOBAL.md`、核指针与版本戳、核权限与禁发版）。
 - 发版：本仓库没有 CI 发版流程（CI 发版未授权）；发版仍需主人对项目、版本、触发条件的明确允许。清理授权不等于发版授权。

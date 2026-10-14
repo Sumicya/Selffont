@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2026-10-14（续七）· 删检讨条款、补口径分界点史实、回收两条 run 判据硬化
+
+- `Sumicya/selfs` `GLOBAL.md` 整条删除了 Arena 辱骂触发检讨的条款（commit `5dc0d28`）：本仓库 `AGENTS.md` 原「四条必须常驻」里的「Arena 会话」检讨一条同步删除，改成三条；今后错误照旧当轮改条文、当轮报结果，不再写检讨文书。本仓库 `changelog.md` 里提到检讨的 3 处历史条目（记当时状态）不动。
+- `AGENTS.md` 补一行此前缺失的史实——**口径分界点**：`Selffont-26.10.14.116/.117/.118` 三个四段产物出自当日 00:21–01:17 三次 push 运行（rn=116/117/118，`run_started_at` 实测），当期取不到当日序号退化四段；自 rn=119（01:46）恢复五段。三个四段产物状态记「待出包工作流首次运行」，删除前名单现场核过（2026-10-14T04:15:56Z，共 6 条，三者仍在列）。
+- 回收 `.github/scripts/cleanup.py` 里原本缺失的两条判据硬化（对齐 Qself 脚本已有但未写进文档的两条，一并补回本仓脚本本身，不只是补文档）：
+  1. `run_started_at` 缺失（run 一直排队没真正开始过）时排序/当日判定退回 `created_at`，不当场报错退出；
+  2. run 的「不删」保护从只挡 `status == "in_progress"` 扩成挡任意 `status != "completed"`（`queued`/`waiting`/`requested` 等都算在内）。
+  用沙箱 mock（`/tmp/test_cleanup2.py` 追加两条合成 run：一条 `run_started_at=None`、一条 `status=queued`，另加若干填充 run 把数量判据边界推到合成记录位置）在 `KEEP=2` 下验证：`run_started_at` 缺失的记录按 `created_at` 正确落位排序；`queued`/`in_progress` 记录即使排到数量上限之外也被单独保留打印，不进入删除名单。两种模式（`CLEANUP_APPLY=true/false`）均验证过。
+- 续六开的 [PR #7](https://github.com/Sumicya/Selffont/pull/7) 触发的 `pr-check.yml` 真实运行（[run 38508551473](https://github.com/Sumicya/Selffont/actions/runs/38508551473)）两个 job 都 `success`；`Cleanup preview` job 的逐行 stdout 本轮尝试用 `gh api .../jobs/.../logs` 取，返回的是跳转到 `productionresultssa16.blob.core.windows.net` 的签名直链，这个域名不在本沙箱出站白名单里，取流 EOF——如实记录这个限制，不假装读到了逐行判据文本；job `success` 本身证明脚本在真实 Actions 环境对真实数据跑完没有触发任何 `sys.exit` 失败路径，逐行判据文本需要点开 job 链接在浏览器里看。
+
 ## 2026-10-14（续六）· 补三处条文洞：死锁、重复当日序号判据、run/artifact 承载关系
 
 - 主人指出续五收尾那句「要等合并到 main 或你用有权限的凭据手动触发一次」本身违规（同时提合并、把清理派给主人），而且这是三条各自正确的条文叠加出的死锁：出包工作流只接 push[main]/workflow_dispatch（为了号段不被 PR 吃）＋ 会话不推默认分支（更早的规则）＋ 会话令牌 `actions` 写 403（实测），三条叠起来导致清理 job 对会话分支永远不可达，而旧条文没给会话除「等合并」「求主人」「交命令」之外的第四种说法——三个都违规。
