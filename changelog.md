@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-14（续九）· push 不再限默认分支：会话分支推送同样出包，是真正的验证路径
+
+- 背景：`GLOBAL.md` 又撤回了两条（commit `a8787a8`，依据 `e6c9e8c` 实证 dispatch 可达、`358120a` 清理失败分类）——之前写的「会话分支不出包、不取号，验证靠 PR 校验工作流」连同配套的「出包工作流必须判 `github.ref` 不是默认分支就失败退出」全部撤回：`pr-check.yml` 只跑构建与测试、不上传产物，说它能"验证"是空话；`github.ref` 守卫把唯一能拿到真实可装产物的路径堵死了，还继续宣称验证照旧。新口径：写「不许做某事」之前先问这是不是唯一的验证/交付手段，是就不许禁，只能加口径。
+- 改法：`build.yml` 的 `on: push:` 去掉 `branches: [ main ]`，改成不限分支——会话分支推送同样触发出包，用的是同一套命名口径、同一条 `run_number` 序列（`build.py` 的 `day_run_index()` 本来就是按 `event in (push, workflow_dispatch)` 查整个工作流的运行列表，不筛分支，不用改代码），不另立号段、不给会话分支产物开豁免、不回溯删既存产物。`cleanup` job 同步去掉 `if: github.ref == 'refs/heads/main'` 守卫，改成每次出包成功都跑——会话分支产出的 artifact 跟默认分支同一套判据，没理由让它们的清理单独晚一步，况且清理本来就要求两条工作流都挂、共用同一 `concurrency` group，按 `ref` 砍掉一边就自相矛盾。
+- 相应改写 `AGENTS.md`/`README.md` 里所有描述「`build.yml` 只接 push 限默认分支 main」「cleanup job 只在默认分支上跑」的段落，统一成「不限分支」；旧表述保留在标注「之前/曾经」的历史说明句里，不删历史记录。
+- `AGENTS.md` 开头补一句现文对照的 `GLOBAL.md` 提交 sha（`a8787a8`），不用版本号追踪；经查 Selffont 本仓此前不存在上游报告提到的「第二十一版」版本戳或行号对应的「清理 job 必须在默认分支构建工作流里」字样（`AGENTS.md:13` 现场核对是空行）——如实记录这一差异，没有据此做无依据的改动，只按确实存在的条文落差（`build.yml` 的 `branches: [main]` 与 `github.ref == 'refs/heads/main'`）动手。
+- 验证：`python build.py --check` 9/9 通过；两份工作流 YAML `yaml.safe_load` 通过；改动已推送，等下一次本分支的真实 push 触发 `build.yml` 验证会话分支确实能出包、`cleanup` job 确实不再被 `ref` 挡住。
+
 ## 2026-10-14（续八）· 真删从未触发过：从「只挂 build.yml」改成两工作流都真删
 
 - 主人指出根本问题：真删只挂在 `build.yml` 上，而该工作流只在 push 到默认分支或 `workflow_dispatch` 时跑——会话不推默认分支、令牌又没有 `actions: write` 去手动 dispatch，`pr-check.yml` 原来的 `cleanup-preview` job 是只读预演（`actions: read`，`CLEANUP_APPLY=false`）。结果是 Selffont 的 `116`/`117`/`118` 从 03:35Z 挂到 07:11Z，一次真删都没发生，之前几轮报告里的「预演已证、待出包工作流首次运行」其实永远等不到那个「首次运行」。根因：把「清理逻辑只留一份脚本」误实现成了「真删只挂一处」，而那一处正好会话够不着。依据：`Sumicya/selfs` `GLOBAL.md` commit `b0594d3`。
