@@ -10,12 +10,13 @@
   pr-check.yml 的 cleanup job（pull_request 事件时跑，会话推送同仓 PR 即可触发，不是 fork 的
   pull_request 里 GITHUB_TOKEN 能拿到工作流声明的写权限）；两处挂同一个 concurrency group
   （selffont-artifacts）串行，不会同时跑互相打架。
-- DELETE 失败按返回码原因分两条路（主人 2026-10-14 选定，不许把两种原因混在一起降级）：
-  403 这类权限缺口（典型是 fork 发起的 pull_request，GITHUB_TOKEN 只读）打一条 ::warning::
+- DELETE/取消（cancel）失败按返回码原因分两条路（主人 2026-10-14 选定，不许把两种原因混在一起
+  降级）：403 这类权限缺口（典型是 fork 发起的 pull_request，GITHUB_TOKEN 只读）打一条 ::warning::
   annotation、跳过这一条继续往下走，不让整个 job 变红、也不让脚本中途退出；403 以外的失败
   （脚本异常、判据算错、网络错误、其它返回码）打 ::error:: 并计入失败清单，main() 跑完后只要
   清单非空就让这次运行以非零退出码结束，job 当轮变红，汇报里把它列为阻塞项——不许吞掉、不许
-  降成 warning 蒙过去。只有真正执行成功的删除才打 DELETE[...] 日志，没成功的仍然算「将删」。
+  降成 warning 蒙过去。只有真正执行成功的才打 DELETE[...]/POST[...] 日志，没成功的仍然算
+  「将删/将取消」。
 
 判据顺序固定，不许调换（2026-10-15 由四条加到五条，依据 `selfs` `GLOBAL.md` `129a292`：实测
 Selffont 换号源后 4 个旧口径产物 `.5.120`/`.4.119`/`.6.115`/`.5.114` 原四条判据全过——段数 5
@@ -33,8 +34,11 @@ KEEP 的上限）：
        artifact，承载保留对象的 run 不删、不计入数量上限）→ 数量（不承载保留对象的 run 里，
        每条序列按 run_started_at 统一保留最近 KEEP 条，不再区分当日，id 只在同一时刻时作
        tiebreak，不单独使用）。run_started_at 缺失（一直排队没真正开始过）时退回 created_at，
-       不当场报错；status 不是 completed（queued/waiting/requested/in_progress 等）一律不删，
-       不只挡 in_progress 一种状态。
+       不当场报错；status 不是 completed（queued/waiting/requested/in_progress 等）的超限 run
+       不能直接 DELETE（2026-10-15 依据 `selfs` `GLOBAL.md` 重设版「未完成运行造成超限时,先取消
+       较旧的超限运行」），改成 POST `.../cancel` 先取消，真删留给它转成 completed 之后的下一轮；
+       取消动作同样经 `act()` 的 403/非 403 两条路径，不单独开后门。当前运行自己（`CURRENT_RUN_ID`）
+       永不取消不删，这条判断必须排在「未完成」判断之前，否则会在脚本运行中途自己取消自己。
 
 run_number 序列按工作流分开计（build.yml 与 pr-check.yml 各一条），数量判据各自独立计算。
 """
@@ -109,27 +113,29 @@ def permission_gap(stderr: str) -> bool:
     return "HTTP 403" in stderr or "Resource not accessible by integration" in stderr
 
 
-def act(kind: str, path: str, label: str) -> None:
-    """真删单条对象；DELETE 失败按返回码原因分两条路，不许混在一起降级（见模块 docstring）：
+def act(kind: str, path: str, label: str, method: str = "DELETE", verb: str = "删除") -> None:
+    """真删/取消单条对象；失败按返回码原因分两条路，不许混在一起降级（见模块 docstring）：
 
     403 这类权限缺口打 ::warning:: annotation 并继续,不用 sys.exit 把整个脚本/job 弄红,也不当
-    真的删掉了——降级为"将删"但明确标出失败原因；403 以外的失败打 ::error:: 并计入 FAILURES,
+    真的执行了——降级为"将<动作>"但明确标出失败原因；403 以外的失败打 ::error:: 并计入 FAILURES,
     main() 结束时按 FAILURES 是否非空决定这次运行是否以非零退出码收尾（job 当轮变红）。
+    `method` 默认 DELETE（真删）；未完成运行超限时传 POST 调用 `.../cancel`（先取消，真删留给
+    它转为 completed 后的下一轮）。
     """
     if not APPLY:
-        print(f"将删[{kind}](预演，未执行 DELETE) {label}")
+        print(f"将{verb}[{kind}](预演，未执行 {method}) {label}")
         return
-    result = subprocess.run(["gh", "api", "-X", "DELETE", path], capture_output=True, text=True)
+    result = subprocess.run(["gh", "api", "-X", method, path], capture_output=True, text=True)
     if result.returncode != 0:
         stderr = result.stderr.strip()
         if permission_gap(stderr):
-            print(f"::warning::{label} 删除失败（权限缺口）：{stderr[:180]}"
-                  f"（fork PR 或 actions 写权限不足，本次降级为预演，不计入已删，继续下一条）")
+            print(f"::warning::{label} {verb}失败（权限缺口）：{stderr[:180]}"
+                  f"（fork PR 或 actions 写权限不足，本次降级为预演，不计入已{verb}，继续下一条）")
         else:
-            print(f"::error::{label} 删除失败（非权限类，端点 {path}）：{stderr[:180]}")
+            print(f"::error::{label} {verb}失败（非权限类，端点 {path}）：{stderr[:180]}")
             FAILURES.append((kind, label, stderr[:180]))
         return
-    print(f"DELETE[{kind}] {label}")
+    print(f"{method}[{kind}] {label}")
 
 
 def workflow_runs(workflow: str) -> list[dict]:
@@ -299,16 +305,21 @@ def main() -> None:
         by_recency = sorted(not_carrying, key=lambda row: (run_time(row), row["id"]), reverse=True)
         print(f"{workflow}:{len(rows)} 条运行记录,承载保留 artifact {len(carrying)} 条(不计入上限),"
               f"不承载 {len(by_recency)} 条,数量判据不再区分当日,统一保留最近 {KEEP} 条")
+        cancelled_ids: set[int] = set()
         for index, row in enumerate(by_recency):
             if index < KEEP:
                 continue
-            if row["status"] != "completed":
-                print(f"保留[run,{workflow}](status={row['status']}≠completed,未跑完不删) {run_time(row)} "
+            if row["id"] == CURRENT_RUN_ID:
+                print(f"保留[run,{workflow}](本次运行自己,不取消不删) {run_time(row)} "
                       f"run_number={row['run_number']} id={row['id']}")
                 continue
-            if row["id"] == CURRENT_RUN_ID:
-                print(f"保留[run,{workflow}](本次运行自己,不删) {run_time(row)} "
-                      f"run_number={row['run_number']} id={row['id']}")
+            if row["status"] != "completed":
+                act("run", f"repos/{REPO}/actions/runs/{row['id']}/cancel",
+                    f"{workflow} {run_time(row)} run_number={row['run_number']} id={row['id']} "
+                    f"status={row['status']} 判据:数量超限(不承载保留对象,第 {index + 1} 新,超过 {KEEP},"
+                    f"未完成先取消,真删留给它转为 completed 后的下一轮)",
+                    method="POST", verb="取消")
+                cancelled_ids.add(row["id"])
                 continue
             act("run", f"repos/{REPO}/actions/runs/{row['id']}",
                 f"{workflow} {run_time(row)} run_number={row['run_number']} id={row['id']} "
@@ -316,9 +327,12 @@ def main() -> None:
         if APPLY:
             left_rows = workflow_runs(workflow)
             left_not_carrying = [row for row in left_rows if row["id"] not in retained_run_ids]
-            print(f"{workflow}:复核剩 {len(left_rows)} 条,不承载 {len(left_not_carrying)} 条(上限 {KEEP})")
-            if len(left_not_carrying) > KEEP:
-                sys.exit(f"{workflow} 清理后不承载保留对象的运行记录仍有 {len(left_not_carrying)} 条,超过上限 {KEEP}")
+            left_pending_cancel = [row for row in left_not_carrying if row["id"] in cancelled_ids]
+            over = len(left_not_carrying) - len(left_pending_cancel)
+            print(f"{workflow}:复核剩 {len(left_rows)} 条,不承载 {len(left_not_carrying)} 条(上限 {KEEP},"
+                  f"其中本轮刚取消、记录尚未消失、真删留给下一轮的 {len(left_pending_cancel)} 条不计入本轮核验)")
+            if over > KEEP:
+                sys.exit(f"{workflow} 清理后不承载保留对象且非本轮取消待删的运行记录仍有 {over} 条,超过上限 {KEEP}")
 
     clean_runs(BUILD_WORKFLOW, build_runs)
     clean_runs(PRCHECK_WORKFLOW, prcheck_runs)
