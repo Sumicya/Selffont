@@ -1,27 +1,32 @@
 name: Build
-# 出包工作流，唯一号源：只接 push（不限定分支）与 workflow_dispatch，不得接 pull_request、
-# 不得为「只在默认分支出包」加 branches 限定或 github.ref 守卫。
+# 出包工作流：只接 push（不限定分支）与 workflow_dispatch，不得接 pull_request、不得为
+# 「只在默认分支出包」加 branches 限定或 github.ref 守卫。
 #
 # 2026-10-14 教训（GLOBAL.md a8787a8）：此前这里写过「push 限默认分支 main」，理由是「调试 CI
 # 的推送不该吃号」——但会话分支本来就推不了默认分支、workflow_dispatch 又没有 actions: write，
 # 这条限定把会话侧唯一能拿到「真构建 + 真产物」的验证路径堵死了，还继续声称有验证；pr-check.yml
 # 只跑自检不出包，产出不了可装可跑的包，说它能替代验证是空话。规范新口径：写「不许做某事」之前
 # 先问这是不是唯一的验证/交付手段，是就不许禁，只能给它加口径——这里改成会话分支推送同样触发
-# 出包，用同一套命名与同一条 run_number 序列（不另立号段、不给会话分支产物开豁免、不回溯删
-# 既存产物），当轮验证会话分支改动时就看这次运行产出的真实 artifact，不是只看自检通过。
-# pull_request 固定走独立的 pr-check.yml——不是靠这边的步骤级 if 挡,是两个工作流文件各有
-# 独立的 run_number 序列,PR 事件物理上碰不到这个文件的号段(真实根因见 pr-check.yml 顶部注释)。
-# pr-check.yml 的 cleanup job 也真删(同仓 pull_request 事件里 GITHUB_TOKEN 能拿到声明的写
-# 权限,会话推送到同仓开的 PR 即可触发,与这里共用同一份 .github/scripts/cleanup.py、同一个
-# concurrency group 串行),这个工作流不是唯一的真删入口。
+# 出包，会话分支与默认分支共用同一套命名与同一号源（见下），不另立号段、不给会话分支产物开
+# 豁免、不回溯删既存产物，当轮验证会话分支改动时就看这次运行产出的真实 artifact。
+#
+# 2026-10-14 号源从 run_number 改成 git 提交数（GLOBAL.md 240a214/c5ac12d，三仓统一）：总序号
+# = head 提交在本仓历史里的位次 git rev-list --count HEAD；当日序号 = head 提交在当日（UTC+8）
+# 提交序列里的位次 git rev-list --count --since=<当日0点> HEAD，取不到就是重出旧提交的包记 0，
+# 不写 1 冒充首包。号源不再挂 CI 运行，PR 运行天然不吃号，改工作流文件名也不会让号回头。硬
+# 前提：actions/checkout 必须 fetch-depth: 0（见下方 build job），浅克隆下提交数恒为 1。
+# pull_request 固定走独立的 pr-check.yml：号源改提交数后 PR 运行虽不再吃号，但同一提交被
+# push 与 pull_request 各出一次包会产出两个同名 artifact、互相覆盖，所以依然不接 pull_request
+# （真实根因见 pr-check.yml 顶部注释）。pr-check.yml 的 cleanup job 也真删(同仓 pull_request
+# 事件里 GITHUB_TOKEN 能拿到声明的写权限,会话推送到同仓开的 PR 即可触发,与这里共用同一份
+# .github/scripts/cleanup.py、同一个 concurrency group 串行),这个工作流不是唯一的真删入口。
 on:
   push:
   workflow_dispatch:
 env:
-  SEGMENTS: "5"   # 当前版本号段数(正常五段);真要退化成四段的时期,把这改成 4 并在 AGENTS.md 写明原因
+  SEGMENTS: "5"   # 当前版本号段数(正常五段);号源改提交数后当日序号恒可算出(可能是 0),不会再退化四段
 permissions:
-  contents: read
-  actions: read          # 只为读本工作流的运行历史算版本号,不写
+  contents: read   # fetch-depth: 0 的 checkout 与 git rev-list 取数都只读本地克隆,不需要写
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -32,6 +37,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # 号源是提交数:浅克隆下 git rev-list --count HEAD 恒为 1,所有产物都会叫 .1.1
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
@@ -39,17 +46,15 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Selfcheck (packager, metric normalization, module scripts)
         run: python build.py --check
-      # 版本号在这一处算定:build.py --query-github 锚定本次运行(GITHUB_RUN_ID / GITHUB_RUN_NUMBER),
-      # 不拿查询时的最新运行冒充本次;重试用同一身份,版本自然复用。取不到数就停,不出包不上传。
+      # 版本号在这一处算定:build.py --query-git 现场跑 git rev-list --count 取本仓提交数,
+      # 不查 CI 运行历史、不用 gh、不需要 GH_TOKEN。取不到数就停,不出包不上传。
       # 本工作流不接 pull_request 事件(见上方 on:),到这一步时一定是 push(不限分支,含会话分支)
       # 或 workflow_dispatch,不需要再用步骤级 if 挡——PR 校验在独立的 pr-check.yml 里跑。
       - name: Build (version stamped)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python build.py --query-github
+        run: python build.py --query-git
       # 出包前核对命名一致性:产物名与 artifact 名统一 Selffont-<版本>,不合规范就不上传。
-      # 版本允许五段(yy.m.d.当日序号.总序号)或当日序号取不到时退化的四段(yy.m.d.总序号)——
-      # 跟 build.py 的 VERSION_RE / VERSION_RE4 保持同一套正则,别只认五段把合法的退化包拦下来。
+      # 号源改提交数后当日序号恒可算出(可能是 0),CI 这条路径正常只出五段;四段只是 build.py
+      # 留给本地手工省略 --day 的退化格式,这里的正则兼容两种,跟 VERSION_RE / VERSION_RE4 一致。
       - name: Stage artifact name (Selffont-<版本>)
         run: |
           zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont*.zip' -print -quit)")

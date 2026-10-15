@@ -10,9 +10,12 @@
   pr-check.yml 的 cleanup job（pull_request 事件时跑，会话推送同仓 PR 即可触发，不是 fork 的
   pull_request 里 GITHUB_TOKEN 能拿到工作流声明的写权限）；两处挂同一个 concurrency group
   （selffont-artifacts）串行，不会同时跑互相打架。
-- DELETE 调用本身会降级：对面是 fork 仓库发起的 PR 时，GITHUB_TOKEN 只有只读权限，DELETE 返回
-  403——这种情况下打一条 ::warning:: annotation、跳过这一条继续往下走，不让整个 job 变红、也不让
-  脚本中途退出；只有真正执行成功的删除才打 DELETE[...] 日志，没成功的仍然算「将删」。
+- DELETE 失败按返回码原因分两条路（主人 2026-10-14 选定，不许把两种原因混在一起降级）：
+  403 这类权限缺口（典型是 fork 发起的 pull_request，GITHUB_TOKEN 只读）打一条 ::warning::
+  annotation、跳过这一条继续往下走，不让整个 job 变红、也不让脚本中途退出；403 以外的失败
+  （脚本异常、判据算错、网络错误、其它返回码）打 ::error:: 并计入失败清单，main() 跑完后只要
+  清单非空就让这次运行以非零退出码结束，job 当轮变红，汇报里把它列为阻塞项——不许吞掉、不许
+  降成 warning 蒙过去。只有真正执行成功的删除才打 DELETE[...] 日志，没成功的仍然算「将删」。
 
 判据顺序固定，不许调换：
   artifact：口径（版本段数 != SEGMENTS）→ 来源（workflow_run 事件是 pull_request）→
@@ -101,17 +104,37 @@ def is_today(timestamp: str, start: datetime) -> bool:
     return parse_time(timestamp) >= start
 
 
+FAILURES: list[tuple[str, str, str]] = []  # (kind, label, reason) 非 403 失败；非空就在 main() 末尾让 job 变红
+
+
+def permission_gap(stderr: str) -> bool:
+    """403 类权限缺口的识别：gh api 对只读 token（典型是 fork 发起的 pull_request）的 DELETE
+
+    会在 stderr 里带 HTTP 403 或 GitHub 的标准权限错误文案；命中算权限缺口，降级为预演继续。
+    其余返回码（404/422/5xx、网络错误、脚本自身异常等）一律算非权限类失败，当轮让 job 变红。
+    """
+    return "HTTP 403" in stderr or "Resource not accessible by integration" in stderr
+
+
 def act(kind: str, path: str, label: str) -> None:
-    """真删单条对象；DELETE 本身失败（典型场景:fork 发起的 pull_request，GITHUB_TOKEN 只读，
-    返回 403）时只打 ::warning:: annotation 并继续,不用 sys.exit 把整个脚本/job 弄红,也不当
-    真的删掉了——降级为"将删"但明确标出失败原因,下一轮同样的判据还会再打一次。"""
+    """真删单条对象；DELETE 失败按返回码原因分两条路，不许混在一起降级（见模块 docstring）：
+
+    403 这类权限缺口打 ::warning:: annotation 并继续,不用 sys.exit 把整个脚本/job 弄红,也不当
+    真的删掉了——降级为"将删"但明确标出失败原因；403 以外的失败打 ::error:: 并计入 FAILURES,
+    main() 结束时按 FAILURES 是否非空决定这次运行是否以非零退出码收尾（job 当轮变红）。
+    """
     if not APPLY:
         print(f"将删[{kind}](预演，未执行 DELETE) {label}")
         return
     result = subprocess.run(["gh", "api", "-X", "DELETE", path], capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"::warning::{label} 删除失败：{result.stderr.strip()[:180]}"
-              f"（fork PR 或权限不足，本次降级为预演，不计入已删，继续下一条）")
+        stderr = result.stderr.strip()
+        if permission_gap(stderr):
+            print(f"::warning::{label} 删除失败（权限缺口）：{stderr[:180]}"
+                  f"（fork PR 或 actions 写权限不足，本次降级为预演，不计入已删，继续下一条）")
+        else:
+            print(f"::error::{label} 删除失败（非权限类，端点 {path}）：{stderr[:180]}")
+            FAILURES.append((kind, label, stderr[:180]))
         return
     print(f"DELETE[{kind}] {label}")
 
@@ -278,6 +301,12 @@ def main() -> None:
 
     clean_runs(BUILD_WORKFLOW, build_runs)
     clean_runs(PRCHECK_WORKFLOW, prcheck_runs)
+
+    if FAILURES:
+        print(f"=== {len(FAILURES)} 个对象删除失败（非权限类，非 403），job 本轮标红 ===")
+        for kind, label, reason in FAILURES:
+            print(f"::error::阻塞[{kind}] {label} 原因:{reason}")
+        sys.exit(f"{len(FAILURES)} 个对象删除失败（非权限类），详见上方 ::error:: 日志，不许降成 warning 蒙过去")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2026-10-14（续十）· 号源从 run_number 改成 git 提交数；cleanup.py 的 DELETE 失败补上 403 分级
+
+- 背景：`selfs` `GLOBAL.md` 提交 `240a214`/`c5ac12d`（主人指令：run 数问题太多，改用提交数；换号源同轮堵掉「清旧口径产物前先出新口径包」的洞），三仓（Qself/Gself/Selffont）统一号源。此前的口径——总序号 = 出包工作流的 `run_number`、当日序号 = 当日出包运行按开始时间排的位次——挂在 CI 运行上天然有多个洞：PR 运行吃号、改工作流文件名号回头、并发运行竞态出重复当日序号；号源挂在提交上后这些问题全部消失，同一提交重跑（重试、再 dispatch、PR 再触发、改文件名）天然得到同一个号。
+- 改法：`build.py` 删掉 `run_number_baseline()`/`gh_api()`/`gh_api_object()`/`current_run()`/`day_run_index()`/`run_rank()`/`github_version_numbers()`，新增 `git_rev_list_count()`/`git_head_sha()`/`git_version_numbers()`：总序号 = `git rev-list --count HEAD`，当日序号 = `git rev-list --count --since=<当日0点 UTC+8> HEAD`，head 提交不是今天推的就是 0（不写 1 冒充首包，也不退化四段——号源挂在提交上后当日序号恒可算出）。CLI 参数 `--query-github` 改名 `--query-git`（不再调用 `gh`/GitHub API，纯本地 git 命令，CI 步骤不再需要 `GH_TOKEN`）。`stamp_version()` 的当日序号校验下限从 1 改成 0（允许 `0` 作为合法值，不再是「非法」）。
+- `build.yml`：`actions/checkout` 加 `fetch-depth: 0`（硬前提，浅克隆下提交数恒为 1）；移除顶层 `actions: read` 权限（不再查 CI 运行历史，只保留 `contents: read`）；`Build (version stamped)` 步骤改调用 `build.py --query-git`，去掉不再需要的 `GH_TOKEN` env。头部注释与 `AGENTS.md`/`README.md` 对应段落同步重写。
+- `cleanup.py` 的 `act()` 补上 403 分级（主人 2026-10-14 选定，`GLOBAL.md` 实证点名本仓此前「声称分级实未分级」）：此前对任何 DELETE 非零返回一律打 `::warning::` 后继续，不管实际原因；现在按 `gh api` 的 stderr 是否含 `HTTP 403`/`Resource not accessible by integration` 分两条路——403 类权限缺口（典型是 fork PR）继续走 `::warning::` 降级为预演；403 以外的失败（脚本异常、端点错误、网络错误等）打 `::error::` 并计入 `FAILURES`，`main()` 结束时若 `FAILURES` 非空就以非零退出码收尾，job 当轮变红，不许降成 warning 蒙过去。`.github/workflows/build.yml`、`pr-check.yml` 对应注释同步更新。用模拟 403/404 两种 `gh api` 返回值验证：403 不进 `FAILURES`、不让 job 红；非 403（模拟 404）进 `FAILURES`。
+- 旧口径（`run_number`）产物 `Selffont-26.10.14.5.120`/`.4.119`/`.6.115`/`.5.114` 不做专项清理：现有四条判据（口径/来源/重复当日序号/数量）都不会主动命中它们（段数、来源、当日序号都合规），按「数量」判据随后续新口径出包自然滚动淘汰，不新增第五条专项判据去打这个洞——这样天然满足「不许出现一个可装的包都没有」，因为从不主动清它们。换号源真数字（旧口径末号产物、新口径首号产物、head sha、两条 git 命令输出）记在 `AGENTS.md`，新口径首号产物的现场数据待本轮推送后的第一次 `build.yml` 运行补记。
+- 验证：`python build.py --check` 9/9 通过（`version_stamp`/`version_numbers` 改写覆盖新口径，含 `day="0"` 合法、非法 git 参数报错两个新断言）；两份工作流 YAML `yaml.safe_load` 通过；`cleanup.py` `py_compile` 通过。
+
 ## 2026-10-14（续九）· push 不再限默认分支：会话分支推送同样出包，是真正的验证路径
 
 - 背景：`GLOBAL.md` 又撤回了两条（commit `a8787a8`，依据 `e6c9e8c` 实证 dispatch 可达、`358120a` 清理失败分类）——之前写的「会话分支不出包、不取号，验证靠 PR 校验工作流」连同配套的「出包工作流必须判 `github.ref` 不是默认分支就失败退出」全部撤回：`pr-check.yml` 只跑构建与测试、不上传产物，说它能"验证"是空话；`github.ref` 守卫把唯一能拿到真实可装产物的路径堵死了，还继续宣称验证照旧。新口径：写「不许做某事」之前先问这是不是唯一的验证/交付手段，是就不许禁，只能加口径。
