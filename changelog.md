@@ -1,5 +1,27 @@
 # 更新日志
 
+## 2026-10-15（续三）· AGENTS.md 已删：事实记录与善后
+
+- 事实：主人直接推送 commit `e1a09a2`（2026-10-15T09:27:39+08:00，git author `Sumicya`，不经
+  会话令牌）删除本仓库 `AGENTS.md`（60 行）。时间上紧随 `selfs` 仓自己也删掉了自己的 `AGENTS.md`
+  （commit `716e8643b`，同日 00:38Z，理由写明「少做，规范指针只留 GLOBAL.md」）——两次删除手法
+  一致（整文件删除，不留括注残片），判定为同一决定的延伸，不是误操作，不做恢复、不重建
+  `AGENTS.md`。
+- 落差披露：`selfs` 现文 `GLOBAL.md`（103 行版本，`129a292`/`cf3961ad8`/`2f8c419f6` 三提交后）
+  仍把「项目 AGENTS.md」列在权威顺序第三位，「工作」节仍写「开始任务先读项目 AGENTS.md」「各仓
+  AGENTS.md 记一行依据 selfs 提交 sha」——本仓库现在没有这个文件，与现文字面冲突。如实记录，不
+  代主人改 `GLOBAL.md` 正文（那是 `selfs` 仓的事），后续以 `selfs` 的下一次规范提交为准；本仓
+  往后的事实、限制、规范指针改记在 `README.md`（现状）与本文件（变更与历史），不再另立
+  `AGENTS.md`。
+- 善后：删前 `grep -rl "AGENTS\.md"` 命中 `README.md`、`TODO.md`、`changelog.md` 三个文件；
+  `README.md` 2 处指向性措辞（「见 `AGENTS.md`」）改写成指回本文件内容或直接去掉指针；`TODO.md`
+  2 处同样改写，并补一句「`AGENTS.md` 已于 2026-10-15 由主人删除，不再维护」；`changelog.md` 里
+  历史条目提到 `AGENTS.md` 的地方（记的是当时真实存在的事实）原样保留，不倒着改历史；两处本轮
+  刚写、指针会落空的「真数字记在 `AGENTS.md`」措辞已就地改写为内联真数字（见上方「续二」前一条
+  与「2026-10-15」条目）。
+- 验证：`grep -rln "AGENTS\.md"` 仅剩 `changelog.md`（历史条目，原样保留）；`yaml.safe_load`、
+  `py_compile`、`python build.py --check` 9/9 均未受影响（这三项都不依赖 `AGENTS.md`）。
+
 ## 2026-10-15（续二）· 读新规复核：补 cleanup job 的 contents:read 声明；判据改名对齐 GLOBAL.md 原文
 
 - 背景：`selfs` 的 `GLOBAL.md`（已合并进 `main`，会话分支 `arena/2d001a47-selfs` 随之删除；内容核对与合并前的 103 行版本逐字一致，没有新增条文）与 Selffont 当前实现逐条复核，发现两处落差，均属实现级缺陷，不是条文本身变了：
@@ -16,6 +38,15 @@
   保留 5 个的上限内也不会命中（当日之外只有它们 4 个），根本不会被自然淘汰；更麻烦的是它们
   承载的 run（rn=114/115）同时被「承载保留产物的 run 不删」规则保护，导致 `build.yml` 的非当日
   run 数超过上限（7 条，超 2），且会一直超下去——这是一个真实的判据缺口，不是终将自愈的暂态。
+- 补记（原记在已删的 `AGENTS.md`，现迁移到此处，不再丢失）换号源真数字：旧口径
+  （`run_number`）末号产物 `Selffont-26.10.14.5.120`（id `11901690035`）；新口径（git 提交数）
+  首号产物 `Selffont-26.10.15.1.463`（id `11938671275`，出自 [run 38659705984]
+  (https://github.com/Sumicya/Selffont/actions/runs/38659705984)，`push` 事件，`success`），
+  head sha `9ddb5a576123721621b3b97887da2ed8d409af7b`。CI 里 `fetch-depth: 0` 全量历史下现场跑
+  `git rev-list --count HEAD` = `463`、`git rev-list --count --since=2026-10-15T00:00:00+08:00
+  HEAD` = `1`；独立核验用 `gh api "repos/Sumicya/Selffont/commits?sha=9ddb5a57...&per_page=1"
+  -i` 的 `Link` 头 `rel="last"` 页码 = `463`，加 `since=2026-10-14T16:00:00Z`（UTC，等价当日
+  0 点 UTC+8）后页码 = `1`，与 artifact 名 `.1.463` 吻合；取值时间 2026-10-15T00:26Z。
 - 新增第五条判据「号源口径」，插在「重复当日序号」与「数量」之间，同样不豁免当日：产物名里的
   总序号必须等于该产物对应 run 的 head sha 的 `git rev-list --count <sha>`（本地现跑，取不到
   （sha 不在本地历史里，比如来自已删分支）就跳过这条、不当删除依据，不拿不确定数据做删除判断）。
@@ -27,12 +58,17 @@
 - `AGENTS.md` 的「换号源真数字」段落更正：此前「旧口径产物不做专项清理，交给数量判据自然淘汰」
   的结论标注为已被推翻，不删除原文，补写更正说明与指向新判据的交叉引用。
 - 验证：推送后现场重跑五条判据扫描，Build run `38662252509`、PR check run `38662257444` 的
-  `cleanup` job 均 `success`，4 个旧口径产物（`.5.120`/`.4.119`/`.6.115`/`.5.114`）当轮全部
-  真删（逐一 `gh api .../artifacts/<id>` 核验返回 404），其中两个的 host run（rn=114/115）
-  也随「run 不再承载保留 artifact」规则级联真删，`build.yml` 非当日 run 数从 7（超上限 2）
-  回落到 5（上限内）。两个未被级联删除的旧产物（`.5.120`/`.4.119`）的 head sha 经
-  `git rev-list --count` 独立核验分别是 `462`/`454`，均不等于产物名声明的 `120`/`119`，判据
-  命中无误。真数字记在 `AGENTS.md`「号源口径真数字」段。
+  `cleanup` job 均 `success`，4 个旧口径产物（`.5.120` id `11901690035`、`.4.119` id
+  `11864736773`、`.6.115` id `11824689935`、`.5.114` id `11823333597`）当轮全部真删（逐一
+  `gh api .../artifacts/<id>` 核验返回 404），其中两个的 host run（rn=114/115）也随「run 不再
+  承载保留 artifact」规则级联真删（run 记录本身也已 404，故这两个的 head sha 无法再事后核验，
+  这正是级联删除的预期效果）。`build.yml` 非当日 run 数从 7（超上限 2）回落到 5（上限内）、
+  `total_count` 从 9 降到 8。两个未被级联删除的旧产物可独立核验：`.5.120` 的 run（rn=120，id
+  `38576335604`）head sha `3703efec9e8baa44919197a4ac29ea5b7ea8cea4`，`git rev-list --count`
+  （经 `gh api "repos/Sumicya/Selffont/commits?sha=<sha>&per_page=1" -i` 的 `Link` 头
+  `rel="last"` 页码独立核验）= `462`；`.4.119` 的 run（rn=119，id `38497534833`）head sha
+  `852dc5e0be8f0eaa124a25114b5098fff5ac48f5`，同法测得 `454`；均不等于产物名声明的 `120`/
+  `119`，判据命中无误（取值时间 2026-10-15T00:54Z）。
 
 ## 2026-10-14（续十）· 号源从 run_number 改成 git 提交数；cleanup.py 的 DELETE 失败补上 403 分级
 

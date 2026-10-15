@@ -42,7 +42,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 - **总序号**：本仓全部提交数，同一提交重跑（重试、再 dispatch、PR 再触发、改工作流文件名）得到同一个号，天然幂等——旧口径（`run_number`）挂在 CI 运行上时，PR 运行吃号、改工作流文件名号回头、并发运行竞态出重复当日序号，这些问题挂在提交上后全部消失。
 - **当日序号**：head 提交不是今天推的（重出旧提交的包）这个数天然是 0，不写 1 冒充当日首包，也不退化四段——号源挂在提交上后当日序号永远算得出来，五段恒定；四段只在本地手工省略 `--day` 时才会出现。
 - **硬前提**：CI 里 `actions/checkout` 必须 `fetch-depth: 0`，浅克隆下 `git rev-list --count HEAD` 恒为 1，所有产物都会叫 `.1.1`。
-- **本地不算号**：`--query-git` 现场跑本地 `git rev-list --count`，不查 CI 运行历史、不用 `gh`、不需要任何令牌；本地出包必须显式传齐 `--date/--build`（不传 `--day` 就是四段，`--day` 可以传 `0`），数的可追溯性由打包的人负责（见 `AGENTS.md`）。
+- **本地不算号**：`--query-git` 现场跑本地 `git rev-list --count`，不查 CI 运行历史、不用 `gh`、不需要任何令牌；本地出包必须显式传齐 `--date/--build`（不传 `--day` 就是四段，`--day` 可以传 `0`），数的可追溯性由打包的人负责。
 - `module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
 CI 拆成两个工作流：`.github/workflows/build.yml`（出包，只接 `push`[不限分支，会话分支推送同样出包，这是会话侧唯一能拿到真实可装产物的验证路径] / `workflow_dispatch`）跑自检 + 一次构建并取号出包上传模块包本身为 Actions artifact；`.github/workflows/pr-check.yml`（PR 校验，只接 `pull_request`）的 `selfcheck` job 只跑自检，不取号、不出包、不上传，但它的 `cleanup` job 会真删超量/违规的 artifact 与 run（见下）——两者是不同工作流文件，号源不挂工作流文件，PR 运行再多也不影响版本号（同一提交若共用一个工作流文件会被 push 与 pull_request 各出一次包，产出两个同名 artifact 互相覆盖，这是拆文件的现行理由，不再是旧口径下的「吃号」）；artifact 名 = `Selffont-<版本>`，**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合版本格式，`retention-days: 5` 只是时间兜底）。
@@ -63,7 +63,7 @@ ls -l "$2.zip" && unzip -p "$2.zip" module.prop    # 约 100 MB 量级才正常
 # 查看滚动清理的现状(只读查询,这条命令本身不删):清理逻辑是 .github/scripts/cleanup.py,
 # build.yml 与 pr-check.yml 的 cleanup job 都用 runner 自带、工作流声明的 actions: write
 # 令牌执行真删,不是会话令牌或人工的事——会话令牌对本仓库 actions 写同样是 403(实测,能力按
-# 权限类分不按仓库分,见 AGENTS.md);pr-check.yml 的 cleanup job 由同仓 PR 的 pull_request
+# 权限类分不按仓库分,见本文件上方「清理逻辑」一段);pr-check.yml 的 cleanup job 由同仓 PR 的 pull_request
 # 事件触发,会话推送到开着的 PR 就能让它真的跑一次删除,不只是打印预演
 gh api --paginate repos/Sumicya/Selffont/actions/artifacts \
   --jq '.artifacts[] | "\(.created_at) \(.id) \(.name) \(.size_in_bytes)"'
