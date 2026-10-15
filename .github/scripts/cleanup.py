@@ -17,10 +17,16 @@
   清单非空就让这次运行以非零退出码结束，job 当轮变红，汇报里把它列为阻塞项——不许吞掉、不许
   降成 warning 蒙过去。只有真正执行成功的删除才打 DELETE[...] 日志，没成功的仍然算「将删」。
 
-判据顺序固定，不许调换：
+判据顺序固定，不许调换（2026-10-15 由四条加到五条，依据 `selfs` `GLOBAL.md` `129a292`：实测
+Selffont 换号源后 4 个旧口径产物 `.5.120`/`.4.119`/`.6.115`/`.5.114` 原四条判据全过——段数 5
+正确、非 PR 来源、当日序号不重复、当日之外数量 4 在 5 个内——一个都删不掉，承载它们的 run 也
+因「承载保留产物不删」受保护，超量运行记录一并删不动）：
   artifact：口径（版本段数 != SEGMENTS）→ 来源（workflow_run 事件是 pull_request）→
-            重复当日序号（同一天同一当日序号出现两次，保留总序号最大的）→ 数量（当日之外
-            每条序列保留最近 KEEP 个，当日不设上限）。
+            重复当日序号（同一天同一当日序号出现两次，保留总序号最大的）→ 号源口径
+            （artifact 名里的总序号必须等于该产物对应 run 的 head sha 的
+            `git rev-list --count <sha>`，不等即旧口径产物；sha 不在本地历史里就跳过这条，
+            不当删除依据——前提 checkout 要 `fetch-depth: 0`）→ 数量（当日之外每条序列
+            保留最近 KEEP 个，当日不设上限）。
   run：承载（run 的 workflow_run 下还挂着被保留的 artifact——删 run 会连带删它的
        artifact，承载保留对象的 run 不删、不计入数量上限）→ 数量（不承载保留对象的 run 里，
        当日之外每条序列保留最近 KEEP 条，按 run_started_at 排序，id 只在同一时刻时作 tiebreak，
@@ -166,6 +172,19 @@ def all_artifacts() -> list[dict]:
                     ".artifacts[]|{id,name,created_at,size_in_bytes,workflow_run}")
 
 
+def commit_total(sha: str) -> int | None:
+    """该 sha 在本地仓库历史里的总提交数：`git rev-list --count <sha>`（号源口径判据用）。
+
+    sha 不在本地历史里（来自已删分支、fork，或 checkout 没有 fetch-depth: 0）就返回 None，
+    调用方把这条判据当「不可核验」处理，不当删除依据——宁可漏删也不错删。
+    """
+    result = subprocess.run(["git", "rev-list", "--count", sha], capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return int(value) if value.isdigit() else None
+
+
 def main() -> None:
     start = today_start()
     repo_id = int(json.loads(api(f"repos/{REPO}", jq="{id: .id}"))["id"])
@@ -226,6 +245,31 @@ def main() -> None:
             criteria_victims.append(
                 (row, f"重复当日序号 {date}.{day_index}(保留总序号最大的 {group[0][0]},此对象总序号 {total})"))
 
+    # ---------------- 号源口径：总序号必须等于该产物对应 run 的 head sha 的 git rev-list --count ----------------
+    after_source_check = []
+    for row in after_dup:
+        parsed = version_parts(row["name"])
+        if parsed is None:
+            after_source_check.append(row)
+            continue
+        _, _, total = parsed
+        sha = (row.get("workflow_run") or {}).get("head_sha")
+        if not sha:
+            print(f"保留[artifact](号源口径:取不到 head_sha,不核验) {row['created_at']} {row['name']} id={row['id']}")
+            after_source_check.append(row)
+            continue
+        expect = commit_total(sha)
+        if expect is None:
+            print(f"保留[artifact](号源口径:sha {sha[:9]} 不在本地历史,不核验) {row['created_at']} {row['name']} id={row['id']}")
+            after_source_check.append(row)
+            continue
+        if int(total) != expect:
+            criteria_victims.append(
+                (row, f"号源口径(总序号={total}≠head {sha[:9]} 的 git rev-list --count={expect})"))
+            continue
+        after_source_check.append(row)
+    after_dup = after_source_check
+
     for row, reason in criteria_victims:
         act("artifact", f"repos/{REPO}/actions/artifacts/{row['id']}",
             f"{row['created_at']} {row['name']} id={row['id']} 判据:{reason}")
@@ -234,7 +278,7 @@ def main() -> None:
                        key=lambda row: row["created_at"], reverse=True)
     today_rows = [row for row in after_dup if is_today(row["created_at"], start)]
     qty_victims = non_today[KEEP:]
-    print(f"artifact:候选 {len(candidates)} 个,口径/来源/重复三条共删 {len(criteria_victims)} 个;"
+    print(f"artifact:候选 {len(candidates)} 个,口径/来源/重复/号源口径四条共删 {len(criteria_victims)} 个;"
           f"当日 {len(today_rows)} 个(数量不设上限,不判定);非当日 {len(non_today)} 个,保留最近 {KEEP} 个")
     for index, row in enumerate(non_today):
         if index < KEEP:

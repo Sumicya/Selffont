@@ -88,7 +88,7 @@ jobs:
           retention-days: 5
           if-no-files-found: error
   cleanup:
-    name: Clean up (quantity / naming / source / duplicate day-index)
+    name: Clean up (naming / source / duplicate day-index / source-count / quantity)
     needs: build
     # 每次出包成功（push 不限分支，或 workflow_dispatch）都跑清理，不按 github.ref 再做分支
     # 限定——会话分支产出的 artifact 跟默认分支的同一套口径，没有豁免，也不该让它们的清理单独
@@ -104,10 +104,16 @@ jobs:
       group: selffont-artifacts
       cancel-in-progress: false
     steps:
+      # 2026-10-15 补 fetch-depth: 0（GLOBAL.md 129a292）：第五条判据「号源口径」要在本地跑
+      # git rev-list --count <head sha> 核对每个产物名里的总序号,浅克隆下目标 sha 可能根本不在
+      # 本地历史里,核验会误判成「不可核验」而放过旧口径产物——这正是 Selffont 4 个旧口径产物
+      # （.5.120/.4.119/.6.115/.5.114）之前一轮判据全过、一个都删不掉的根因之一。
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       # 真删:脚本与 pr-check.yml 的 cleanup job 共用同一份 .github/scripts/cleanup.py,
       # 两处都是 CLEANUP_APPLY=true,判定即执行删除;脚本内部判据顺序与说明见该文件。
-      - name: Delete by criteria (口径 / 来源 / 重复当日序号 / 数量)
+      - name: Delete by criteria (口径 / 来源 / 重复当日序号 / 号源口径 / 数量)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

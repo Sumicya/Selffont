@@ -19,9 +19,13 @@ name: PR check
 # 既不推默认分支、令牌又没有 actions: write 去手动 dispatch，导致真删在会话侧永远等不到，待删
 # 对象能挂几个小时一次都没删。实测同仓分支发起的 pull_request 事件里 GITHUB_TOKEN 能拿到工作流
 # 声明的权限（不是 fork 才只读），所以把真删也挂到这里：会话推送到同仓开的 PR 就会触发，
-# 四个条件判据（口径/来源/重复当日序号/数量）照常算，DELETE 失败按返回码分两条路：403 这类
-# 权限缺口（典型是 fork PR）打 warning 降级为预演并继续，不让 job 红；403 以外的失败（脚本
-# 异常、端点错误等）打 error 并让 job 当轮变红，不许也降成 warning 蒙过去（见 cleanup.py）。
+# 五个条件判据（口径/来源/重复当日序号/号源口径/数量）照常算，DELETE 失败按返回码分两条路：
+# 403 这类权限缺口（典型是 fork PR）打 warning 降级为预演并继续，不让 job 红；403 以外的失败
+# （脚本异常、端点错误等）打 error 并让 job 当轮变红，不许也降成 warning 蒙过去（见 cleanup.py）。
+#
+# 2026-10-15 加第五条判据「号源口径」（GLOBAL.md 129a292）：cleanup job 的 checkout 同样要
+# fetch-depth: 0（见下），否则 git rev-list --count <head sha> 在浅克隆下取不到数,这条判据会
+# 对所有候选都判「不可核验」而失效。
 on:
   pull_request:
 env:
@@ -43,7 +47,7 @@ jobs:
       - name: Selfcheck (packager, metric normalization, module scripts)
         run: python build.py --check
   cleanup:
-    name: Cleanup (四判据真删)
+    name: Cleanup (五判据真删)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -54,12 +58,15 @@ jobs:
       group: selffont-artifacts   # 跟 build.yml 的 cleanup job 同一个 group,两处真删串行
       cancel-in-progress: false
     steps:
+      # 号源口径判据要本地 git rev-list --count <head sha>,浅克隆下目标 sha 可能不在本地历史里。
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       # 跟 build.yml 的 cleanup job 共用同一份 .github/scripts/cleanup.py,CLEANUP_APPLY=true,
       # 判定即执行删除。会话推送到同仓发起的 PR（不是 fork）就会触发,不用等 build.yml 的下一次
       # push/workflow_dispatch；DELETE 失败按返回码分两条路（见 cleanup.py 的 act()）：403 这类
       # 权限缺口打 warning 降级为预演继续,不让这个 job 变红;403 以外的失败让 job 当轮变红。
-      - name: Cleanup (四判据真删)
+      - name: Cleanup (五判据真删)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
