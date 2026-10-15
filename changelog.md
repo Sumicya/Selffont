@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2026-10-15（续二）· 读新规复核：补 cleanup job 的 contents:read 声明；判据改名对齐 GLOBAL.md 原文
+
+- 背景：`selfs` 的 `GLOBAL.md`（已合并进 `main`，会话分支 `arena/2d001a47-selfs` 随之删除；内容核对与合并前的 103 行版本逐字一致，没有新增条文）与 Selffont 当前实现逐条复核，发现两处落差，均属实现级缺陷，不是条文本身变了：
+  1. GLOBAL.md「保留」节明定「清理 job 权限 `actions: write` 加 `contents: read`」——两个工作流的 `cleanup` job 此前只声明了 `actions: write`，job 级 `permissions:` 会整体覆盖工作流顶层声明（不是合并），实际隐含 `contents: none`。现场之所以没出错，是因为 `actions/checkout` 对公开仓库走匿名克隆，不依赖这个权限位——但条文要求明确声明，已照补 `contents: read`。
+  2. GLOBAL.md「保留」节原文把第一条判据写作「命名口径」，`cleanup.py`/两份工作流/`AGENTS.md`/`README.md` 里一直只写「口径」，容易跟「新口径」「旧口径」「号源口径」等其它「口径」用法混淆。统一改成「命名口径」，不改判据逻辑本身。
+- 验证：`yaml.safe_load` 两份工作流通过；`cleanup.py` `py_compile` 通过；`python build.py --check` 9/9 通过；grep 核对改动行数见本轮报告。
+
 ## 2026-10-15 · 清理判据由四条加到五条：新增「号源口径」，更正上一轮「不新增第五条判据」的决定
 
 - 背景：换号源（见下方「续十」）落地后现场核验，`cleanup` job 对 4 个旧口径（`run_number`）产物

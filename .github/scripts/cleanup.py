@@ -21,7 +21,7 @@
 Selffont 换号源后 4 个旧口径产物 `.5.120`/`.4.119`/`.6.115`/`.5.114` 原四条判据全过——段数 5
 正确、非 PR 来源、当日序号不重复、当日之外数量 4 在 5 个内——一个都删不掉，承载它们的 run 也
 因「承载保留产物不删」受保护，超量运行记录一并删不动）：
-  artifact：口径（版本段数 != SEGMENTS）→ 来源（workflow_run 事件是 pull_request）→
+  artifact：命名口径（版本段数 != SEGMENTS）→ 来源（workflow_run 事件是 pull_request）→
             重复当日序号（同一天同一当日序号出现两次，保留总序号最大的）→ 号源口径
             （artifact 名里的总序号必须等于该产物对应 run 的 head sha 的
             `git rev-list --count <sha>`，不等即旧口径产物；sha 不在本地历史里就跳过这条，
@@ -194,7 +194,7 @@ def main() -> None:
 
     print(f"=== Selffont 清理脚本：{MODE}，KEEP={KEEP}，SEGMENTS={SEGMENTS}，当前运行 id={CURRENT_RUN_ID}，PREFIX=Selffont- ===")
 
-    # ---------------- artifact：口径 → 来源 → 重复当日序号 → 数量 ----------------
+    # ---------------- artifact：命名口径 → 来源 → 重复当日序号 → 数量 ----------------
     candidates = [row for row in all_artifacts() if row["name"].lower().startswith(PROJECT_PREFIX)]
 
     def owned(row: dict) -> bool:
@@ -219,7 +219,7 @@ def main() -> None:
             continue
         segs = name_segments(row["name"])
         if segs != SEGMENTS:
-            criteria_victims.append((row, f"口径(段数={segs}≠SEGMENTS={SEGMENTS})"))
+            criteria_victims.append((row, f"命名口径(段数={segs}≠SEGMENTS={SEGMENTS})"))
             continue
         run_event = event_by_run_id.get((row.get("workflow_run") or {}).get("id"))
         if run_event == "pull_request":
@@ -278,7 +278,7 @@ def main() -> None:
                        key=lambda row: row["created_at"], reverse=True)
     today_rows = [row for row in after_dup if is_today(row["created_at"], start)]
     qty_victims = non_today[KEEP:]
-    print(f"artifact:候选 {len(candidates)} 个,口径/来源/重复/号源口径四条共删 {len(criteria_victims)} 个;"
+    print(f"artifact:候选 {len(candidates)} 个,命名口径/来源/重复/号源口径四条共删 {len(criteria_victims)} 个;"
           f"当日 {len(today_rows)} 个(数量不设上限,不判定);非当日 {len(non_today)} 个,保留最近 {KEEP} 个")
     for index, row in enumerate(non_today):
         if index < KEEP:

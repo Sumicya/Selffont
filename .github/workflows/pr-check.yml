@@ -19,7 +19,7 @@ name: PR check
 # 既不推默认分支、令牌又没有 actions: write 去手动 dispatch，导致真删在会话侧永远等不到，待删
 # 对象能挂几个小时一次都没删。实测同仓分支发起的 pull_request 事件里 GITHUB_TOKEN 能拿到工作流
 # 声明的权限（不是 fork 才只读），所以把真删也挂到这里：会话推送到同仓开的 PR 就会触发，
-# 五个条件判据（口径/来源/重复当日序号/号源口径/数量）照常算，DELETE 失败按返回码分两条路：
+# 五个条件判据（命名口径/来源/重复当日序号/号源口径/数量）照常算，DELETE 失败按返回码分两条路：
 # 403 这类权限缺口（典型是 fork PR）打 warning 降级为预演并继续，不让 job 红；403 以外的失败
 # （脚本异常、端点错误等）打 error 并让 job 当轮变红，不许也降成 warning 蒙过去（见 cleanup.py）。
 #
@@ -54,6 +54,7 @@ jobs:
       actions: write   # 真删 artifact/run;pull_request 事件里这个权限对同仓 PR 真实生效,
                        # 对 fork 发起的 PR 仍然只读,DELETE 会 403,脚本按 403 降级打 warning;
                        # 403 以外的删除失败（脚本异常、端点错误等）这个 job 当轮变红
+      contents: read   # GLOBAL.md「保留」节明定:清理 job 必须 actions:write 加 contents:read 同时声明
     concurrency:
       group: selffont-artifacts   # 跟 build.yml 的 cleanup job 同一个 group,两处真删串行
       cancel-in-progress: false
