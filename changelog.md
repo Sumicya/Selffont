@@ -1,5 +1,43 @@
 # 更新日志
 
+## 2026-10-15（续六）· 运行记录改为硬上限 5 条，撤销「承载保留 artifact 不计入上限」例外
+
+- 背景：主人反馈实测数字——Selffont 15 条运行记录、gself 11 条、qself 10 条——质疑「不是说上限
+  5 个吗」。核对后发现：当时的实现里，承载被保留 artifact 的 run 完全不计入 run 的数量上限、也
+  不删，所以每个工作流实际能到最多 10 条（5 条承载 + 5 条非承载各自顶格）；`pr-check.yml` 不传
+  artifact，所以那条序列始终是 5。三仓加总：Selffont `build.yml` 10 + `pr-check.yml` 5 = 15、
+  gself `build.yml` 6（当时非承载桶还没攒满 5）+ `pr-check.yml` 5 = 11、qself `build.yml` 5 +
+  `pr-check.yml` 5 = 10——跟主人报的数字逐一对上，说明「承载不计入上限」的例外是真实生效的既有
+  设计，不是 bug，但它确实让 `selfs` `GLOBAL.md` 当时「每个工作流最多保留 5 条运行记录」这句话的
+  字面意思站不住。这条矛盾已指出并等待裁决，主人随后在 `selfs` 侧推了两次提交
+  （`4f748b56a` "docs: enforce hard five-run retention cap"、`3144a2068` "docs: record hard
+  five-run retention cap"）撤销了这条例外，把「保留」规则改写为：每个工作流硬上限 5 条运行记录，
+  不设任何例外（不分当日、不因承载 artifact 放宽）；artifact 仍是全仓最新 5 个，但两者冲突时
+  运行记录上限优先——如果保留某个 artifact 会导致它所属的工作流必须留第 6 条运行记录，就删掉
+  这个 artifact，不允许为了保 artifact 去突破 run 的上限。
+- 改法：`.github/scripts/cleanup.py` 的 `main()` 重排执行顺序——先各自独立算出 `build.yml`/
+  `pr-check.yml` 两个工作流「只按 run_started_at 排序的最新 KEEP 条」`kept_run_ids`，这一步完全
+  不看 artifact；再做 artifact 的四条前置判据（命名口径/来源/重复当日序号/号源口径）；最后做
+  artifact 的数量判据：按 `created_at` 从新到旧扫描候选，仍在候选名额内（<KEEP）且它所属 run 落在
+  `kept_run_ids` 里才算保留，否则无论created_at排名多靠前都删（不强行凑够 5 个，名额自然让给下一个
+  排名靠后但 run 仍保留的候选，这就是规范说的「同步校正 artifact 留存清单」）。`clean_runs()` 删掉
+  了整段「承载」判断，只剩「是否在 `kept_run_ids` 里」一条，硬上限、不设任何例外；未完成运行超限
+  先 `cancel` 的逻辑（续五已实现）不变，只是判断集合从「不承载+超过 KEEP」改成「不在 kept_run_ids
+  里」。
+- 验证：`py_compile` 通过（本轮顺带发现 `.venv` 和其它排除目录一样不进快照、每轮都要重装一次
+  `fonttools`/`pyyaml` 才能跑 `build.py --check`/YAML 校验，已重装）；`python build.py --check`
+  9/9 通过；两个工作流 YAML `yaml.safe_load` 通过；对真实仓库跑了一次只读预演
+  （`CLEANUP_APPLY=false`），`build.yml` 当前 10 条运行记录里，最新 5 条（run_number 126-130，
+  均为当前 5 个保留 artifact 各自的承载 run）被判保留，其余 5 条（run_number 121-125）被判「数量
+  超限」将删——跟新规则下「硬上限 5 条、不再额外保留承载 run」的预期一致。真删结果需等推送后由
+  CI 实跑验证，预演阶段无法验证 artifact 侧「运行记录上限优先」分支是否会被触发（当前候选的号源
+  口径已经先把 5 个候选全部判出局，数量判据没有候选可测），留作已知未验证项。
+- 额外事故：本轮执行中途发现本地 `.git` 再次整体回滚到会话起点 `204b238`（reflog 只剩
+  clone+checkout 两条，上一轮推送的 `4b6a5b2` 从本地提交历史里消失），但经 `git clone` 到临时
+  目录逐文件 diff 核对，工作树内容与远端 `arena/7478d6df-selffont` 分支的 `4b6a5b2` 完全一致（无
+  任何差异），属于「只有 `.git` 回滚、工作树完整」的简单情形，已执行 `git reset --hard
+  origin/arena/7478d6df-selffont` 复位，未丢失任何已完成的改动。
+
 ## 2026-10-15（续五）· 未完成运行超限改为先取消，再留给下一轮真删
 
 - 背景：`selfs` 仓在上一轮之后又产生 6 次规范提交（`7c3889132`/`73628fece`/`49a99e3b0`/

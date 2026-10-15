@@ -22,23 +22,29 @@
 Selffont 换号源后 4 个旧口径产物 `.5.120`/`.4.119`/`.6.115`/`.5.114` 原四条判据全过——段数 5
 正确、非 PR 来源、当日序号不重复、当日之外数量 4 在 5 个内——一个都删不掉，承载它们的 run 也
 因「承载保留产物不删」受保护，超量运行记录一并删不动；同日再依据 `GLOBAL.md` `790bf826`，数量
-判据的「当日不设上限也不删」豁免被去掉，五条判据现在全部不豁免，当日产物与运行记录同样计入
-KEEP 的上限）：
+判据的「当日不设上限也不删」豁免被去掉；再依据 `GLOBAL.md` `4f748b56a`/`3144a2068`（撤销「承载
+保留 artifact 的 run 不计入上限」这条例外——此前每个工作流实际能到 2×KEEP 条：KEEP 条承载保留
+artifact 的 run 完全不算、另 KEEP 条非承载的才受上限约束，Selffont/gself/qself 三仓实测分别是
+15/11/10 条而不是字面的 5 条，与主人核对后确认是规范字面「最多 5 条」与豁免条款互相矛盾，已由
+主人在 selfs 侧改规范澄清），五条判据现在全部不豁免，run 的数量上限不再因承载 artifact 或任何
+其它理由放宽，当日产物与运行记录同样计入 KEEP 的上限）：
   artifact：命名口径（版本段数 != SEGMENTS）→ 来源（workflow_run 事件是 pull_request）→
             重复当日序号（同一天同一当日序号出现两次，保留总序号最大的）→ 号源口径
             （artifact 名里的总序号必须等于该产物对应 run 的 head sha 的
             `git rev-list --count <sha>`，不等即旧口径产物；sha 不在本地历史里就跳过这条，
-            不当删除依据——前提 checkout 要 `fetch-depth: 0`）→ 数量（每条序列按 `created_at`
-            统一保留最近 KEEP 个，不再区分当日）。
-  run：承载（run 的 workflow_run 下还挂着被保留的 artifact——删 run 会连带删它的
-       artifact，承载保留对象的 run 不删、不计入数量上限）→ 数量（不承载保留对象的 run 里，
-       每条序列按 run_started_at 统一保留最近 KEEP 条，不再区分当日，id 只在同一时刻时作
-       tiebreak，不单独使用）。run_started_at 缺失（一直排队没真正开始过）时退回 created_at，
-       不当场报错；status 不是 completed（queued/waiting/requested/in_progress 等）的超限 run
-       不能直接 DELETE（2026-10-15 依据 `selfs` `GLOBAL.md` 重设版「未完成运行造成超限时,先取消
-       较旧的超限运行」），改成 POST `.../cancel` 先取消，真删留给它转成 completed 之后的下一轮；
-       取消动作同样经 `act()` 的 403/非 403 两条路径，不单独开后门。当前运行自己（`CURRENT_RUN_ID`）
-       永不取消不删，这条判断必须排在「未完成」判断之前，否则会在脚本运行中途自己取消自己。
+            不当删除依据——前提 checkout 要 `fetch-depth: 0`）→ 数量（全仓按 `created_at`
+            统一保留最新 KEEP 个，但运行记录上限优先：若某 artifact 排名本在前 KEEP，但它挂的
+            run 已经不在该 run 所属工作流的「最新 KEEP 条运行记录」里，删 artifact、不为它突破
+            run 的硬上限，名额让给下一个 run 仍被保留的候选）。
+  run：数量（每个工作流按 `run_started_at` 统一保留最新 KEEP 条，硬上限，不设任何例外——不区分
+       当日、不因承载 artifact 放宽；run_started_at 缺失（一直排队没真正开始过）时退回
+       `created_at`，`id` 只在同一时刻时作 tiebreak，不单独使用）。run 的保留集合先于 artifact
+       的数量判据算出来，因为它要被 artifact 侧拿去做「运行记录上限优先」的否决依据。status 不是
+       completed（queued/waiting/requested/in_progress 等）的超限 run 不能直接 DELETE（依据
+       `selfs` `GLOBAL.md` 重设版「未完成运行造成超限时,先取消较旧的超限运行」），改成 POST
+       `.../cancel` 先取消，真删留给它转成 completed 之后的下一轮；取消动作同样经 `act()` 的
+       403/非 403 两条路径，不单独开后门。当前运行自己（`CURRENT_RUN_ID`）永不取消不删，这条
+       判断必须排在「未完成」判断之前，否则会在脚本运行中途自己取消自己。
 
 run_number 序列按工作流分开计（build.yml 与 pr-check.yml 各一条），数量判据各自独立计算。
 """
@@ -186,7 +192,19 @@ def main() -> None:
 
     print(f"=== Selffont 清理脚本：{MODE}，KEEP={KEEP}，SEGMENTS={SEGMENTS}，当前运行 id={CURRENT_RUN_ID}，PREFIX=Selffont- ===")
 
-    # ---------------- artifact：命名口径 → 来源 → 重复当日序号 → 数量 ----------------
+    # ---------------- run 数量：每个工作流独立算最新 KEEP 条,硬上限不设任何例外 ----------------
+    # 2026-10-15 依据 selfs GLOBAL.md `4f748b56a`/`3144a2068`（撤销「承载保留 artifact 的 run 不计入
+    # 上限」豁免）：run 的保留集合只看 run 自己的时间排序,与它是否挂着被保留的 artifact 无关；这个
+    # 集合要先于 artifact 的数量判据算出来，因为「运行记录上限优先」要用它来否决 artifact。
+    def top_run_ids(rows: list[dict]) -> set[int]:
+        by_recency = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
+        return {row["id"] for row in by_recency[:KEEP]}
+
+    kept_run_ids = {BUILD_WORKFLOW: top_run_ids(build_runs), PRCHECK_WORKFLOW: top_run_ids(prcheck_runs)}
+    workflow_of_run = {row["id"]: BUILD_WORKFLOW for row in build_runs}
+    workflow_of_run.update({row["id"]: PRCHECK_WORKFLOW for row in prcheck_runs})
+
+    # ---------------- artifact：命名口径 → 来源 → 重复当日序号 → 号源口径 ----------------
     candidates = [row for row in all_artifacts() if row["name"].lower().startswith(PROJECT_PREFIX)]
 
     def owned(row: dict) -> bool:
@@ -266,16 +284,34 @@ def main() -> None:
         act("artifact", f"repos/{REPO}/actions/artifacts/{row['id']}",
             f"{row['created_at']} {row['name']} id={row['id']} 判据:{reason}")
 
+    # ---------------- artifact 数量：全仓最新 KEEP 个,但运行记录上限优先 ----------------
+    # 若某 artifact 按 created_at 排名本在前 KEEP 个内,但它挂的 run 不在该 run 所属工作流的
+    # kept_run_ids 里（run 自己的硬上限已经把它判出局），不得为了保留这个 artifact 去突破 run
+    # 上限——删 artifact,把名额让给下一个排名靠后但 run 仍被保留的候选（自然实现「同步校正
+    # artifact 留存清单」，不强行凑够 KEEP 个）。
     by_recency = sorted(after_dup, key=lambda row: row["created_at"], reverse=True)
-    print(f"artifact:候选 {len(candidates)} 个,命名口径/来源/重复/号源口径四条共删 {len(criteria_victims)} 个;"
-          f"剩 {len(by_recency)} 个,数量判据不再区分当日,统一保留最近 {KEEP} 个")
+    kept_artifacts: list[dict] = []
+    quantity_victims: list[tuple[dict, str]] = []
     for index, row in enumerate(by_recency):
-        if index < KEEP:
+        run_id = (row.get("workflow_run") or {}).get("id")
+        workflow = workflow_of_run.get(run_id)
+        run_capped = run_id is not None and workflow is not None and run_id not in kept_run_ids[workflow]
+        if len(kept_artifacts) < KEEP and not run_capped:
+            kept_artifacts.append(row)
             continue
-        act("artifact", f"repos/{REPO}/actions/artifacts/{row['id']}",
-            f"{row['created_at']} {row['name']} id={row['id']} 判据:数量(第 {index + 1} 新,超过 {KEEP})")
+        if run_capped:
+            reason = (f"运行记录上限优先(第 {index + 1} 新,但所属 run id={run_id} 不在 {workflow} "
+                      f"最新 {KEEP} 条运行记录内,删 artifact 而非为它突破 run 上限)")
+        else:
+            reason = f"数量(第 {index + 1} 新,超过 {KEEP})"
+        quantity_victims.append((row, reason))
 
-    kept_artifacts = by_recency[:KEEP]
+    print(f"artifact:候选 {len(candidates)} 个,命名口径/来源/重复/号源口径四条共删 {len(criteria_victims)} 个;"
+          f"剩 {len(by_recency)} 个,数量判据全仓最多 {KEEP} 个且运行记录上限优先,不设任何例外")
+    for row, reason in quantity_victims:
+        act("artifact", f"repos/{REPO}/actions/artifacts/{row['id']}",
+            f"{row['created_at']} {row['name']} id={row['id']} 判据:{reason}")
+
     retained_run_ids = {(row.get("workflow_run") or {}).get("id") for row in kept_artifacts}
     retained_run_ids.discard(None)
 
@@ -285,54 +321,51 @@ def main() -> None:
         if len(left) > KEEP:
             sys.exit(f"清理后 artifact 仍有 {len(left)} 个,超过上限 {KEEP}")
     else:
-        print(f"预演推算:artifact 若真删,应剩 {min(len(by_recency), KEEP)} 个")
+        print(f"预演推算:artifact 若真删,应剩 {len(kept_artifacts)} 个")
 
     releases = json.loads(api(f"repos/{REPO}/releases", jq="length"))
     print(f"Release 数:{releases}(规范上限 1。CI 不发版也不删 Release;获准人工发布时由发布者做发布后清理)")
     if releases > 1:
         print("WARNING: Release 超过 1 个,需要获准的人工操作清理(CI 无 contents 写权限)")
 
-    # ---------------- run：承载 → 数量 ----------------
+    # ---------------- run：数量,硬上限 KEEP 条,不设任何例外（2026-10-15 承载豁免已撤销） ----------------
     def clean_runs(workflow: str, rows: list[dict]) -> None:
         if not rows:
             print(f"{workflow}:目前没有任何运行记录,无需清理")
             return
-        carrying = [row for row in rows if row["id"] in retained_run_ids]
-        not_carrying = [row for row in rows if row["id"] not in retained_run_ids]
-        for row in carrying:
-            print(f"保留[run,{workflow}](承载被保留的 artifact,不计入数量上限) "
-                  f"{run_time(row)} run_number={row['run_number']} id={row['id']}")
-        by_recency = sorted(not_carrying, key=lambda row: (run_time(row), row["id"]), reverse=True)
-        print(f"{workflow}:{len(rows)} 条运行记录,承载保留 artifact {len(carrying)} 条(不计入上限),"
-              f"不承载 {len(by_recency)} 条,数量判据不再区分当日,统一保留最近 {KEEP} 条")
+        keep_ids = kept_run_ids[workflow]
+        by_recency = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
+        print(f"{workflow}:{len(rows)} 条运行记录,硬上限 {KEEP} 条,不设当日、承载 artifact 或其它例外")
         cancelled_ids: set[int] = set()
-        for index, row in enumerate(by_recency):
-            if index < KEEP:
+        for row in by_recency:
+            if row["id"] in keep_ids:
+                print(f"保留[run,{workflow}](最新 {KEEP} 条内,不删) {run_time(row)} "
+                      f"run_number={row['run_number']} id={row['id']}")
                 continue
             if row["id"] == CURRENT_RUN_ID:
-                print(f"保留[run,{workflow}](本次运行自己,不取消不删) {run_time(row)} "
-                      f"run_number={row['run_number']} id={row['id']}")
+                print(f"保留[run,{workflow}](本次运行自己,不取消不删——安全兜底,理论上本就在最新 {KEEP} 条内) "
+                      f"{run_time(row)} run_number={row['run_number']} id={row['id']}")
                 continue
             if row["status"] != "completed":
                 act("run", f"repos/{REPO}/actions/runs/{row['id']}/cancel",
                     f"{workflow} {run_time(row)} run_number={row['run_number']} id={row['id']} "
-                    f"status={row['status']} 判据:数量超限(不承载保留对象,第 {index + 1} 新,超过 {KEEP},"
-                    f"未完成先取消,真删留给它转为 completed 后的下一轮)",
+                    f"status={row['status']} 判据:数量超限(硬上限 {KEEP},不设任何例外,未完成先取消,"
+                    f"真删留给它转为 completed 后的下一轮)",
                     method="POST", verb="取消")
                 cancelled_ids.add(row["id"])
                 continue
             act("run", f"repos/{REPO}/actions/runs/{row['id']}",
                 f"{workflow} {run_time(row)} run_number={row['run_number']} id={row['id']} "
-                f"判据:数量(不承载保留对象,第 {index + 1} 新,超过 {KEEP})")
+                f"判据:数量(硬上限 {KEEP},不设任何例外)")
         if APPLY:
             left_rows = workflow_runs(workflow)
-            left_not_carrying = [row for row in left_rows if row["id"] not in retained_run_ids]
-            left_pending_cancel = [row for row in left_not_carrying if row["id"] in cancelled_ids]
-            over = len(left_not_carrying) - len(left_pending_cancel)
-            print(f"{workflow}:复核剩 {len(left_rows)} 条,不承载 {len(left_not_carrying)} 条(上限 {KEEP},"
-                  f"其中本轮刚取消、记录尚未消失、真删留给下一轮的 {len(left_pending_cancel)} 条不计入本轮核验)")
+            left_ids = {row["id"] for row in left_rows}
+            left_pending_cancel = left_ids & cancelled_ids
+            over = len(left_rows) - len(left_pending_cancel)
+            print(f"{workflow}:复核剩 {len(left_rows)} 条(上限 {KEEP},其中本轮刚取消、记录尚未消失、"
+                  f"真删留给下一轮的 {len(left_pending_cancel)} 条不计入本轮核验)")
             if over > KEEP:
-                sys.exit(f"{workflow} 清理后不承载保留对象且非本轮取消待删的运行记录仍有 {over} 条,超过上限 {KEEP}")
+                sys.exit(f"{workflow} 清理后运行记录仍有 {over} 条(不含本轮取消待删),超过上限 {KEEP}")
 
     clean_runs(BUILD_WORKFLOW, build_runs)
     clean_runs(PRCHECK_WORKFLOW, prcheck_runs)
@@ -346,3 +379,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
