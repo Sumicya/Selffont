@@ -67,11 +67,11 @@ BOW_RATIO = 0.16    # 竖笔弓起弧度相对"自身粗细/竖笔长度两者�
 # 依然是一条死直线。竖笔左边恰恰是视觉上更显眼的那条轮廓线（它直接面对左侧的留白，
 # 而右边弓的那一下被竖笔本身的粗细遮了大半），只弓右边、左边死直，看起来仍然僵硬，
 # 这才是"不够好"的真正原因，不是弓的幅度不够。
-# 方案：竖笔左边也用同样手法（同一个 BOW_RATIO、同样现场取值、不抄筑紫坐标）弓一下，
-# 且让两条边往同一个绝对方向（朝左，钩尾那一侧）弓，弓出来的位移量取两边各自线段/
-# 笔画粗细现场算出的值——这样两条边平行地一起弯，中间夹的笔画宽度基本不变，视觉上
-# 竖笔变成一条有自然张力的弧线，而不是"一侧鼓包、一侧死直"的不对称怪样。
-LEFT_BOW_RATIO = 0.16
+# 方案：竖笔左边也用同样手法（同一个 BOW_RATIO、不抄筑紫坐标）弓一下，且让两条边
+# 往同一个绝对方向（朝左，钩尾那一侧）弓——这一版最初各自独立按"自己那段的长度"
+# 现算弓起幅度，重字重实测出一个真 bug（竖笔中段视觉上收窄变形，详见下面
+# `slant_le()` 里"公共高度区间"那段说明和处理），现在两边改成在同一个公共高度
+# 区间内用同一个 bow_amt，不再各自独立用 LEFT_BOW_RATIO 这个单独比例。
 
 
 def _unit(p0, p1):
@@ -85,32 +85,50 @@ def _unit(p0, p1):
 # 重合）、[1] 是竖笔右上角（原来的直角拐角顶点）、[2] 是竖笔右边往下走的第一个点。
 
 
-def _bow_points(p0, p1, away_dir, bow_ratio, ref_len):
-    """把 p0->p1 这一段直线换成一条两端都跟原方向相切（不扰动端点切线方向）、
-    中间往 away_dir 一侧鼓一下的对称弧线，返回中间要插入的 3 个新点
-    [ctrl1(off), peak(on), ctrl2(off)]（p0、p1 本身不动、不用重复返回）。
+def _bow_points(p0, p1, away_dir, bow_amt):
+    """把 p0->p1 这一段直线换成一条 TrueType 多控制点二次 B 样条（3 个连续的
+    off-curve 控制点，中间不放任何 on-curve 锚点——TrueType 字形轮廓的标准规则是
+    "两个连续 off-curve 点之间自动补一个隐式 on-curve 中点"，这个隐式中点两侧
+    天然切线连续，不需要另外计算），整条曲线在纵向中点处往 away_dir 一侧鼓出
+    bow_amt（绝对位移量，由调用方现算好传入），两端切线严格等于原来的直线方向。
 
-    两端切线方向不变这一点很重要：下游 hook_cut.py 的钩尾裁切、圆弧拟合是按
-    端点局部切线方向算的，如果端点切线被鼓弧带偏，裁切出来的收尾弧线会跟着歪
-    （实测过：只插一个偏向一侧的 off-curve 控制点会让 p1 端的切线整体旋转，下游
-    hook_cut 在这个新切线方向上拟合出的收尾弧线变成不对称的两段鼓包，而不是
-    干净的单段圆弧）。两端各用一个沿原方向（不带侧向分量）的控制点，鼓起的
-    弧线中间再插一个鼓向 away_dir 的锚点，两头切线原样保留，鼓度只体现在中段。
+    2026-10-16 五续：最早的写法是"两端各留一截沿原方向延伸的控制点 + 中间强行
+    插一个鼓向一侧的 on-curve 锚点"，两段二次曲线在中间这个锚点处拼接。看似对
+    称，实测重字重渲染出来中段有个明显的"V 形缺口/腰部收窄"——用解析几何验证
+    （算两段曲线在拼接点的切线方向）发现这其实是必然的：只要鼓起幅度不为 0，
+    两端都保持原方向切线 + 中间插一个侧向偏移的 on-curve 点，这三个条件连立
+    无解——中间拼接点两侧的切线方向必然不同（实测量出约 48° 的切线突变），
+    导致肉眼可见的尖角/瘪陷，根本不是"弓起弧度不够""两边鼓的幅度不对齐"这类
+    参数问题，是构造方式本身在几何上做不到平滑。
+
+    六续：改成单段二次贝塞尔曲线（只有 1 个 off-curve 控制点）试过一版——曲线
+    本身确实绝对光滑了，但此时为了让曲线中点正好偏移 bow_amt，两端切线被迫
+    偏离原方向一个角度（实测约 20°），跟上下游本来就是直线的残段（公共区间
+    以外贴着端点的那一小截、以及 hook_cut 处理过的钩尾收口）衔接处又会露出一个
+    新的轻微折角——虽然比最早的 48° 尖角好很多，但仍不是真正的"两端切线不变"。
+
+    现在这版（3 个连续 off-curve 控制点 + 2 个隐式 on-curve 中点，不显式写出）：
+    两端最近的控制点严格沿原方向（d）放置，保证端点切线精确不变（跟上下游残段
+    衔接处切线连续、不会再有折角）；中间再放一个纯侧向偏移的控制点提供鼓度，
+    两侧各自的隐式中点由 TrueType 样条规则自动给出、自动保证切线连续，不需要
+    额外验算。用二次贝塞尔中点公式反推验证过：中间控制点侧向偏移量取
+    bow_amt * 4/3 时，整条曲线在纵向正中点处的鼓出量精确等于 bow_amt（用解析
+    几何在本文件开发过程中验证过，非经验值）。
     """
     d, seg_len = _unit(p0, p1)
     mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
     perp = (d[1], -d[0])
     if perp[0] * away_dir[0] + perp[1] * away_dir[1] < 0:
         perp = (-perp[0], -perp[1])
-    bow_amt = min(seg_len, ref_len) * bow_ratio
-    peak = (mx + perp[0] * bow_amt, my + perp[1] * bow_amt)
-    k = seg_len * 0.3  # 控制点沿原方向探出的距离，纯几何比例，跟字重粗细/弓起幅度无关
-    ctrl1 = (p0[0] + d[0] * k, p0[1] + d[1] * k)
-    ctrl2 = (p1[0] - d[0] * k, p1[1] - d[1] * k)
+    k = seg_len * 0.3  # 两端控制点沿原方向探出的距离，纯几何比例
+    near0 = (p0[0] + d[0] * k, p0[1] + d[1] * k)
+    near1 = (p1[0] - d[0] * k, p1[1] - d[1] * k)
+    amp = bow_amt * 4.0 / 3.0  # 中间控制点侧向偏移量：见上面公式反推
+    far = (mx + perp[0] * amp, my + perp[1] * amp)
     return [
-        (int(round(ctrl1[0])), int(round(ctrl1[1])), False),
-        (int(round(peak[0])), int(round(peak[1])), True),
-        (int(round(ctrl2[0])), int(round(ctrl2[1])), False),
+        (int(round(near0[0])), int(round(near0[1])), False),
+        (int(round(far[0])), int(round(far[1])), False),
+        (int(round(near1[0])), int(round(near1[1])), False),
     ]
 
 
@@ -145,21 +163,47 @@ def slant_le(glyph, glyf_table):
         (int(round(p2[0])), int(round(p2[1])), True),
     ]
 
-    # 弓一点原创弧度：p2 -> C 这一段（原来是死直的竖笔主干）鼓一下，往跟钩尾同一侧
-    # （d_in 的反方向，本字体里钩尾是往左弯的，这里保持同一视觉方向）鼓出去，鼓起幅度 =
-    # min(线段自身长度, 字重自身笔画粗细) * BOW_RATIO——全部现读这个字形自己的坐标现场算，
-    # 没有借用筑紫或任何外部字体的具体数值。两端切线方向保持跟原直线一致（见 `_bow_points`
-    # 的函数说明），不扰动 C 点的局部切线——C 是下游 `hook_cut.py` 判断钩尾的"闸门"点之一，
-    # 切线被带偏会导致裁切出来的收尾弧线不对称（鼓包），已实测确认、不是猜测。
     c_pt = (int(round(C[0])), int(round(C[1])), True)
-    right_bow = _bow_points(p2, C, (-d_in[0], -d_in[1]), BOW_RATIO, len_in)
     rest_after_c = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(3, n0)]
-
-    # 竖笔左边（钩尾终点 -> 衔接点 A，闭合边，contour0 里首尾相接、不显式存在中间点）
-    # 同样弓一下，方向跟右边保持一致（同一个绝对方向，朝钩尾那一侧），让两条边平行弯曲；
-    # 同样用两端切线不变的对称弧线，不扰动钩尾终点（也是 hook_cut 的闸门点之一）的切线。
     hook_end = rest_after_c[-1]  # 钩尾终点（= 原来的最后一个点）
-    left_bow = _bow_points(hook_end[:2], A, (-d_in[0], -d_in[1]), LEFT_BOW_RATIO, len_in)
+
+    # 弓一点原创弧度：竖笔左右两边都鼓一下（d_in 反方向、跟钩尾同一侧），两边平行弯曲、
+    # 笔画粗细不变。2026-10-16 续：实测过"各自独立按自己那段长度鼓"会出 bug——
+    # 竖笔右边这段（p2->C）因为上面有转角削圆吃掉一截，比左边（hook_end->A，从钩尾
+    # 直接到顶，没有转角削圆）短不少；两边各自在自己的中点鼓，中点所在的高度根本不是
+    # 同一条水平线，鼓出来的弧线一个在高处鼓、一个在低处鼓，中间夹出来的笔画宽度就会
+    # 一截粗一截细（重字重实测复现：竖笔中段明显收窄变形）。
+    # 改法：两边只在"双方都存在"的公共高度区间（y_lo..y_hi）里鼓同一个弧、鼓同一个
+    # 幅度，区间以外（比如左边贴着 A 顶部那一截，右边贴着 C 底部那一小截）保持原样
+    # 死直线——两条边在公共区间内严格平行，笔画宽度处处不变；区间外收窄成单边的小
+    # 直段，不新增视觉问题（本来就贴着端点，很短）。
+    right_x, left_x = C[0], A[0]
+    y_hi = min(p2[1], A[1])
+    y_lo = max(C[1], hook_end[1])
+    assert y_hi > y_lo, "unexpected geometry: 竖笔左右两边鼓弧的公共高度区间为空，几何假设不成立"
+
+    rp_hi = (right_x, y_hi)
+    rp_lo = (right_x, y_lo)
+    lp_lo = (left_x, y_lo)
+    lp_hi = (left_x, y_hi)
+
+    shared_len = y_hi - y_lo
+    bow_amt = min(shared_len, len_in) * BOW_RATIO
+    away = (-d_in[0], -d_in[1])
+
+    right_mid = _bow_points(rp_hi, rp_lo, away, bow_amt)
+    left_mid = _bow_points(lp_lo, lp_hi, away, bow_amt)
+
+    rp_hi_pt = (int(round(rp_hi[0])), int(round(rp_hi[1])), True)
+    rp_lo_pt = (int(round(rp_lo[0])), int(round(rp_lo[1])), True)
+    lp_lo_pt = (int(round(lp_lo[0])), int(round(lp_lo[1])), True)
+    lp_hi_pt = (int(round(lp_hi[0])), int(round(lp_hi[1])), True)
+
+    # 右边：p2 -> rp_hi（公共区间以外的残段，可能长度为 0，仍然落一个点，保证所有
+    # 字重点数拓扑一致）-> 鼓弧 -> rp_lo -> C（残段）。
+    right_bow = [rp_hi_pt] + right_mid + [rp_lo_pt]
+    # 左边：hook_end -> lp_lo（残段）-> 鼓弧 -> lp_hi -> A（残段）。
+    left_bow = [lp_lo_pt] + left_mid + [lp_hi_pt]
 
     contour0_new = new_pts + right_bow + [c_pt] + rest_after_c + left_bow
 
@@ -172,6 +216,7 @@ def slant_le(glyph, glyf_table):
     glyph.endPtsOfContours = [e + delta for e in glyph.endPtsOfContours]
     glyph.recalcBounds(glyf_table)
     return True
+
 
 
 # 2026-10-16 再续二：主人确认维持本仓库既有裁决（了字沿用全部 11 个带钩字共用的
