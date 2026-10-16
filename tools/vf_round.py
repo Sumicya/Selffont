@@ -47,8 +47,18 @@ CORNER_R_RATIO = 0.42                 # 圆角半径 = min(两侧边长) * 这�
 CORNER_R_MAX = 130                    # 绝对半径上限（1000upm）。实测量过筑紫"回"外框拐角的实际
                                        # 切角跨度约 120-130 单位，原来定的 70 太保守、肉眼看不出来，
                                        # 这版按参照实测值改大，让效果在正常网页字号下也看得见。
-CORNER_SHARED_RATIO = 0.16            # 两个拐角紧挨着同一截短连接段时，各自改用这个更保守
-                                       # 的比例（两头加起来约 0.32，留三分之二不碰，避免互相自交）
+CORNER_SHARED_RATIO = 0.32            # 两个拐角紧挨着同一截短连接段时，各自改用这个更保守
+                                       # 的比例（两头加起来约 0.64，留三分之一左右不碰，避免互相自交）。
+                                       # 2026-10-15 四续：原来定的 0.16 本身在数学上过度保守——两个拐角
+                                       # 各用同一个比例 R 吃同一截长度 L 的边，只要 R<0.5 就保证
+                                       # 2*R*L < L，两段弧不会碰头，这个安全边界本来就跟 L 的具体长度
+                                       # 无关，不需要再额外留三分之二的安全垫。原 0.16 的问题是在"电"这
+                                       # 类独立细墙轮廓（contour3，墙宽本身只有 70~150 单位量级）上实测
+                                       # 暴露出来的：细墙四个角全部互为"紧邻同一截短边"的拐角，按 0.16
+                                       # 算出来的半径只有个位数到十几个单位，在正常字号下跟完全没削圆
+                                       # 几乎看不出区别（用户实测反馈"电左未圆角"）。改到 0.32 后两段弧
+                                       # 之间仍留约三分之一的边长不碰，留了足够余量，同时半径视觉上翻倍，
+                                       # 11 个口字框字 + 电 在三档字重下逐字复核过，没有出现新的自交/鼓包。
 CORNER_SHORT_SHARED = 200              # 两个拐角之间的连接段短于这个值(1000upm)才算"短段"，
                                         # 两头都不圆；国/回外框那种长边不受影响
 
@@ -130,7 +140,8 @@ def _point_covered(x, y, polys):
     return _winding_number(x, y, polys) != 0
 
 
-def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_polys=None):
+def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_polys=None,
+                    force_corners=None):
     """找"该不该仿筑紫逢角必圆"的直角拐角——凸角和凹角都找，不是只找凸角。
 
     上一版只认"转向跟轮廓绕行方向相同"的凸角（国/回/田外框的四个角），把转向相反的
@@ -156,7 +167,18 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
 
     返回 {anchor 原始点序号}（半径按该字重自己的边长重算，这里只记录"要不要圆"这个
     结构决定，跟 cap/tip 共用同一套"检测一次、各字重复用"的模型）。
+
+    force_corners: 可选，{原始点序号}——外部（detect()，配合 foot_trim.py 的
+    skip_caps）已经判定"这个点结构上是个直角，但不该走端头圆化"的点，强制当成
+    拐角处理，跳过下面"两个拐角紧挨着同一截短连接段"的保守否决（那条否决是给
+    "钩笔钩尖两头各一个拐角、中间几十单位"这种真有撞刀风险的场景写的；电/国/田
+    这类被削平贴靠在背景上的细墙，两头拐角之间那截"短"边本来就是墙的厚度本身，
+    半径按 CORNER_SHARED_RATIO 收紧后两边远够不着碰头，没有同样的风险，但如果
+    不强制纳入，会被这条保守阈值一并否决，端头从"鼓包"变成完全没有圆角的直角——
+    跟全字形"逢角必圆"的观感不一致）。仍然要过前面角度/共线等基本检查，只跳过
+    "risky"这一步否决。
     """
+    force_corners = force_corners or set()
     if len(anchors) < 4:
         return set()
     winding = _contour_winding(contour, anchors)
@@ -207,6 +229,9 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     anchor_pos = {a: k for k, a in enumerate(anchors)}
     safe = set()
     for i in corners:
+        if i in force_corners:
+            safe.add(i)  # 外部已判定安全（贴靠背景的细墙两端），不走下面的保守否决
+            continue
         k = anchor_pos[i]
         h = anchors[(k - 1) % len(anchors)]
         j = anchors[(k + 1) % len(anchors)]
@@ -224,7 +249,7 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     return safe
 
 
-def detect(glyph, glyf_table):
+def detect(glyph, glyf_table, skip_caps=None):
     """只做结构判断，不涉及"切多大才安全"——那部分跟每个字重自己的绝对坐标
     尺度有关（同一个比例，Heavy 的绝对半径比 Regular 大很多），不能只用参照
     字重的坐标去判，必须在所有字重上都验证过才安全（见 plan_safety()）。
@@ -233,8 +258,16 @@ def detect(glyph, glyf_table):
     cap_plan[contour_idx] = {k 值集合}（k 是该轮廓 anchors 列表里的序号）
     tip_plan[contour_idx] = {anchor 原始点序号集合}
     corner_plan[contour_idx] = {anchor 原始点序号集合}
+
+    skip_caps: 可选，{contour_idx: {原始点序号集合}}——外部（比如 foot_trim.py）
+    已经确认"这个端头其实贴着/本该贴着同字形里另一条笔画，不是真正暴露在背景里
+    的自由端头"的点，强制排除在 caps 之外，不管下面这套结构判断本身认不认同。
+    这是给"贴平"那类修复用的收尾步骤——贴平只改坐标，不会让这里的"是否已被盖住"
+    探测自动认出来（贴平/本来就贴平的笔画，如果它本身比被贴的那条笔画更往外凸出
+    一截，探测点会落在凸出来的那段缝隙里，判定"没被盖住"，照样独立鼓一个包）。
     """
     cap_plan, tip_plan, corner_plan = {}, {}, {}
+    skip_caps = skip_caps or {}
     if glyph.isComposite() or glyph.numberOfContours <= 0:
         return cap_plan, tip_plan, corner_plan
     all_contours = list(_split_contours(glyph, glyf_table))
@@ -300,6 +333,8 @@ def detect(glyph, glyf_table):
             edge_probe = (mid[0] + d_in_fwd[0] * eps, mid[1] + d_in_fwd[1] * eps)
             if _point_covered(edge_probe[0], edge_probe[1], all_polys):
                 continue
+            if i in skip_caps.get(c, ()) or j in skip_caps.get(c, ()):
+                continue
             caps.add(k)
         if caps:
             cap_plan[c] = caps
@@ -309,7 +344,9 @@ def detect(glyph, glyf_table):
             b = anchors[(k + 1) % len(anchors)]
             cap_anchor_points.add(i)
             cap_anchor_points.add(b)
-        corners = detect_corners(contour, n, anchors, straight, cap_anchor_points, tips, all_polys)
+        force_corners = skip_caps.get(c, set()) - cap_anchor_points
+        corners = detect_corners(contour, n, anchors, straight, cap_anchor_points, tips, all_polys,
+                                  force_corners=force_corners)
         if corners:
             corner_plan[c] = corners
     return cap_plan, tip_plan, corner_plan
@@ -683,15 +720,29 @@ def main():
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--corners", action="store_true",
                          help="仿筑紫逢角必圆：凸角（国/回/田外框角）和凹角（内框角、横竖相交内侧角）都圆，默认关闭")
+    parser.add_argument("--skip-caps-json", default=None,
+                         help="可选，foot_trim.py 产出的排除名单：{字形名: [[contour_idx, point_idx], ...]}，"
+                              "列在里面的端头不当自由端头圆化（贴平后仍会独立鼓包的收尾修复）")
     args = parser.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
+
+    skip_caps_by_glyph = {}
+    if args.skip_caps_json:
+        import json
+        with open(args.skip_caps_json) as fp:
+            raw = json.load(fp)
+        for gname, pairs in raw.items():
+            d = {}
+            for ci, pi in pairs:
+                d.setdefault(ci, set()).add(pi)
+            skip_caps_by_glyph[gname] = d
 
     ref_font = TTFont(args.ref)
     ref_glyf = ref_font["glyf"]
     cap_plans, tip_plans, corner_plans = {}, {}, {}
     for name in ref_font.getGlyphOrder():
         g = ref_glyf[name]
-        cap_plan, tip_plan, corner_plan = detect(g, ref_glyf)
+        cap_plan, tip_plan, corner_plan = detect(g, ref_glyf, skip_caps_by_glyph.get(name))
         if cap_plan:
             cap_plans[name] = cap_plan
         if tip_plan:
