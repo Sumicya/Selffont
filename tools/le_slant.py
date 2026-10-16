@@ -47,8 +47,20 @@ import sys
 CORNER_R_RATIO = 1.0
 
 
+import math
+
+# 2026-10-16 续：用户直接给了筑紫的真实"了"字坐标做对比（见 docs/evidence），要求
+# "完全照着筑紫做"。试过把筑紫那条轮廓的点坐标原样搬过来再按本字重粗细縮放/加粗
+# ——视觉效果确实好，但筑紫A丸是方正的商业字体，没有开源协议，直接把它的字形坐标
+# 数据搬进这个 OFL 字体模块里分发，版权风险是真实存在的、不是能靠改改坐标绕开的。
+# 跟主人核对后决定：不抄筑紫的具体坐标，只照着它"连续弯曲、无死角"这个风格特征，
+# 在我们自己已有的竖笔骨架上加一点原创的弧度——所有新坐标都是从这个字形自己的
+# 现有锚点（笔画粗细、线段长度）现场算出来的比例，不借用筑紫的任何数值。
+BOW_RATIO = 0.16    # 竖笔弓起弧度相对"自身粗细/竖笔长度两者取小值"的比例，纯原创
+                     # 参数、凭这版效果目测调的，不是从筑紫哪个数字换算来的
+
+
 def _unit(p0, p1):
-    import math
     dx, dy = p1[0] - p0[0], p1[1] - p0[1]
     d = math.hypot(dx, dy) or 1.0
     return (dx / d, dy / d), d
@@ -89,8 +101,26 @@ def slant_le(glyph, glyf_table):
         (int(round(V[0])), int(round(V[1])), False),
         (int(round(p2[0])), int(round(p2[1])), True),
     ]
-    rest = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(2, n0)]
-    contour0_new = new_pts + rest
+
+    # 弓一点原创弧度：p2 -> C 这一段（原来是死直的竖笔主干）插一个 off-curve 控制点，
+    # 往跟钩尾同一侧（d_in 的反方向，本字体里钩尾是往左弯的，这里保持同一视觉方向）
+    # 鼓一点，弓起幅度 = min(线段自身长度, 字重自身笔画粗细) * BOW_RATIO——全部现读
+    # 这个字形自己的坐标现场算，没有借用筑紫或任何外部字体的具体数值。只做这一步、
+    # 不碰 contour2，风险面依然很小。
+    bow_mx, bow_my = (p2[0] + C[0]) / 2, (p2[1] + C[1]) / 2
+    seg_dx, seg_dy = C[0] - p2[0], C[1] - p2[1]
+    seg_len = math.hypot(seg_dx, seg_dy) or 1.0
+    # 垂直于线段方向、朝 -d_in（跟横边延伸方向相反，即朝钩尾那一侧）鼓出去
+    perp = (seg_dy / seg_len, -seg_dx / seg_len)
+    if perp[0] * (-d_in[0]) + perp[1] * (-d_in[1]) < 0:
+        perp = (-perp[0], -perp[1])
+    bow_amt = min(seg_len, len_in) * BOW_RATIO
+    bow_pt = (bow_mx + perp[0] * bow_amt, bow_my + perp[1] * bow_amt)
+
+    c_pt = (int(round(C[0])), int(round(C[1])), True)
+    bow_ctrl = (int(round(bow_pt[0])), int(round(bow_pt[1])), False)
+    rest_after_c = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(3, n0)]
+    contour0_new = new_pts + [bow_ctrl, c_pt] + rest_after_c
 
     from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
     other = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(n0, len(coords))]
