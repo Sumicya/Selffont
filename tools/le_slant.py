@@ -59,6 +59,20 @@ import math
 BOW_RATIO = 0.16    # 竖笔弓起弧度相对"自身粗细/竖笔长度两者取小值"的比例，纯原创
                      # 参数、凭这版效果目测调的，不是从筑紫哪个数字换算来的
 
+# 2026-10-16 再续：用户看过"只弓了一侧"的效果图，反馈"自己的不够好"，要求再往前走一步
+# （"试试1+2"：保留方案2"不抄筑紫坐标、自己现算"的方法，但要争取方案1那种更顺滑/更
+# 有笔锋的观感）。复查发现问题根源：上面只弓了竖笔的**右边**（p2->C 这一段，contour0
+# 点[1]->[2] 衍生出来的那条边），但竖笔左边——也就是从钩尾终点（contour0 最后一个点）
+# 直接连回衔接点 A（contour0 第一个点）那一整段，长度几乎是整条竖笔那么长——原封未动，
+# 依然是一条死直线。竖笔左边恰恰是视觉上更显眼的那条轮廓线（它直接面对左侧的留白，
+# 而右边弓的那一下被竖笔本身的粗细遮了大半），只弓右边、左边死直，看起来仍然僵硬，
+# 这才是"不够好"的真正原因，不是弓的幅度不够。
+# 方案：竖笔左边也用同样手法（同一个 BOW_RATIO、同样现场取值、不抄筑紫坐标）弓一下，
+# 且让两条边往同一个绝对方向（朝左，钩尾那一侧）弓，弓出来的位移量取两边各自线段/
+# 笔画粗细现场算出的值——这样两条边平行地一起弯，中间夹的笔画宽度基本不变，视觉上
+# 竖笔变成一条有自然张力的弧线，而不是"一侧鼓包、一侧死直"的不对称怪样。
+LEFT_BOW_RATIO = 0.16
+
 
 def _unit(p0, p1):
     dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -69,6 +83,35 @@ def _unit(p0, p1):
 # ---- 点序号角色表（对所有字重通用）----
 # contour0（竖笔+钩尾，19 点）：[0] 是竖笔左上角（衔接点，跟 contour2 的终点坐标
 # 重合）、[1] 是竖笔右上角（原来的直角拐角顶点）、[2] 是竖笔右边往下走的第一个点。
+
+
+def _bow_points(p0, p1, away_dir, bow_ratio, ref_len):
+    """把 p0->p1 这一段直线换成一条两端都跟原方向相切（不扰动端点切线方向）、
+    中间往 away_dir 一侧鼓一下的对称弧线，返回中间要插入的 3 个新点
+    [ctrl1(off), peak(on), ctrl2(off)]（p0、p1 本身不动、不用重复返回）。
+
+    两端切线方向不变这一点很重要：下游 hook_cut.py 的钩尾裁切、圆弧拟合是按
+    端点局部切线方向算的，如果端点切线被鼓弧带偏，裁切出来的收尾弧线会跟着歪
+    （实测过：只插一个偏向一侧的 off-curve 控制点会让 p1 端的切线整体旋转，下游
+    hook_cut 在这个新切线方向上拟合出的收尾弧线变成不对称的两段鼓包，而不是
+    干净的单段圆弧）。两端各用一个沿原方向（不带侧向分量）的控制点，鼓起的
+    弧线中间再插一个鼓向 away_dir 的锚点，两头切线原样保留，鼓度只体现在中段。
+    """
+    d, seg_len = _unit(p0, p1)
+    mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+    perp = (d[1], -d[0])
+    if perp[0] * away_dir[0] + perp[1] * away_dir[1] < 0:
+        perp = (-perp[0], -perp[1])
+    bow_amt = min(seg_len, ref_len) * bow_ratio
+    peak = (mx + perp[0] * bow_amt, my + perp[1] * bow_amt)
+    k = seg_len * 0.3  # 控制点沿原方向探出的距离，纯几何比例，跟字重粗细/弓起幅度无关
+    ctrl1 = (p0[0] + d[0] * k, p0[1] + d[1] * k)
+    ctrl2 = (p1[0] - d[0] * k, p1[1] - d[1] * k)
+    return [
+        (int(round(ctrl1[0])), int(round(ctrl1[1])), False),
+        (int(round(peak[0])), int(round(peak[1])), True),
+        (int(round(ctrl2[0])), int(round(ctrl2[1])), False),
+    ]
 
 
 def slant_le(glyph, glyf_table):
@@ -102,25 +145,23 @@ def slant_le(glyph, glyf_table):
         (int(round(p2[0])), int(round(p2[1])), True),
     ]
 
-    # 弓一点原创弧度：p2 -> C 这一段（原来是死直的竖笔主干）插一个 off-curve 控制点，
-    # 往跟钩尾同一侧（d_in 的反方向，本字体里钩尾是往左弯的，这里保持同一视觉方向）
-    # 鼓一点，弓起幅度 = min(线段自身长度, 字重自身笔画粗细) * BOW_RATIO——全部现读
-    # 这个字形自己的坐标现场算，没有借用筑紫或任何外部字体的具体数值。只做这一步、
-    # 不碰 contour2，风险面依然很小。
-    bow_mx, bow_my = (p2[0] + C[0]) / 2, (p2[1] + C[1]) / 2
-    seg_dx, seg_dy = C[0] - p2[0], C[1] - p2[1]
-    seg_len = math.hypot(seg_dx, seg_dy) or 1.0
-    # 垂直于线段方向、朝 -d_in（跟横边延伸方向相反，即朝钩尾那一侧）鼓出去
-    perp = (seg_dy / seg_len, -seg_dx / seg_len)
-    if perp[0] * (-d_in[0]) + perp[1] * (-d_in[1]) < 0:
-        perp = (-perp[0], -perp[1])
-    bow_amt = min(seg_len, len_in) * BOW_RATIO
-    bow_pt = (bow_mx + perp[0] * bow_amt, bow_my + perp[1] * bow_amt)
-
+    # 弓一点原创弧度：p2 -> C 这一段（原来是死直的竖笔主干）鼓一下，往跟钩尾同一侧
+    # （d_in 的反方向，本字体里钩尾是往左弯的，这里保持同一视觉方向）鼓出去，鼓起幅度 =
+    # min(线段自身长度, 字重自身笔画粗细) * BOW_RATIO——全部现读这个字形自己的坐标现场算，
+    # 没有借用筑紫或任何外部字体的具体数值。两端切线方向保持跟原直线一致（见 `_bow_points`
+    # 的函数说明），不扰动 C 点的局部切线——C 是下游 `hook_cut.py` 判断钩尾的"闸门"点之一，
+    # 切线被带偏会导致裁切出来的收尾弧线不对称（鼓包），已实测确认、不是猜测。
     c_pt = (int(round(C[0])), int(round(C[1])), True)
-    bow_ctrl = (int(round(bow_pt[0])), int(round(bow_pt[1])), False)
+    right_bow = _bow_points(p2, C, (-d_in[0], -d_in[1]), BOW_RATIO, len_in)
     rest_after_c = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(3, n0)]
-    contour0_new = new_pts + [bow_ctrl, c_pt] + rest_after_c
+
+    # 竖笔左边（钩尾终点 -> 衔接点 A，闭合边，contour0 里首尾相接、不显式存在中间点）
+    # 同样弓一下，方向跟右边保持一致（同一个绝对方向，朝钩尾那一侧），让两条边平行弯曲；
+    # 同样用两端切线不变的对称弧线，不扰动钩尾终点（也是 hook_cut 的闸门点之一）的切线。
+    hook_end = rest_after_c[-1]  # 钩尾终点（= 原来的最后一个点）
+    left_bow = _bow_points(hook_end[:2], A, (-d_in[0], -d_in[1]), LEFT_BOW_RATIO, len_in)
+
+    contour0_new = new_pts + right_bow + [c_pt] + rest_after_c + left_bow
 
     from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
     other = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(n0, len(coords))]
@@ -133,6 +174,86 @@ def slant_le(glyph, glyf_table):
     return True
 
 
+# 2026-10-16 再续二：主人确认维持本仓库既有裁决（了字沿用全部 11 个带钩字共用的
+# "钩尾一律切、换干净圆头收尾"惯例，不为了字单独破例留钩），追加反馈"现在的转角
+# 还有个死尖角"——横笔右端转去斜笔（contour2，独立轮廓）那一段，顶上是 4 个连续
+# on-curve 点首尾相接的纯折线（量出来是个"探出横笔右墙之外的小尖角/小旗子"形状，
+# 不是曲线），要求去掉，换成跟筑紫一样"转折点两侧都是连续弧线"的平滑过渡——这跟
+# 上面竖笔的死角是同一个病根，只是长在横笔转角这一侧，病根手法也一样：找到横笔
+# 自己的右上角坐标（活读 contour1，不写死），把这段直线尖角换成一条从横笔边缘
+# 直接平滑弯进原有斜笔弧线的曲线，不再探出横笔边缘以外。
+FOLD_ROUND_RATIO = 0.6   # 新起点相对横笔自身粗细（thickness）回缩的比例，纯几何
+                         # 比例、现场从 contour1 自己的宽度算，不是筑紫的数字。
+                         # 2026-10-16 三续：0.4 太保守——新起点离横笔右墙（contour1
+                         # 自己的直角拐角）太近，曲线还没来得及往下弯，横笔自己那段
+                         # 垂直墙皮就先露出来一截，变成"一小截直墙+再转弧线"的两段式
+                         # 死角。四续：改用 vf_round.py 同款"拐角削圆"公式（新控制点
+                         # 直接取原拐角顶点本身，不是跟 first_off 取中点）之后，中点
+                         # 取法试过 1.1 比例会让曲线在新起点处越过横笔顶边往外鼓出去
+                         # 一点再绕回来，形成自交小豁口（细小三角形缺口，实测出的
+                         # bug，不是猜的）——换成"新控制点=原拐角顶点"这个单控制点
+                         # 削圆写法后不再自交，比例回调到 0.6，退让距离够、也不越界。
+
+
+def smooth_fold_nib(glyph, glyf_table):
+    """去掉 contour2（横转斜的折角轮廓）开头那个探出横笔边缘的尖角/小旗子形状，
+    换成从横笔自己的右上角直接平滑弯进既有斜笔弧线的过渡，不碰斜笔弧线本身
+    （contour2 从第 1 个 off-curve 点开始的既有弧线原样保留，只换开头那一段纯折线）。
+    """
+    coords, ends, flags = glyph.getCoordinates(glyf_table)
+    c0_n = ends[0] + 1
+    c1_start, c1_end = c0_n, ends[1]
+    c2_start, c2_end = c1_end + 1, ends[2]
+
+    # contour1（横笔主干，轴对齐矩形）：按点序号角色表，[1] 是横笔右上角、[2] 是
+    # 横笔右下角——用这两点现场算横笔自身粗细（厚度），不猜、不写死。
+    bar_tr = coords[c1_start + 1]
+    bar_br = coords[c1_start + 2]
+    assert abs(bar_tr[0] - bar_br[0]) < 1, "unexpected point order: 横笔右上/右下角应在同一条竖边上"
+    bar_thick = abs(bar_tr[1] - bar_br[1])
+
+    # contour2 开头那一串纯折线（探出横笔边缘的尖角）：从本地第 0 点起，数连续
+    # on-curve 点的个数（本仓库三档字重实测均为 4 个），直到遇到第一个 off-curve
+    # 点为止——那个 off-curve 点以及之后的既有弧线原样不动。
+    local_flags = [bool(flags[c2_start + i]) for i in range(c2_end - c2_start + 1)]
+    n_beak = 0
+    while n_beak < len(local_flags) and local_flags[n_beak]:
+        n_beak += 1
+    assert n_beak >= 2, "unexpected point order: contour2 开头应有一串 on-curve 尖角折线"
+
+    first_off_idx = c2_start + n_beak  # 既有弧线的第一个 off-curve 控制点，原样保留
+    first_off = coords[first_off_idx]
+
+    # 跟 `vf_round.py`/`slant_le()` 同一个削圆公式：新起点 = 横笔右上角沿顶边往回退
+    # r（r = 横笔自身厚度 * FOLD_ROUND_RATIO），新控制点直接取横笔右上角原地坐标
+    # （不是跟 first_off 取中点——取中点试过会在新起点附近鼓出横笔顶边之外再绕回来，
+    # 形成自交小豁口，已实测确认），曲线从新起点出发，一开始切线方向正好延续横笔
+    # 顶边本身（因为新起点、新控制点、原拐角三者 y 坐标相同），不会越界鼓出去。
+    r = bar_thick * FOLD_ROUND_RATIO
+    new_start = (bar_tr[0] - r, bar_tr[1])
+    new_ctrl = (bar_tr[0], bar_tr[1])
+
+    new_beak = [
+        (int(round(new_start[0])), int(round(new_start[1])), True),
+        (int(round(new_ctrl[0])), int(round(new_ctrl[1])), False),
+    ]
+    rest_c2 = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(first_off_idx, c2_end + 1)]
+    contour2_new = new_beak + rest_c2
+
+    before_c2 = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(0, c2_start)]
+
+    from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
+    all_pts = before_c2 + contour2_new
+    glyph.coordinates = GlyphCoordinates([(p[0], p[1]) for p in all_pts])
+    glyph.flags = bytearray([1 if p[2] else 0 for p in all_pts])
+    delta = len(contour2_new) - (c2_end - c2_start + 1)
+    new_ends = list(glyph.endPtsOfContours)
+    new_ends[2] = new_ends[2] + delta
+    glyph.endPtsOfContours = new_ends
+    glyph.recalcBounds(glyf_table)
+    return True
+
+
 if __name__ == "__main__":
     f = TTFont(sys.argv[1])
     glyf = f["glyf"]
@@ -141,6 +262,7 @@ if __name__ == "__main__":
     g = glyf[gname]
     before = g.getCoordinates(glyf)[0][:6]
     slant_le(g, glyf)
+    smooth_fold_nib(g, glyf)
     after = g.getCoordinates(glyf)[0][:6]
     print("了 before:", list(before))
     print("了 after :", list(after))
