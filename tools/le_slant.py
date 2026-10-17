@@ -132,6 +132,42 @@ def _bow_points(p0, p1, away_dir, bow_amt):
     ]
 
 
+def _sweep_points(p0, p1, travel_dir, lead):
+    """把 p0->p1 这一段直线换成一条单向（非对称）平移的 TrueType 多控制点二次
+    B 样条：p0、p1 允许 x 不同（整条边从 p0 的位置一路平滑漂移到 p1 的位置，
+    不要求漂移到中途再漂回来），两端切线都严格沿 travel_dir（跟原来直线段
+    的走向一致，衔接处不会有折角），中间控制点取 p0、p1 的几何中点——跟
+    `_bow_points()` 用的同一类"3 个连续 off-curve 控制点、中间不放 on-curve
+    锚点"手法，光滑性由 TrueType 样条规则本身保证，不需要另外验算。
+
+    2026-10-16 八续：主人看过方正筑紫 A 丸的真实轮廓放大图后反馈——筑紫的
+    "了"根本不是"竖笔基本直、中段弓一下"，而是整条竖笔到钩尾全程都在同一条
+    连续大弯弧上，而且钩尾本身的落点相对顶部衔接点已经整体往左挪了一大截，
+    不是弓完又弓回原位。要达到这个观感，不能只在竖笔中段做文章，要让整条边
+    的漂移量从顶部（0）单调增加到钩尾衔接处（最大值），钩尾本身也要跟着整体
+    平移（见 `slant_le()` 里对钩尾各点的刚体平移处理），不能在钩尾衔接处又
+    弓回原来的 x。主人已确认接受这个结构性改动范围更大、风险更高（之前几版
+    "只在中段做文章"的方案都被判不理想）。
+    """
+    k = lead
+    near0 = (p0[0] + travel_dir[0] * k, p0[1] + travel_dir[1] * k)
+    near1 = (p1[0] - travel_dir[0] * k, p1[1] - travel_dir[1] * k)
+    far = ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
+    return [
+        (int(round(near0[0])), int(round(near0[1])), False),
+        (int(round(far[0])), int(round(far[1])), False),
+        (int(round(near1[0])), int(round(near1[1])), False),
+    ]
+
+
+# 竖笔+钩尾整体往左漂移的幅度，相对"公共高度区间长度/水平边长度两者取小值"的
+# 比例——纯原创参数，现场从本字形自身比例算，不是从筑紫哪个数字换算来的。
+# 取比 BOW_RATIO（历史上失败的对称弓方案，0.16）大得多的值，因为这次不是"弓一下
+# 再弓回去"，是整条边单调漂移到一个新位置，要让效果跟筑紫那种"整条腿明显斜甩
+# 出去"的观感对得上，幅度必须足够大、不能是容易被看成瑕疵的小幅度。
+SWEEP_RATIO = 0.42
+
+
 def slant_le(glyph, glyf_table):
     coords, ends, flags = glyph.getCoordinates(glyf_table)
     n0 = ends[0] + 1  # contour0 的点数（竖笔+钩尾那条轮廓，永远是第一条）
@@ -163,49 +199,64 @@ def slant_le(glyph, glyf_table):
         (int(round(p2[0])), int(round(p2[1])), True),
     ]
 
-    c_pt = (int(round(C[0])), int(round(C[1])), True)
     rest_after_c = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(3, n0)]
     hook_end = rest_after_c[-1]  # 钩尾终点（= 原来的最后一个点）
 
-    # 弓一点原创弧度：竖笔左右两边都鼓一下（d_in 反方向、跟钩尾同一侧），两边平行弯曲、
-    # 笔画粗细不变。2026-10-16 续：实测过"各自独立按自己那段长度鼓"会出 bug——
-    # 竖笔右边这段（p2->C）因为上面有转角削圆吃掉一截，比左边（hook_end->A，从钩尾
-    # 直接到顶，没有转角削圆）短不少；两边各自在自己的中点鼓，中点所在的高度根本不是
-    # 同一条水平线，鼓出来的弧线一个在高处鼓、一个在低处鼓，中间夹出来的笔画宽度就会
-    # 一截粗一截细（重字重实测复现：竖笔中段明显收窄变形）。
-    # 改法：两边只在"双方都存在"的公共高度区间（y_lo..y_hi）里鼓同一个弧、鼓同一个
-    # 幅度，区间以外（比如左边贴着 A 顶部那一截，右边贴着 C 底部那一小截）保持原样
-    # 死直线——两条边在公共区间内严格平行，笔画宽度处处不变；区间外收窄成单边的小
-    # 直段，不新增视觉问题（本来就贴着端点，很短）。
+    # 2026-10-16 七续：主人实测放大图后反馈竖笔中段仍然"不平滑"/"有瘪陷"，先退回
+    # 竖笔主干为纯直线（只保留转角去尖角）。八续：主人看过筑紫真实轮廓放大图后，
+    # 明确要求按筑紫那种"整条竖笔+钩尾是一条连续大弯弧、钩尾位置整体跟着偏移"的
+    # 结构重做，并确认愿意承担这个结构性改动范围更大、风险更高（见 `_sweep_points()`
+    # 文档字符串）。
+    #
+    # 做法：竖笔右边（p2->C）、左边（hook_end->A）在"双方都存在"的公共高度区间
+    # （y_lo..y_hi，算法跟历史上弓形方案的公共区间完全一样，保证两边在重叠区间内
+    # 用同一个漂移量、笔画粗细不变）内，用同一个单调递增的漂移量（从顶部 0 到底部
+    # max_shift）让两条边一起往左漂移；公共区间以下的整条钩尾（c_pt 本身以及它
+    # 之后的所有钩尾点）做刚体整体平移（只平移 x，y 不变），钩尾自己的形状、比例
+    # 完全不变，只是作为一个整体挪到新的衔接位置，不会因为平移产生新的自相交。
     right_x, left_x = C[0], A[0]
     y_hi = min(p2[1], A[1])
     y_lo = max(C[1], hook_end[1])
-    assert y_hi > y_lo, "unexpected geometry: 竖笔左右两边鼓弧的公共高度区间为空，几何假设不成立"
-
-    rp_hi = (right_x, y_hi)
-    rp_lo = (right_x, y_lo)
-    lp_lo = (left_x, y_lo)
-    lp_hi = (left_x, y_hi)
+    assert y_hi > y_lo, "unexpected geometry: 竖笔左右两边公共高度区间为空，几何假设不成立"
 
     shared_len = y_hi - y_lo
-    bow_amt = min(shared_len, len_in) * BOW_RATIO
-    away = (-d_in[0], -d_in[1])
+    max_shift = min(shared_len, len_in) * SWEEP_RATIO
+    lead = shared_len * 0.3  # 两端控制点沿纵向探出的距离，纯几何比例
 
-    right_mid = _bow_points(rp_hi, rp_lo, away, bow_amt)
-    left_mid = _bow_points(lp_lo, lp_hi, away, bow_amt)
+    rp_hi = (right_x, y_hi)
+    rp_lo = (right_x - max_shift, y_lo)
+    lp_lo = (left_x - max_shift, y_lo)
+    lp_hi = (left_x, y_hi)
+
+    # 右边往下走（y 递减），左边往上走（y 递增）——travel_dir 决定两端控制点
+    # 沿哪个纵向方向探出，保证衔接处切线跟原来的竖直直线方向一致。
+    right_mid = _sweep_points(rp_hi, rp_lo, (0.0, -1.0), lead)
+    left_mid = _sweep_points(lp_lo, lp_hi, (0.0, 1.0), lead)
 
     rp_hi_pt = (int(round(rp_hi[0])), int(round(rp_hi[1])), True)
     rp_lo_pt = (int(round(rp_lo[0])), int(round(rp_lo[1])), True)
     lp_lo_pt = (int(round(lp_lo[0])), int(round(lp_lo[1])), True)
     lp_hi_pt = (int(round(lp_hi[0])), int(round(lp_hi[1])), True)
 
-    # 右边：p2 -> rp_hi（公共区间以外的残段，可能长度为 0，仍然落一个点，保证所有
-    # 字重点数拓扑一致）-> 鼓弧 -> rp_lo -> C（残段）。
-    right_bow = [rp_hi_pt] + right_mid + [rp_lo_pt]
-    # 左边：hook_end -> lp_lo（残段）-> 鼓弧 -> lp_hi -> A（残段）。
-    left_bow = [lp_lo_pt] + left_mid + [lp_hi_pt]
+    # 钩尾刚体整体左移 max_shift（只挪 x）：c_pt 本身也在这个刚体里（它是钩尾
+    # 轮廓的起点），所以 rest_after_c 的第一个点（= 原 C）平移后就等于 rp_lo /
+    # lp_lo 的 x，衔接处不留缝；rest_after_c 的最后一个点（hook_end）平移后
+    # 自然跟 lp_lo 对上。
+    rest_after_c_shifted = [(p[0] - max_shift, p[1], p[2]) for p in rest_after_c]
+    rest_after_c_shifted = [(int(round(p[0])), int(round(p[1])), p[2]) for p in rest_after_c_shifted]
 
-    contour0_new = new_pts + right_bow + [c_pt] + rest_after_c + left_bow
+    # 右边：p2(= rp_hi) -> 漂移弧 -> rp_lo -> 钩尾（已整体左移，首点贴合 rp_lo）
+    # -> 钩尾末点（已整体左移，贴合 lp_lo）-> lp_lo（残段，通常长度很小）->
+    # 漂移弧 -> lp_hi -> A（残段，可能长度为 0）。
+    contour0_new = (
+        new_pts
+        + right_mid
+        + [rp_lo_pt]
+        + rest_after_c_shifted
+        + [lp_lo_pt]
+        + left_mid
+        + [lp_hi_pt]
+    )
 
     from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
     other = [(int(coords[k][0]), int(coords[k][1]), bool(flags[k])) for k in range(n0, len(coords))]
