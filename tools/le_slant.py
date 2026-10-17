@@ -132,11 +132,152 @@ def _bow_points(p0, p1, away_dir, bow_amt):
     ]
 
 
-def _sweep_points(p0, p1, travel_dir, lead):
+def _quad_kappa_start(p0, p1, p2):
+    """二次贝塞尔 (p0 on, p1 off, p2 on) 在起点 t=0 处的曲率（带符号：符号表示
+    弯曲方向，不是只看大小）。公式：kappa(0) = cross(d1,d2) / (2*|d1|^3)，其中
+    d1 = p1-p0（一阶导方向）、d2 = p2-2*p1+p0（二次贝塞尔的二阶导，是常数）。
+    用来在"续九"里数值核验两条曲线在衔接点的弯曲方向是否一致（同号=顺滑过渡，
+    异号=该点是个拐点/S 形，肉眼就是"波浪感"的来源）。
+    """
+    d1 = (p1[0] - p0[0], p1[1] - p0[1])
+    d2 = (p2[0] - 2 * p1[0] + p0[0], p2[1] - 2 * p1[1] + p0[1])
+    cross = d1[0] * d2[1] - d1[1] * d2[0]
+    norm = math.hypot(*d1)
+    return cross / (2 * norm ** 3) if norm > 1e-9 else 0.0
+
+
+def _quad_kappa_end(p0, p1, p2):
+    """同上，但算的是终点 t=1 处的曲率（d1 换成 p2-p1，二阶导同一个常数不变）。"""
+    d1 = (p2[0] - p1[0], p2[1] - p1[1])
+    d2 = (p2[0] - 2 * p1[0] + p0[0], p2[1] - 2 * p1[1] + p0[1])
+    cross = d1[0] * d2[1] - d1[1] * d2[0]
+    norm = math.hypot(*d1)
+    return cross / (2 * norm ** 3) if norm > 1e-9 else 0.0
+
+
+def _sample_sweep_x_range(p0, p1, near0, far, near1, steps=60):
+    """按 t 采样 p0->near0->far->near1->p1 这条 3 段隐式中点 B 样条的全部坐标，
+    返回途中 x 坐标的 (min, max)——用来检测"整条边有没有在漂移方向上中途拐回头"
+    （单调性），见 `_best_sweep_bias()`。
+    """
+    def bez2(a, b, c, t):
+        return (
+            (1 - t) ** 2 * a[0] + 2 * t * (1 - t) * b[0] + t ** 2 * c[0],
+            (1 - t) ** 2 * a[1] + 2 * t * (1 - t) * b[1] + t ** 2 * c[1],
+        )
+
+    m01 = ((near0[0] + far[0]) / 2, (near0[1] + far[1]) / 2)
+    m12 = ((far[0] + near1[0]) / 2, (far[1] + near1[1]) / 2)
+    xs = [p0[0]]
+    for seg in ((p0, near0, m01), (m01, far, m12), (m12, near1, p1)):
+        for i in range(1, steps + 1):
+            xs.append(bez2(*seg, i / steps)[0])
+    return min(xs), max(xs)
+
+
+def _sweep_curve_kappa_and_mono(p0, p1, lead_top, lead_foot, bias, at_end, steps=100):
+    """给定一组 (lead_top, lead_foot, bias) 参数，构造 `_sweep_points()` 会产出的
+    那条 3 段曲线，返回 (衔接钩尾那一端的曲率, 是否全程单调)。`at_end` 决定
+    "钩尾那一端"是 p1（True，即 near1 用 lead_foot）还是 p0（False，近 p1 一端
+    用 lead_top，near0 用 lead_foot）——两种调用场景对应右边/左边漂移弧分别在
+    底部/顶部跟钩尾衔接。
+    """
+    if at_end:
+        near0 = (p0[0], p0[1] + lead_top) if p1[1] > p0[1] else (p0[0], p0[1] - lead_top)
+        near1 = (p1[0], p1[1] - lead_foot) if p1[1] > p0[1] else (p1[0], p1[1] + lead_foot)
+    else:
+        near0 = (p0[0], p0[1] + lead_foot) if p1[1] > p0[1] else (p0[0], p0[1] - lead_foot)
+        near1 = (p1[0], p1[1] - lead_top) if p1[1] > p0[1] else (p1[0], p1[1] + lead_top)
+
+    mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+    far = (mx + bias, my)
+    m01 = ((near0[0] + far[0]) / 2, (near0[1] + far[1]) / 2)
+    m12 = ((far[0] + near1[0]) / 2, (far[1] + near1[1]) / 2)
+    k = _quad_kappa_end(m12, near1, p1) if at_end else _quad_kappa_start(p0, near0, m01)
+
+    xlo, xhi = (p0[0], p1[0]) if p0[0] <= p1[0] else (p1[0], p0[0])
+    tol = 0.75  # 容许的浮点/采样误差余量，不是几何上有意留的缝
+    lo, hi = _sample_sweep_x_range(p0, p1, near0, far, near1, steps=steps)
+    mono = lo >= xlo - tol and hi <= xhi + tol
+    return k, mono
+
+
+def _best_sweep_lead_and_bias(p0, p1, lead_top, target_kappa, at_end):
+    """2026-10-16 续九：核验发现这条漂移曲线的"波浪感"根子不是曲率大小没对齐，
+    是曲率**符号**对不上——衔接处两条曲线一条往左弯、紧接着下一条往右弯（或反
+    过来），几何上这就是一个拐点（S 形），不管怎么调控制点间距/弓起幅度这类
+    "大小"参数都消不掉，因为病根是方向、不是幅度（用本文件的曲率公式在真实
+    坐标上数值核验过：原来 far 点取 p0/p1 正中点那版，右边衔接处曲率 +0.0012
+    对钩尾自己的曲率 -0.0021，钩尾那一侧更夸张，+0.0192 对 -0.0012，两处都是
+    反号）。
+
+    第一次尝试：只挪 far 点（固定两端控制点间距 lead 不变），往"钩尾那一侧"推，
+    能把符号修正成同号，但推到单调性允许的边界后，曲率量级也只能到 ~0 附近——
+    量级差距很大（钩尾那一侧目标量级 0.019，边界值量级 0.0001 都不到），肉眼
+    还是能看出衔接处"曲率突变"（不再是反号的 S 形，但紧接着钩尾骤然变弯，仍
+    是一种观感上的"二次折痕"）。核验过为什么：固定 lead 时，far 点的推移量会让
+    *整条*曲线的弯曲幅度跟着变，不是只让衔接端点局部变弯，继续往外推立刻破坏
+    单调性，可用空间被"整条曲线都要跟着弯"这个约束耗尽了。
+
+    现在这版：钩尾这一端的 lead（near0/near1 两个"沿切线方向探出"的控制点里，
+    贴着钩尾那一个）改成跟着一起找——缩短它，等于把"让衔接端弯起来"这件事
+    局部化到贴着衔接点的一小段弧长里，不再要求整条曲线都跟着变形，单调性
+    约束因此留出了大得多的曲率空间。做法：固定远端（非钩尾一侧）的 lead 不变
+    （该端没有衔接问题，不用动），对钩尾这一端的 lead 做二分查找——从"默认值"
+    往下收缩，收缩到\"配合曲率边界搜索能精确打到 target_kappa\"为止（不是收缩
+    到底：收缩越多，衔接处那一小段弧长越短，曲率集中得越厉害，为避免矫枉过正
+    做出新的（哪怕是极短的）视觉痕迹，只收缩到刚好够用，不多收缩）；每个候选
+    lead 值下，far 点的推移量仍按上面"同号方向+单调性边界二分"的方法现算。
+    """
+    xlo, xhi = (p0[0], p1[0]) if p0[0] <= p1[0] else (p1[0], p0[0])
+
+    def max_bias_k(lead_foot):
+        probe = max(abs(p0[0] - p1[0]), abs(p0[1] - p1[1])) * 0.01 or 1.0
+        k_plus, _ = _sweep_curve_kappa_and_mono(p0, p1, lead_top, lead_foot, probe, at_end)
+        k_minus, _ = _sweep_curve_kappa_and_mono(p0, p1, lead_top, lead_foot, -probe, at_end)
+        direction = 1.0 if abs(target_kappa - k_plus) < abs(target_kappa - k_minus) else -1.0
+        lo, hi = 0.0, (xhi - xlo) * 10.0 + 1.0
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            _, mono = _sweep_curve_kappa_and_mono(p0, p1, lead_top, lead_foot, direction * mid, at_end)
+            if mono:
+                lo = mid
+            else:
+                hi = mid
+        k, _ = _sweep_curve_kappa_and_mono(p0, p1, lead_top, lead_foot, direction * lo, at_end)
+        return direction * lo, k
+
+    eps = max(abs(p0[0] - p1[0]), abs(p0[1] - p1[1])) * 0.001 or 0.5
+    _, k_eps = max_bias_k(eps)
+    _, k_full = max_bias_k(lead_top)
+    if abs(k_full) >= abs(target_kappa):
+        # 不收缩也够用（比如目标曲率本身很温和）：直接用默认 lead，退化回续九早期行为。
+        bias, _ = max_bias_k(lead_top)
+        return lead_top, bias
+    if abs(k_eps) < abs(target_kappa):
+        # 就算收缩到 eps 这么短也追不上目标量级：用能做到的最大值，不是没调够，
+        # 是这组端点/切线约束下的几何极限（极少数字重的极端比例可能触到这里）。
+        bias, _ = max_bias_k(eps)
+        return eps, bias
+
+    lo_lead, hi_lead = eps, lead_top
+    for _ in range(40):
+        mid = (lo_lead + hi_lead) / 2
+        _, k = max_bias_k(mid)
+        if abs(k) >= abs(target_kappa):
+            lo_lead = mid  # 这个收缩量已经够用，试试少收缩一点（lead 更接近默认值）
+        else:
+            hi_lead = mid
+    best_lead = lo_lead
+    bias, _ = max_bias_k(best_lead)
+    return best_lead, bias
+
+
+def _sweep_points(p0, p1, travel_dir, lead, bias=0.0, lead_foot=None, foot_at_p1=True):
     """把 p0->p1 这一段直线换成一条单向（非对称）平移的 TrueType 多控制点二次
     B 样条：p0、p1 允许 x 不同（整条边从 p0 的位置一路平滑漂移到 p1 的位置，
     不要求漂移到中途再漂回来），两端切线都严格沿 travel_dir（跟原来直线段
-    的走向一致，衔接处不会有折角），中间控制点取 p0、p1 的几何中点——跟
+    的走向一致，衔接处不会有折角），中间控制点默认取 p0、p1 的几何中点——跟
     `_bow_points()` 用的同一类"3 个连续 off-curve 控制点、中间不放 on-curve
     锚点"手法，光滑性由 TrueType 样条规则本身保证，不需要另外验算。
 
@@ -148,11 +289,21 @@ def _sweep_points(p0, p1, travel_dir, lead):
     平移（见 `slant_le()` 里对钩尾各点的刚体平移处理），不能在钩尾衔接处又
     弓回原来的 x。主人已确认接受这个结构性改动范围更大、风险更高（之前几版
     "只在中段做文章"的方案都被判不理想）。
+
+    2026-10-16 续九：`bias` 让中间控制点在 p0/p1 正中点的基础上沿漂移轴再偏移
+    一截；`lead_foot`/`foot_at_p1` 让贴着钩尾那一端的控制点改用单独算出的
+    （通常更短的）lead——两者都由调用方（`slant_le()`）通过
+    `_best_sweep_lead_and_bias()` 现算，用来修正跟钩尾衔接处的曲率反号/量级
+    不匹配问题（见该函数文档字符串）。`lead_foot=None` 时两端都用同一个 `lead`，
+    等价于旧行为。
     """
-    k = lead
-    near0 = (p0[0] + travel_dir[0] * k, p0[1] + travel_dir[1] * k)
-    near1 = (p1[0] - travel_dir[0] * k, p1[1] - travel_dir[1] * k)
-    far = ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
+    lead_top = lead
+    lead_foot = lead if lead_foot is None else lead_foot
+    lead0 = lead_foot if not foot_at_p1 else lead_top
+    lead1 = lead_foot if foot_at_p1 else lead_top
+    near0 = (p0[0] + travel_dir[0] * lead0, p0[1] + travel_dir[1] * lead0)
+    near1 = (p1[0] - travel_dir[0] * lead1, p1[1] - travel_dir[1] * lead1)
+    far = ((p0[0] + p1[0]) / 2 + bias, (p0[1] + p1[1]) / 2)
     return [
         (int(round(near0[0])), int(round(near0[1])), False),
         (int(round(far[0])), int(round(far[1])), False),
@@ -228,22 +379,59 @@ def slant_le(glyph, glyf_table):
     lp_lo = (left_x - max_shift, y_lo)
     lp_hi = (left_x, y_hi)
 
+    # 钩尾刚体整体左移 max_shift（只挪 x）：c_pt 本身也在这个刚体里（它是钩尾
+    # 轮廓的起点），所以 rest_after_c 的第一个点（= 原 C）平移后就等于 rp_lo /
+    # lp_lo 的 x，衔接处不留缝；rest_after_c 的最后一个点（hook_end）平移后
+    # 自然跟 lp_lo 对上。放在两条漂移弧的曲率匹配计算之前算，因为匹配目标正是
+    # 这个刚体本身的曲率（现算，不是猜的）。
+    rest_after_c_shifted = [(p[0] - max_shift, p[1], p[2]) for p in rest_after_c]
+    rest_after_c_shifted = [(int(round(p[0])), int(round(p[1])), p[2]) for p in rest_after_c_shifted]
+
+    # 2026-10-16 续九：主人反馈放大图里的波浪感仍然明显（"这么粗糙完全像赶工
+    # 一样的"），复查发现根子是两处衔接点的曲率**反号**（S 形拐点），不是幅度
+    # 没调够——详见 `_best_sweep_bias()` 文档字符串。两个目标曲率都从钩尾刚体
+    # 本身（已左移、形状不变）现算，不是经验值：
+    #   - 顶端目标：rp_lo 衔接进钩尾的第一段曲线，在 rp_lo 这一端（t=0）的曲率；
+    #   - 底端目标：钩尾最后一段曲线，在 hook_end（= lp_lo）这一端（t=1）的曲率。
+    # 钩尾这一串点的结构（起始/结尾各接两个连续 off-curve 控制点再到一个
+    # on-curve 锚点）是本仓库这十一个带钩字固定的点序规则，用断言核实而非假设。
+    assert len(rest_after_c_shifted) >= 4, "unexpected geometry: 钩尾点数太少，算不出曲率"
+    assert not rest_after_c_shifted[0][2] and not rest_after_c_shifted[1][2], \
+        "unexpected point order: 钩尾开头应是两个连续 off-curve 控制点"
+    assert not rest_after_c_shifted[-3][2] and not rest_after_c_shifted[-2][2] and rest_after_c_shifted[-1][2], \
+        "unexpected point order: 钩尾结尾应是两个连续 off-curve 控制点 + 一个 on-curve 锚点（hook_end）"
+
+    foot_first_off = rest_after_c_shifted[0][:2]
+    foot_second_off = rest_after_c_shifted[1][:2]
+    foot_first_mid = ((foot_first_off[0] + foot_second_off[0]) / 2, (foot_first_off[1] + foot_second_off[1]) / 2)
+    top_target_kappa = _quad_kappa_start(rp_lo, foot_first_off, foot_first_mid)
+
+    foot_last_off2 = rest_after_c_shifted[-3][:2]
+    foot_last_off1 = rest_after_c_shifted[-2][:2]
+    foot_last_mid = ((foot_last_off2[0] + foot_last_off1[0]) / 2, (foot_last_off2[1] + foot_last_off1[1]) / 2)
+    bottom_target_kappa = _quad_kappa_end(foot_last_mid, foot_last_off1, (hook_end[0] - max_shift, hook_end[1]))
+
+    # 右边：p0=rp_hi（顶部，接转角圆弧，没有衔接问题），p1=rp_lo（底部，接钩尾，
+    # 曲率要对上 top_target_kappa）——钩尾在 p1 这一端。
+    right_lead_foot, right_bias = _best_sweep_lead_and_bias(rp_hi, rp_lo, lead, top_target_kappa, at_end=True)
+    # 左边：p0=lp_lo（底部，接钩尾，曲率要对上 bottom_target_kappa），p1=lp_hi
+    # （顶部，接 A 衔接点残段，没有衔接问题）——钩尾在 p0 这一端。
+    left_lead_foot, left_bias = _best_sweep_lead_and_bias(lp_lo, lp_hi, lead, bottom_target_kappa, at_end=False)
+
     # 右边往下走（y 递减），左边往上走（y 递增）——travel_dir 决定两端控制点
-    # 沿哪个纵向方向探出，保证衔接处切线跟原来的竖直直线方向一致。
-    right_mid = _sweep_points(rp_hi, rp_lo, (0.0, -1.0), lead)
-    left_mid = _sweep_points(lp_lo, lp_hi, (0.0, 1.0), lead)
+    # 沿哪个纵向方向探出，保证衔接处切线跟原来的竖直直线方向一致；bias/
+    # lead_foot 现算自上面两个目标曲率，把衔接处从"曲率反号的拐点"修正成
+    # "曲率量级也匹配"（见 `_best_sweep_lead_and_bias()`），顶部那一端（接转角
+    # 圆弧）维持原来对称的默认 lead，不受影响。
+    right_mid = _sweep_points(rp_hi, rp_lo, (0.0, -1.0), lead, bias=right_bias,
+                               lead_foot=right_lead_foot, foot_at_p1=True)
+    left_mid = _sweep_points(lp_lo, lp_hi, (0.0, 1.0), lead, bias=left_bias,
+                              lead_foot=left_lead_foot, foot_at_p1=False)
 
     rp_hi_pt = (int(round(rp_hi[0])), int(round(rp_hi[1])), True)
     rp_lo_pt = (int(round(rp_lo[0])), int(round(rp_lo[1])), True)
     lp_lo_pt = (int(round(lp_lo[0])), int(round(lp_lo[1])), True)
     lp_hi_pt = (int(round(lp_hi[0])), int(round(lp_hi[1])), True)
-
-    # 钩尾刚体整体左移 max_shift（只挪 x）：c_pt 本身也在这个刚体里（它是钩尾
-    # 轮廓的起点），所以 rest_after_c 的第一个点（= 原 C）平移后就等于 rp_lo /
-    # lp_lo 的 x，衔接处不留缝；rest_after_c 的最后一个点（hook_end）平移后
-    # 自然跟 lp_lo 对上。
-    rest_after_c_shifted = [(p[0] - max_shift, p[1], p[2]) for p in rest_after_c]
-    rest_after_c_shifted = [(int(round(p[0])), int(round(p[1])), p[2]) for p in rest_after_c_shifted]
 
     # 右边：p2(= rp_hi) -> 漂移弧 -> rp_lo -> 钩尾（已整体左移，首点贴合 rp_lo）
     # -> 钩尾末点（已整体左移，贴合 lp_lo）-> lp_lo（残段，通常长度很小）->
