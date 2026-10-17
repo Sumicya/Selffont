@@ -14,6 +14,7 @@ WenYuanSansSCVF 的 35139 个非空形全部一致，0 处不同）。
   python3 vf_round.py --ref Regular.ttf <name1=path1> <name2=path2> ... --outdir OUT
 """
 import argparse
+import copy
 import math
 import os
 
@@ -165,8 +166,8 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     角不安全，跳过不碰，跟本仓库"不确定就不碰"的一贯原则一致；凸角没有这层风险（削圆
     只会让材料变少，不会主动去够旁边的东西），不需要这层探测。
 
-    返回 {anchor 原始点序号}（半径按该字重自己的边长重算，这里只记录"要不要圆"这个
-    结构决定，跟 cap/tip 共用同一套"检测一次、各字重复用"的模型）。
+    半径按该字重自己的边长重算，这里只记录"要不要圆"这个结构决定，跟 cap/tip
+    共用同一套"检测一次、各字重复用"的模型。
 
     force_corners: 可选，{原始点序号}——外部（detect()，配合 foot_trim.py 的
     skip_caps）已经判定"这个点结构上是个直角，但不该走端头圆化"的点，强制当成
@@ -177,12 +178,27 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     不强制纳入，会被这条保守阈值一并否决，端头从"鼓包"变成完全没有圆角的直角——
     跟全字形"逢角必圆"的观感不一致）。仍然要过前面角度/共线等基本检查，只跳过
     "risky"这一步否决。
+
+    2026-10-17：新增第三种处理——两个拐角紧挨同一截短连接段、且转向(turn_sign)一致
+    （同一个方向连续转弯，比如钩笔"从竖笔转到钩尖"这种一笔到底的弯，不是两个方向
+    相反的 Z 字形折角）时，不再回退成两个都不圆的尖角，改成**合并成一条连续圆弧**：
+    起止点分别退到两个拐角各自"外侧"的长边上（半径按外侧长边本身的长度算，不再
+    像两个独立拐角那样被中间这截短边限制），中间两个顶点变成一串连续的 off-curve
+    控制点（不额外插 on-curve 落地锚点）——这是"了"字续十一手工做出来的"一笔到底"
+    结构在通用拐角算法里的推广，详见下面 `_merge_drop()`/`_merge_self_crosses()` 和
+    `plan_safety()`/`apply_all()` 里 `merge_plan` 相关代码，以及 `TODO.md` 2026-10-17
+    条目。转向不一致（真正的 Z 字形）不合并，保留原来的"两个都不圆"保守行为，
+    跟本仓库"不确定就不碰"一致。
+
+    返回 (safe, merge_pairs)：safe 跟以前一样是{anchor 原始点序号}；merge_pairs 是
+    {(i, j)} 一对相邻拐角原始点序号的集合，i 是对里先出现的那个（按 anchors 顺序）。
     """
     force_corners = force_corners or set()
     if len(anchors) < 4:
-        return set()
+        return set(), set()
     winding = _contour_winding(contour, anchors)
     corners = set()
+    turn_sign_of = {}
     for k, i in enumerate(anchors):
         if i in cap_anchor_set or i in tip_set:
             continue
@@ -218,8 +234,9 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
         # 这里不需要再叠一层"边长须是半径几倍"的门槛（之前写的那层在两边长度接近时
         # 数学上永远不可能满足，等于把所有正常方角都滤掉了）。
         corners.add(i)
+        turn_sign_of[i] = turn_sign
     if not corners:
-        return corners
+        return corners, set()
     # 两个拐角紧挨着同一截"短"连接段（比如钩笔的钩尖，两头各是一个 ~90°拐角、
     # 中间就隔几十到一百多单位）：各自削一刀圆出来的两段弧在中间碰头，哪怕各自
     # 半径都收得很小也会在接缝处留一个方向不连续的小凹痕（Heavy 字重"电"的钩尖
@@ -228,6 +245,7 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     # 切——要看中间这截连接段本身短不短。
     anchor_pos = {a: k for k, a in enumerate(anchors)}
     safe = set()
+    risky_set = set()
     for i in corners:
         if i in force_corners:
             safe.add(i)  # 外部已判定安全（贴靠背景的细墙两端），不走下面的保守否决
@@ -246,7 +264,46 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
                 risky = True
         if not risky:
             safe.add(i)
-    return safe
+        else:
+            risky_set.add(i)
+    # 合并候选：risky_set 里相邻（anchors 顺序上紧挨着）、转向一致、且不是 force_corners
+    # 的一对，合并成一条连续弧。额外要求两端的"外侧"锚点（pair 之前/之后那个点）
+    # 不是任何一种拐角/端头/尖锋——这个 Phase 1 版本先只处理"孤立的一对拐角"这种
+    # 最简单、跟"了"字钩尾结构最接近的情况，不处理三个及以上拐角连续串在一起的链，
+    # 范围扩大留给验证通过之后的后续工作（TODO.md 2026-10-17）。
+    merge_pairs = set()
+    for i in risky_set:
+        k = anchor_pos[i]
+        j = anchors[(k + 1) % len(anchors)]
+        if j not in risky_set or j in force_corners:
+            continue
+        # 2026-10-17 补充（真实回归，"暖"字实测复现）：anchors 只收 on-curve 点，straight[]/
+        # _collinear_enough() 判断的是"i、j 之间有没有 on-curve 点"及"是否共线在容差内"——
+        # 对单独一个拐角的两条邻边够用（容差是给"浅弧看成直线也没关系"的半径计算松的口子），
+        # 但合并要求 i-j 之间是一段真正什么都没有的直线短边（像"了"钩尾那样两个 on-curve
+        # 点直接相邻），不能是"中间隔着 off-curve 控制点、只是凑巧没超共线容差"的浅弧——
+        # 后者本身已经是设计好的圆润笔锋/小尖(比如"暖"字里的点/撇末端)，把它当直线短边
+        # 处理、拆掉原有 off-curve 点换成合并圆弧，会跟原弧线的真实弯曲方向对不上，在
+        # Heavy 字重复现过自交。这里直接按原始点序号（不只是 anchors 里的 on-curve 序号）
+        # 要求 i、j 中间一个点都没有（含 off-curve），才当"货真价实的短直线共享边"处理。
+        if (j - i) % n != 1:
+            continue
+        _, shared_len = _unit(contour[i], contour[j])
+        if shared_len >= CORNER_SHORT_SHARED:
+            continue
+        if turn_sign_of.get(i) != turn_sign_of.get(j):
+            continue  # 转向不一致（Z 字形），合并会产生新的扭曲，保持尖角不碰
+        k_j = anchor_pos[j]
+        outer_prev = anchors[(k - 1) % len(anchors)]
+        outer_next = anchors[(k_j + 1) % len(anchors)]
+        if outer_prev == j or outer_next == i:
+            continue  # 锚点太少，首尾绕回自己，几何退化
+        if (outer_prev in corners or outer_next in corners
+                or outer_prev in cap_anchor_set or outer_next in cap_anchor_set
+                or outer_prev in tip_set or outer_next in tip_set):
+            continue  # 外侧紧挨着另一个拐角/端头/尖锋，属于三连及以上的链，这版不处理
+        merge_pairs.add((i, j))
+    return safe, merge_pairs
 
 
 def detect(glyph, glyf_table, skip_caps=None):
@@ -254,10 +311,13 @@ def detect(glyph, glyf_table, skip_caps=None):
     尺度有关（同一个比例，Heavy 的绝对半径比 Regular 大很多），不能只用参照
     字重的坐标去判，必须在所有字重上都验证过才安全（见 plan_safety()）。
     这里只回答"这个点结构上算不算尖锋/端头/拐角"，返回 (cap_plan, tip_plan,
-    corner_plan)：
+    corner_plan, merge_plan)：
     cap_plan[contour_idx] = {k 值集合}（k 是该轮廓 anchors 列表里的序号）
     tip_plan[contour_idx] = {anchor 原始点序号集合}
     corner_plan[contour_idx] = {anchor 原始点序号集合}
+    merge_plan[contour_idx] = {(i, j) 原始点序号二元组集合}——一对该合并成一条连续
+    弧的相邻拐角（见 detect_corners 末尾新增的合并候选逻辑），i、j 都不出现在同一
+    contour 的 corner_plan 里（互斥，各走各的应用路径）。
 
     skip_caps: 可选，{contour_idx: {原始点序号集合}}——外部（比如 foot_trim.py）
     已经确认"这个端头其实贴着/本该贴着同字形里另一条笔画，不是真正暴露在背景里
@@ -266,10 +326,10 @@ def detect(glyph, glyf_table, skip_caps=None):
     探测自动认出来（贴平/本来就贴平的笔画，如果它本身比被贴的那条笔画更往外凸出
     一截，探测点会落在凸出来的那段缝隙里，判定"没被盖住"，照样独立鼓一个包）。
     """
-    cap_plan, tip_plan, corner_plan = {}, {}, {}
+    cap_plan, tip_plan, corner_plan, merge_plan = {}, {}, {}, {}
     skip_caps = skip_caps or {}
     if glyph.isComposite() or glyph.numberOfContours <= 0:
-        return cap_plan, tip_plan, corner_plan
+        return cap_plan, tip_plan, corner_plan, merge_plan
     all_contours = list(_split_contours(glyph, glyf_table))
     all_polys = _glyph_polys(all_contours)
     for c, contour in enumerate(all_contours):
@@ -345,11 +405,13 @@ def detect(glyph, glyf_table, skip_caps=None):
             cap_anchor_points.add(i)
             cap_anchor_points.add(b)
         force_corners = skip_caps.get(c, set()) - cap_anchor_points
-        corners = detect_corners(contour, n, anchors, straight, cap_anchor_points, tips, all_polys,
-                                  force_corners=force_corners)
+        corners, merge_pairs = detect_corners(contour, n, anchors, straight, cap_anchor_points, tips,
+                                               all_polys, force_corners=force_corners)
         if corners:
             corner_plan[c] = corners
-    return cap_plan, tip_plan, corner_plan
+        if merge_pairs:
+            merge_plan[c] = merge_pairs
+    return cap_plan, tip_plan, corner_plan, merge_plan
 
 
 def _flatten_quad(p0, c, p1, steps=8):
@@ -457,7 +519,153 @@ def _compute_drop_set(contour, n, anchors, corner_idx, tip_idx):
     return drop
 
 
-def plan_safety(glyphs_by_weight, glyf_tables_by_weight, tip_plan, corner_plan):
+def _merge_pair_geometry(contour, anchors, anchor_pos, h, i):
+    """合并对 (h, i) 的几何基础量：外侧前驱 outer_prev（h 之前那个锚点）、外侧
+    后继 outer_next（i 之后那个锚点）、进入方向 d_in（outer_prev→h）、离开方向
+    d_out（i→outer_next）、对应的外侧边长 len_in/len_out。半径只用这两条外侧边，
+    不用 h-i 之间的短连接段本身——这是合并方案跟旧版"两个独立拐角各退一步"的
+    核心区别：短连接段不再是限制半径的瓶颈，而是被整条合并曲线直接吃掉（跟
+    "了"字续十一手工做法同一个原理：外侧的真实笔画边界决定弯多大，不是中间
+    那一小截衔接段）。"""
+    k_h = anchor_pos[h]
+    k_i = anchor_pos[i]
+    outer_prev = anchors[(k_h - 1) % len(anchors)]
+    outer_next = anchors[(k_i + 1) % len(anchors)]
+    d_in, len_in = _unit(contour[outer_prev], contour[h])
+    d_out, len_out = _unit(contour[i], contour[outer_next])
+    return outer_prev, outer_next, d_in, len_in, d_out, len_out
+
+
+def _merge_radii(contour, anchors, anchor_pos, h, i, shrink=1.0):
+    _, _, d_in, len_in, d_out, len_out = _merge_pair_geometry(contour, anchors, anchor_pos, h, i)
+    r1 = min(len_in * CORNER_R_RATIO, CORNER_R_MAX) * shrink
+    r2 = min(len_out * CORNER_R_RATIO, CORNER_R_MAX) * shrink
+    return r1, r2
+
+
+def _merge_drop(contour, n, anchors, anchor_pos, h, i, r1, r2):
+    """合并对 (h, i) 吃掉的共线中间点：outer_prev→h 边上贴着 h 的一截（r1 以内，
+    对应 P1 的退让）、h→i 整截（短连接段，无条件全丢——这一截不再是独立的边，
+    已经被合并曲线整体替换）、i→outer_next 边上贴着 i 的一截（r2 以内，对应 P2
+    的进占）。跟 `_compute_drop_set` 单个顶点两侧各退一次的逻辑同构，只是换成
+    两个顶点各退/进一次、中间再整体清空一次。"""
+    drop = set()
+    k_h = anchor_pos[h]
+    outer_prev = anchors[(k_h - 1) % len(anchors)]
+    interior_before = (list(range(outer_prev + 1, h)) if outer_prev < h
+                        else list(range(outer_prev + 1, n)) + list(range(0, h)))
+    vx, vy = contour[h][0], contour[h][1]
+    while interior_before and _unit((vx, vy), contour[interior_before[-1]])[1] < r1:
+        drop.add(interior_before.pop())
+
+    interior_mid = (list(range(h + 1, i)) if h < i
+                     else list(range(h + 1, n)) + list(range(0, i)))
+    drop.update(interior_mid)
+
+    k_i = anchor_pos[i]
+    outer_next = anchors[(k_i + 1) % len(anchors)]
+    interior_after = (list(range(i + 1, outer_next)) if i < outer_next
+                       else list(range(i + 1, n)) + list(range(0, outer_next)))
+    vx2, vy2 = contour[i][0], contour[i][1]
+    while interior_after and _unit((vx2, vy2), contour[interior_after[0]])[1] < r2:
+        drop.add(interior_after.pop(0))
+    return drop
+
+
+def _merge_self_crosses(prev_pt, p1, off_a, off_b, p2, nxt_pt):
+    """合并曲线自交检测：p1→off_a→M→off_b→p2（M 是 off_a/off_b 的隐式中点，
+    TrueType 二次样条的基本性质——参见 `tools/le_slant.py` 续十一的同款证明）
+    拆成两段抛物线分别 flatten 后逐段比对，跟 `_tip_self_crosses` 同一个套路：
+    共享端点那一对跳过，其余全比；并且要跟前面来路（prev_pt→p1）和后面去路
+    （p2→nxt_pt）分别比一次，防止合并后的弧线把原来笔直的来路/去路线段切穿。"""
+    mid = ((off_a[0] + off_b[0]) / 2.0, (off_a[1] + off_b[1]) / 2.0)
+    A = _flatten_quad(p1, off_a, mid, steps=16)
+    B = _flatten_quad(mid, off_b, p2, steps=16)
+    nA, nB = len(A) - 1, len(B) - 1
+    for a in range(nA):
+        for b in range(nB):
+            if a == nA - 1 and b == 0:
+                continue  # 共享 mid 这一个隐式端点
+            if _seg_cross(A[a], A[a + 1], B[b], B[b + 1]):
+                return True
+    for a in range(nA):
+        if a == 0:
+            continue  # 共享 p1 这一个端点
+        if _seg_cross(prev_pt, p1, A[a], A[a + 1]):
+            return True
+    for b in range(nB):
+        if _seg_cross(prev_pt, p1, B[b], B[b + 1]):
+            return True
+    for a in range(nA):
+        if _seg_cross(p2, nxt_pt, A[a], A[a + 1]):
+            return True
+    for b in range(nB):
+        if b == nB - 1:
+            continue  # 共享 p2 这一个端点
+        if _seg_cross(p2, nxt_pt, B[b], B[b + 1]):
+            return True
+    return False
+
+
+def _flatten_contour_tagged(contour, n, anchors):
+    """把整条轮廓按 anchors 展平成 (p_a, p_b, 来源锚点序号) 线段列表——来源锚点
+    序号是这一小段曲线起点那个 on-curve 点的原始序号，用来在合并全局自交检查
+    里把"即将被合并曲线整体替换掉"的那一段从背景线段里摘出去（这一段马上就
+    不存在了，不该再拿它当背景比）。"""
+    segs = []
+    for k in range(len(anchors)):
+        a = anchors[k]
+        b = anchors[(k + 1) % len(anchors)]
+        chain_idx = (list(range(a + 1, b)) if a < b
+                     else list(range(a + 1, n)) + list(range(0, b)))
+        pts = [contour[a]] + [contour[t] for t in chain_idx] + [contour[b]]
+        cur = pts[0]
+        i = 1
+        while i < len(pts):
+            p = pts[i]
+            if p[2]:
+                segs.append(((cur[0], cur[1]), (p[0], p[1]), a))
+                cur = p
+                i += 1
+            else:
+                nxt = pts[i + 1] if i + 1 < len(pts) else pts[0]
+                if nxt[2]:
+                    end = (nxt[0], nxt[1])
+                    consumed = 2
+                else:
+                    end = ((p[0] + nxt[0]) / 2.0, (p[1] + nxt[1]) / 2.0)
+                    consumed = 1
+                flat = _flatten_quad((cur[0], cur[1]), (p[0], p[1]), end, steps=12)
+                for z in range(len(flat) - 1):
+                    segs.append((flat[z], flat[z + 1], a))
+                cur = (end[0], end[1], True)
+                i += consumed
+    return segs
+
+
+def _merge_vs_background(bg_segs, exclude_tags, p1, off_a, off_b, p2):
+    """检查一对合并候选削出来的弧线（p1→offA→隐式中点→offB→p2）是不是撞上了
+    同一轮廓里跟这对合并毫不相关的其它部分——`_merge_self_crosses` 只跟弧线
+    自己的直接前后邻边比，比不出"弧线鼓出去以后绕回来撞上轮廓里老远一块
+    （比如带内圈的假名字形，鼓包正好扫过自己的内圈）"这种全局交叉（随机抽样
+    全字形扫描在平假名"る"等字上复现过）。bg_segs 是 `_flatten_contour_tagged`
+    的输出，exclude_tags 是这次要排除的来源锚点序号集合（这对合并自己的短
+    连接段——它马上会被这条弧线整体替换，不再是背景的一部分）。"""
+    mid = ((off_a[0] + off_b[0]) / 2.0, (off_a[1] + off_b[1]) / 2.0)
+    A = _flatten_quad(p1, off_a, mid, steps=16)
+    B = _flatten_quad(mid, off_b, p2, steps=16)
+    arc = A + B[1:]
+    for k in range(len(arc) - 1):
+        a0, a1 = arc[k], arc[k + 1]
+        for s0, s1, tag in bg_segs:
+            if tag in exclude_tags:
+                continue
+            if _seg_cross(a0, a1, s0, s1):
+                return True
+    return False
+
+
+def plan_safety(glyphs_by_weight, glyf_tables_by_weight, tip_plan, corner_plan, merge_plan=None):
     """detect() 判完"结构上哪些点算尖锋/拐角"之后，"切多大才不会自己切出
     自交"必须在每个字重自己的绝对坐标上分别验证——同一个比例，粗字重笔画
     绝对尺寸大，削出来的半径/控制点间距也大，参照字重（通常是 Regular）
@@ -471,28 +679,38 @@ def plan_safety(glyphs_by_weight, glyf_tables_by_weight, tip_plan, corner_plan):
     套到任何一个字重都安全，而且所有字重用的是同一份决定，削完点数/点序
     不会对不上，能继续喂给 varLib.build 插值。
 
-    返回 (tip_shrink_plan, drop_plan)，两者都按 contour_idx 分组，结构
-    跟 tip_plan/corner_plan 一致。
+    合并对（merge_plan）的安全验证跟尖锋同一个思路：每个字重各自算一遍"合并
+    半径缩到多少、两端退让/进占的坐标会不会让合并曲线自交"，取所有字重里最
+    保守（最小）的缩水比例；缩到最小还自交就整体放弃这一对合并（既不进
+    merge_shrink_plan，也不留在 corner_plan 里——退回最初的"两个都不圆"，
+    维持"不确定就不碰"的最终后果）。
+
+    返回 (tip_shrink_plan, drop_plan, merge_shrink_plan)，前两者按 contour_idx
+    分组、结构跟 tip_plan/corner_plan 一致；merge_shrink_plan[c] = {(h, i): 缩水
+    比例}，只包含验证通过的合并对。
     """
-    tip_shrink_plan, drop_plan = {}, {}
+    merge_plan = merge_plan or {}
+    tip_shrink_plan, drop_plan, merge_shrink_plan = {}, {}, {}
     contour_lists = {}
     for wname, g in glyphs_by_weight.items():
         glyf_table = glyf_tables_by_weight[wname]
         if g.isComposite() or g.numberOfContours is None or g.numberOfContours <= 0:
-            return tip_shrink_plan, drop_plan
+            return tip_shrink_plan, drop_plan, merge_shrink_plan
         contour_lists[wname] = list(_split_contours(g, glyf_table))
     contours_count = {len(v) for v in contour_lists.values()}
     if len(contours_count) != 1:
-        return tip_shrink_plan, drop_plan  # 字重之间轮廓数都对不上，这里不碰，交给上层原样跳过
+        return tip_shrink_plan, drop_plan, merge_shrink_plan  # 字重之间轮廓数对不上，不碰，交给上层原样跳过
     n_contours = contours_count.pop()
     for c in range(n_contours):
         tip_idx = tip_plan.get(c, set())
         corner_idx = corner_plan.get(c, set())
-        if not (tip_idx or corner_idx):
+        merge_pairs = merge_plan.get(c, set())
+        if not (tip_idx or corner_idx or merge_pairs):
             continue
         contours = [contour_lists[w][c] for w in contour_lists]
         n = len(contours[0])
         anchors = [i for i in range(n) if contours[0][i][2]]
+        anchor_pos = {a: k for k, a in enumerate(anchors)}
 
         shrink_per_vertex = {}
         for i in tip_idx:
@@ -552,24 +770,85 @@ def plan_safety(glyphs_by_weight, glyf_tables_by_weight, tip_plan, corner_plan):
             # 所有字重缩到最小都还会自交，放弃削这个尖锋——不收进
             # shrink_per_vertex，apply_all 会把它当成普通锚点原样保留。
 
+        shrink_per_merge = {}
+        # 这个轮廓里全部合并候选共享的"背景排除标签"——每一对的短连接段用起点
+        # 锚点序号(h)当标签（见 _flatten_contour_tagged），这些段马上会被各自
+        # 的合并曲线整体替换，背景检查时统一摘掉，不管当前正在验证哪一对。
+        merge_h_tags = {h for h, _ in merge_pairs}
+        for h, i in merge_pairs:
+            worst_shrink = 1.0
+            for contour in contours:
+                outer_prev, outer_next, d_in, len_in, d_out, len_out = _merge_pair_geometry(
+                    contour, anchors, anchor_pos, h, i)
+                hx, hy = contour[h][0], contour[h][1]
+                ix, iy = contour[i][0], contour[i][1]
+                bg_segs = _flatten_contour_tagged(contour, n, anchors)
+                shrink = 1.0
+                ok = False
+                for _ in range(6):
+                    r1 = min(len_in * CORNER_R_RATIO, CORNER_R_MAX) * shrink
+                    r2 = min(len_out * CORNER_R_RATIO, CORNER_R_MAX) * shrink
+                    p1 = (hx - d_in[0] * r1, hy - d_in[1] * r1)
+                    p2 = (ix + d_out[0] * r2, iy + d_out[1] * r2)
+                    off_a, off_b = (hx, hy), (ix, iy)
+                    rp1, roffa, roffb, rp2 = (
+                        (round(p1[0]), round(p1[1])), (round(off_a[0]), round(off_a[1])),
+                        (round(off_b[0]), round(off_b[1])), (round(p2[0]), round(p2[1])))
+                    rprev = (round(contour[outer_prev][0]), round(contour[outer_prev][1]))
+                    rnext = (round(contour[outer_next][0]), round(contour[outer_next][1]))
+                    crosses = _merge_self_crosses(rprev, rp1, roffa, roffb, rp2, rnext)
+                    if not crosses:
+                        # 局部邻边不交叉，还要跟同一轮廓里跟这对合并无关的其它
+                        # 部分比一遍——弧线鼓出去以后可能绕回去撞上轮廓里老远
+                        # 一块（比如带内圈的假名字形扫到自己的内圈），局部检查
+                        # 看不出这种全局交叉（随机抽样全字形扫描在"る"等字上
+                        # 复现过），必须额外比这一遍才算真正安全。
+                        crosses = _merge_vs_background(bg_segs, merge_h_tags, rp1, roffa, roffb, rp2)
+                    # shortcut: bg_segs 用的是这个轮廓没削之前的原始几何，不包含同一
+                    # 轮廓里其它 tip/corner 各自削完以后的真实新形状——如果合并弧线
+                    # 恰好跟旁边一个独立拐角削出来的小圆弧在极窄空间里碰头，这一步
+                    # 测不出来（已知极罕见个例：uni4910，全字形随机抽样 1230 个候选里
+                    # 1 个）。要补全须把 tip/corner/merge 一起套用 apply_all 出真实
+                    # 形状再核，这里先不做；真出问题时自交检测仍会在最终产物里可见，
+                    # 不会悄悄产出错误但测不出的字形。
+                    if not crosses:
+                        ok = True
+                        break
+                    shrink *= 0.5
+                worst_shrink = min(worst_shrink, shrink if ok else 0.0)
+            if worst_shrink > 0:
+                shrink_per_merge[(h, i)] = worst_shrink
+            # 所有字重缩到最小都还会自交（局部或全局任意一种），放弃合并这一对——不收进 shrink_per_merge，
+            # 也不回退去走独立拐角路径（那条路径是给 force_corners 场景准备的，不是
+            # 给"合并失败"兜底的），apply_all 会把 h、i 都当成普通锚点原样保留（尖角）。
+
         drops = set()
         for contour in contours:
             drops |= _compute_drop_set(contour, n, anchors, corner_idx, shrink_per_vertex)
+            for (h, i), shrink in shrink_per_merge.items():
+                r1, r2 = _merge_radii(contour, anchors, anchor_pos, h, i, shrink)
+                drops |= _merge_drop(contour, n, anchors, anchor_pos, h, i, r1, r2)
         if shrink_per_vertex:
             tip_shrink_plan[c] = shrink_per_vertex
         if drops:
             drop_plan[c] = drops
-    return tip_shrink_plan, drop_plan
+        if shrink_per_merge:
+            merge_shrink_plan[c] = shrink_per_merge
+    return tip_shrink_plan, drop_plan, merge_shrink_plan
 
 
-def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan, drop_plan):
-    """单趟组合应用：尖锋/端头/拐角三种变换在同一份原始锚点快照上一次性算完，
-    不再分三次调用、不再在两次调用之间重新扫描锚点——避免前一遍改了点数后，
-    后一遍按老的"第 k 个锚点"编号去套会对错位置（tip/cap 都会让锚点数变多）。
+def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan, drop_plan, merge_plan=None):
+    """单趟组合应用：尖锋/端头/拐角/合并对四种变换在同一份原始锚点快照上一次性
+    算完，不再分开调用、不再在两次调用之间重新扫描锚点——避免前一遍改了点数后，
+    后一遍按老的"第 k 个锚点"编号去套会对错位置（tip/cap/merge 都会让锚点数变多）。
+
+    merge_plan[contour_idx] = {(h, i): 缩水比例}——plan_safety() 验证通过的合并对，
+    h、i 都不会出现在同一 contour 的 corner_plan/tip_plan/cap_plan 里（互斥）。
     """
+    merge_plan = merge_plan or {}
     if glyph.isComposite() or glyph.numberOfContours <= 0:
         return 0
-    if not (tip_plan or cap_plan or corner_plan):
+    if not (tip_plan or cap_plan or corner_plan or merge_plan):
         return 0
     made = 0
     new_all = []
@@ -578,13 +857,16 @@ def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan, drop_plan):
         tip_idx = tip_plan.get(c, {})
         cap_ks = cap_plan.get(c, set())
         corner_idx = corner_plan.get(c, set())
-        if not (tip_idx or cap_ks or corner_idx):
+        merge_pairs = merge_plan.get(c, {})
+        if not (tip_idx or cap_ks or corner_idx or merge_pairs):
             new_all.append(contour)
             continue
         anchors = [i for i in range(n) if contour[i][2]]
         if not anchors:
             new_all.append(contour)
             continue
+        anchor_pos = {a: k for k, a in enumerate(anchors)}
+        merge_start = {h: (i, shrink) for (h, i), shrink in merge_pairs.items()}
         drops = drop_plan.get(c, set())
         # 每个顶点自己用当前字重坐标重算方向向量/半径（下面 tip/corner 分支里
         # 做），但"该不该把某个共线中间点整体丢掉"这件事不能按当前字重的坐标
@@ -602,10 +884,55 @@ def apply_all(glyph, glyf_table, tip_plan, cap_plan, corner_plan, drop_plan):
             if drops:
                 interior = [t for t in interior if t not in drops]
             segs.append({"a": i, "interior": interior, "cap": k in cap_ks})
+        # 2026-10-17 补充（真实回归，随机抽样全字形扫描复现）：下面这个循环靠"skip_anchor
+        # 在相邻两次迭代之间原样传下去"识别合并对的第二个拐角（i2）该不该重复落点——这个
+        # 假设要求 h 在 segs 里排在 i2 前面一格。绝大多数合并对确实如此（detect_corners()
+        # 按 anchors 顺序找"紧挨着的下一个"），但当 h 恰好是整个轮廓锚点序列的最后一个、
+        # i2 是第一个时（合并对跨越了 segs 列表首尾这个人为分界，不是轮廓本身的分界——
+        # 轮廓是闭合的，首尾分界只是这个列表恰好从哪个点开始数），i2 在列表里排在 h**前面**
+        # （k=0 vs k=len-1），会在 h 还没被处理、skip_anchor 还是初始值 False 时就被当成
+        # 普通锚点先落一次点，h 处理到时又把 i2 的坐标当 off-curve 控制点再落一次——同一个
+        # 点坐标写了两遍，多出来的点把合并弧线撕开一个口子，造成自交（随机抽样实测在
+        # uni3080 等复现）。轮廓闭合、从哪个锚点开始数都是等价的同一个圈，这里整体转一格，
+        # 把 i2 挪到 h 后面，跟其余（不跨首尾分界的）合并对处理方式保持一致，不改变轮廓
+        # 本身代表的形状。
+        if segs and segs[-1]["a"] in merge_start and merge_start[segs[-1]["a"]][0] == segs[0]["a"]:
+            segs = segs[1:] + segs[:1]
         out = []
         skip_anchor = False
         for k, seg in enumerate(segs):
             i = seg["a"]
+            if i in merge_start:
+                # 合并对：h=i（本次循环的锚点）、i2=配对的第二个拐角，必然是 anchors
+                # 里紧挨着的下一个（detect_corners 里按这个前提收的合并候选）。整条
+                # h→i2 之间的短连接段被一条连续曲线替换：P1（退让进 outer_prev→h 边）
+                # →offA=h→offB=i2（两个连续 off-curve，中间隐式中点，天然切线连续）
+                # →P2（进占 i2→outer_next 边）。跟单个拐角的处理手法一致，只是把"顶点
+                # 本身"从一个换成两个连续的 off-curve 控制点，不再依赖中间那截短边
+                # 本身的长度来限制半径。
+                i2, shrink = merge_start[i]
+                r1, r2 = _merge_radii(contour, anchors, anchor_pos, i, i2, shrink)
+                outer_prev, outer_next, d_in, _, d_out, _ = _merge_pair_geometry(
+                    contour, anchors, anchor_pos, i, i2)
+                hx, hy = contour[i][0], contour[i][1]
+                ix, iy = contour[i2][0], contour[i2][1]
+                p1 = (hx - d_in[0] * r1, hy - d_in[1] * r1)
+                p2 = (ix + d_out[0] * r2, iy + d_out[1] * r2)
+                if not skip_anchor:
+                    out.append(p1 + (True,))
+                out.append((hx, hy, False))
+                out.append((ix, iy, False))
+                out.append(p2 + (True,))
+                skip_anchor = True
+                made += 1
+                # 注意：这里不重置 skip_anchor——下一次循环处理的是配对的第二个
+                # 拐角 i2，它自己的锚点坐标已经作为 offB 原样写进上面的曲线里，
+                # 不能再被 else 分支重复 append 一次（否则会在 offB 和 P2 之间多
+                # 出一个落在旧直线位置的点，破坏刚合并出来的连续曲线）。seg["interior"]
+                # （h→i2 之间的共线点）按 _merge_drop() 的约定应当已经被整体丢弃，
+                # 这里仍然原样 extend 一次，保证即使丢弃不完整也不会静默漏点。
+                out.extend(contour[t] for t in seg["interior"])
+                continue
             if seg["cap"]:
                 b = (i + 1 + len(seg["interior"])) % n
                 ax, ay = contour[i][0], contour[i][1]
@@ -739,18 +1066,23 @@ def main():
 
     ref_font = TTFont(args.ref)
     ref_glyf = ref_font["glyf"]
-    cap_plans, tip_plans, corner_plans = {}, {}, {}
+    cap_plans, tip_plans, corner_plans, merge_plans = {}, {}, {}, {}
     for name in ref_font.getGlyphOrder():
         g = ref_glyf[name]
-        cap_plan, tip_plan, corner_plan = detect(g, ref_glyf, skip_caps_by_glyph.get(name))
+        cap_plan, tip_plan, corner_plan, merge_plan = detect(g, ref_glyf, skip_caps_by_glyph.get(name))
         if cap_plan:
             cap_plans[name] = cap_plan
         if tip_plan:
             tip_plans[name] = tip_plan
         if corner_plan:
             corner_plans[name] = corner_plan
+        if merge_plan:
+            merge_plans[name] = merge_plan
+    n_merge_pairs = sum(len(pairs) for plan in merge_plans.values() for pairs in plan.values())
     print(f"参照字重检测出 {len(cap_plans)} 个字形有端头、{len(tip_plans)} 个字形有尖锋、"
-          f"{len(corner_plans)} 个字形有直角拐角" + ("（本次已套用）" if args.corners else "（本次未套用，加 --corners 打开）"))
+          f"{len(corner_plans)} 个字形有直角拐角、{len(merge_plans)} 个字形有 {n_merge_pairs} 对"
+          f"可合并的紧邻拐角（钩笔一笔到底）"
+          + ("（本次已套用）" if args.corners else "（本次未套用，加 --corners 打开）"))
 
     # "切多大才安全"跟每个字重自己的绝对坐标尺度有关，必须在全部要出的字重
     # 上都验证过才作数（见 plan_safety() 的注释）——这里先把所有实例字重都
@@ -763,20 +1095,24 @@ def main():
         fonts[name] = font
         glyfs[name] = font["glyf"]
 
-    tip_shrink_plans, drop_plans = {}, {}
+    tip_shrink_plans, drop_plans, merge_shrink_plans = {}, {}, {}
     corner_plans_eff = corner_plans if args.corners else {}
+    merge_plans_eff = merge_plans if args.corners else {}
     for gname in ref_font.getGlyphOrder():
         tip_idx_any = tip_plans.get(gname)
         corner_idx_any = corner_plans_eff.get(gname)
-        if not (tip_idx_any or corner_idx_any):
+        merge_pairs_any = merge_plans_eff.get(gname)
+        if not (tip_idx_any or corner_idx_any or merge_pairs_any):
             continue
         glyphs_by_weight = {w: glyfs[w][gname] for w in fonts}
-        tip_shrink_plan, drop_plan = plan_safety(
-            glyphs_by_weight, glyfs, tip_idx_any or {}, corner_idx_any or {})
+        tip_shrink_plan, drop_plan, merge_shrink_plan = plan_safety(
+            glyphs_by_weight, glyfs, tip_idx_any or {}, corner_idx_any or {}, merge_pairs_any or {})
         if tip_shrink_plan:
             tip_shrink_plans[gname] = tip_shrink_plan
         if drop_plan:
             drop_plans[gname] = drop_plan
+        if merge_shrink_plan:
+            merge_shrink_plans[gname] = merge_shrink_plan
 
     for name, font in fonts.items():
         glyf = glyfs[name]
@@ -785,7 +1121,8 @@ def main():
             g = glyf[gname]
             made = apply_all(g, glyf, tip_shrink_plans.get(gname, {}), cap_plans.get(gname, {}),
                               corner_plans_eff.get(gname, {}),
-                              drop_plans.get(gname, {}))
+                              drop_plans.get(gname, {}),
+                              merge_shrink_plans.get(gname, {}))
             if made:
                 rounded += 1
                 total += made
