@@ -156,3 +156,7 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
 - MFGA 基础包只取字体资源，绝不执行其代码（归属见 `LICENSES.md`）。
 - 主字体必须能被 fontTools 解析且含 `wght` 轴；`.ttf`/`.otf`/`.ttc` 之外的后缀、静态字体、缺空壳的基础包都直接拒绝。
+
+## 规范指针
+
+本仓库遵循 [`Sumicya/selfs`](https://github.com/Sumicya/selfs) 的全局规范 [`GLOBAL.md`](https://github.com/Sumicya/selfs/blob/93e80f69348685d433d624dda2145bd644d46807/GLOBAL.md)（提交 `93e80f69348685d433d624dda2145bd644d46807`）。
