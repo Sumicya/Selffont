@@ -113,7 +113,7 @@ ls -l ~/Selffont/docs/evidence/
 对比图，比如第 9 项）里 Light/Regular/Heavy 三档形状连续无裂变即可。
 - `2026-10-15-full-cjk-batched-vf-corners-weights.png` —— 不是字形几何问题，是全量 CJK
   规模下 `varLib.build` OOM 根因定位 + 分批绕过方案（`tools/batch_vf_merge.py`）的跨批次
-  代表字渲染证据，完整说明见 `changelog.md` 2026-10-15（续七）条目和
+  代表字渲染证据，完整说明见 `CHANGELOG.md` 2026-10-15（续七）条目和
   `docs/round-preview/README.md` 对应小节，这里只补一条索引，避免这张图在目录里
   "挂着但没人引用"。
 
