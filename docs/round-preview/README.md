@@ -2,10 +2,14 @@
 
 这不是第三方字体、不是文渊圆体、不是局部放大图。这是本仓库自己跑出来的圆角化产物。
 
+**2026-10-17 改名**：产品/家族名统一改为 **Selfrounds**（原 `Selffont Round SC`/`SelffontRoundSC-VF.ttf`）。
+下面"文件"一节按新名字描述以后新构建的产物；历史 bug 记录章节里出现的旧文件名
+（`SelffontRoundSC-VF.ttf` 等）是当时真实发生的事实，原样保留，不回填改名。
+
 ## 文件
 
-- `SelffontRoundSC-VF.ttf`——**可变字体**，`wght` 100–900 连续可调，装一个文件等于装全部字重。真机/电脑装上即可用；用支持可变字体的看图工具（Photos 的字体预览、FontGoggles、Chrome 字体设置等）能看到拖动字重滑块时字形连续变化。
-- `Selffont-Round-Regular.ttf`——同一产物的 400 字重静态实例，给不认可变字体的老工具用。
+- `Selfrounds-VF.ttf`——**可变字体**，`wght` 100–900 连续可调，装一个文件等于装全部字重。真机/电脑装上即可用；用支持可变字体的看图工具（Photos 的字体预览、FontGoggles、Chrome 字体设置等）能看到拖动字重滑块时字形连续变化。
+- `Selfrounds-Regular.ttf`——同一产物的 400 字重静态实例，给不认可变字体的老工具用。
 - `round.designspace`——构建这个 VF 用的 fontTools designspace 源文件，`tools/vf_round.py` 产出的 7 个字重静态实例按这份 designspace 被 `fontTools.varLib.build` 合并。
 
 ## 从哪来、怎么做的

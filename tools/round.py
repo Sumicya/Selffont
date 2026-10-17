@@ -287,7 +287,7 @@ def rename_family(font: TTFont, family: str) -> None:
         name.setName(legacy_style, 2, pid, eid, lid)
         name.setName(full, 4, pid, eid, lid)
         name.setName(ps, 6, pid, eid, lid)
-        name.setName(f"Selffont Round SC; OFL derivative, see OFL.txt; {full}", 3, pid, eid, lid)
+        name.setName(f"{family}; OFL derivative, see OFL.txt; {full}", 3, pid, eid, lid)
         if style not in ("Regular", "Bold"):
             name.setName(family, 16, pid, eid, lid)
             name.setName(style, 17, pid, eid, lid)

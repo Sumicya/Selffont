@@ -789,8 +789,8 @@ def main():
             if made:
                 rounded += 1
                 total += made
-        out_path = os.path.join(args.outdir, f"Selffont-Round-{name}.ttf")
-        R.rename_family(font, "Selffont Round SC")
+        out_path = os.path.join(args.outdir, f"Selfrounds-{name}.ttf")
+        R.rename_family(font, "Selfrounds")
         font.save(out_path)
         print(f"{name}: rounded {total} caps in {rounded} glyphs -> {out_path}")
 

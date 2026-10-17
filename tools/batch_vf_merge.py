@@ -104,7 +104,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=4400,
                          help="每批的「主字形」数量（闭包会再拉入依赖，实际每批字形数会更多）")
     parser.add_argument("--outdir", required=True)
-    parser.add_argument("--family-prefix", default="Selffont Round SC Batch")
+    parser.add_argument("--family-prefix", default="Selfrounds Batch")
     args = parser.parse_args()
 
     weight_paths = dict(spec.split("=", 1) for spec in args.weights)
