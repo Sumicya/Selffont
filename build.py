@@ -497,7 +497,7 @@ def stamp_version(prop: str, build: str | None, day: str | None = None, date: st
 
 
 def day_start(moment: datetime) -> datetime:
-    """当天（Asia/Shanghai）零点，换算成 UTC。"""
+    """当天（UTC+8）零点，换算成 UTC。"""
     return moment.astimezone(CLOCK).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
 
