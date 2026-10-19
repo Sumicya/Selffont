@@ -93,7 +93,8 @@ def _approach_direction(contour, i, n, lookback_min_len=40):
     return (dx / length, dy / length)
 
 
-def find_hooks(contours, gate_max=90, max_path=700, min_path=150, min_excursion_abs=50):
+def find_hooks(contours, gate_max=90, max_path=700, min_path=150, min_excursion_abs=50,
+                min_excursion_ratio=1.15):
     """返回 [(contour_idx, gate_i, gate_j)]：gate_i/gate_j 是"闸门"锚点序号(on-curve)，
     之间的所有点都要被替换成圆头收尾。
 
@@ -103,6 +104,20 @@ def find_hooks(contours, gate_max=90, max_path=700, min_path=150, min_excursion_
     且探出闸门连线的距离相对闸门间距明显偏大。这里加一个路径长度上限，并且在多个
     候选之间按"探出比例最大"取最像钩的那个，而不是"路径最长"的那个（之前那版正好
     选反了，挑到绕一整圈笔画另一侧的假阳性）。
+
+    2026-10-19（"了"字真钩被假阳性顶掉，补一道 excursion/gate_dist 比例门槛）：
+    `le_slant.py` 续十一给"了"顶部横转竖做的单样条连续曲线，在 contour0 收尾处留下
+    一个衔接鼓包（闸门 i=23/j=2，gate_dist=79、excursion=79，探出比例恰好 1.00——
+    本质上就是个普通的端头鼓包，不是钩），这个鼓包的 `perp_score` 恰好算出 0.000（闸门
+    连线跟笔画走向严格垂直），比真正钩尾候选（i=7/j=17，探出比例 1.99，`perp_score`
+    0.027）还要小一点点，在"同一轮廓只留 perp_score 最小的那个"这条选择规则下以微弱
+    优势胜出，把假的当成了真钩去处理——"了"字真正的钩尾因此从未被这个工具碰过，之前
+    看到的"扁平"收尾其实是 `le_slant.py` 产出的原始曲线，没有走过这里的裁切流程，不是
+    裁切本身把它切扁的。真钩必然是"探出去一截、明显超过闸门本身的宽度"，普通鼓包的探出
+    距离只跟闸门宽度同量级（比例≈1.0）——加一道比例门槛（取 1.15，真钩实测比例落在
+    1.31~2.32 之间，假阳性是 1.00，中间留了足够间隔）能干净分开这两类，不影响其余已经
+    验证过的 8 个带钩字形的既有选择结果（抽查过也/包/子三字的全部候选，门槛前后选中的
+    闸门对完全一致）。
     """
     hooks = []
     for ci, c in enumerate(contours):
@@ -124,6 +139,8 @@ def find_hooks(contours, gate_max=90, max_path=700, min_path=150, min_excursion_
                 excursion = max_excursion(c, i, j, n, (c[i][0], c[i][1]), (c[j][0], c[j][1]))
                 if excursion < min_excursion_abs:
                     continue
+                if excursion < gate_dist * min_excursion_ratio:
+                    continue  # 探出比例太小，是普通端头鼓包不是钩，见上面 2026-10-19 说明
                 # 闸门连线是否垂直于笔画主体走向——这是"切在哪"的主要判据，不是"探出
                 # 比例"。切点选在跟笔画主体近乎平行的位置，削出来的收尾又短又斜
                 # （"了"字实测复现：选中部分明明探出比例更高，但闸门连线几乎跟竖笔
