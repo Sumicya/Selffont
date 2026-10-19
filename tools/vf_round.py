@@ -142,7 +142,7 @@ def _point_covered(x, y, polys):
 
 
 def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_polys=None,
-                    force_corners=None):
+                    force_corners=None, force_merges=None):
     """找"该不该仿筑紫逢角必圆"的直角拐角——凸角和凹角都找，不是只找凸角。
 
     上一版只认"转向跟轮廓绕行方向相同"的凸角（国/回/田外框的四个角），把转向相反的
@@ -169,6 +169,17 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     半径按该字重自己的边长重算，这里只记录"要不要圆"这个结构决定，跟 cap/tip
     共用同一套"检测一次、各字重复用"的模型。
 
+    force_merges: 可选，{(i, j)} 原始点序号二元组集合——外部（调用方，针对单个具体
+    字形逐点人工核实过）明确要求"这一对即使中间隔着 off-curve 控制点、也按合并处理"
+    的点对，白名单制，默认空集，不影响任何未显式列入的字形/点对。2026-10-18（"了"字
+    钩尾实测）发现：下面注释里提到的"共线容差内的浅弧"这条判断本身没法区分"意外接近
+    直线的短连接段"（了钩尾，偏差 2.5~6.3，安全）和"有意设计的圆润笔锋"（暖，偏差同样
+    落在 2.5~3.85 这个量级，不安全）——两者数值量级重叠，不存在能自动分开它们的几何
+    阈值，所以这里不新增一个自动判据，而是沿用本仓库已有的 force_corners/skip_caps
+    同一套模式：每一对都由调用方对着渲染图逐字核实过，显式列进白名单才生效，不在白
+    名单里的字形/点对（包括没有核实过的"暖"）行为完全不变。进了白名单的点对仍然要过
+    后面 plan_safety() 的逐字重自交检测才会真正生效，自交检测不是摆设，是最终把关。
+
     force_corners: 可选，{原始点序号}——外部（detect()，配合 foot_trim.py 的
     skip_caps）已经判定"这个点结构上是个直角，但不该走端头圆化"的点，强制当成
     拐角处理，跳过下面"两个拐角紧挨着同一截短连接段"的保守否决（那条否决是给
@@ -194,6 +205,11 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     {(i, j)} 一对相邻拐角原始点序号的集合，i 是对里先出现的那个（按 anchors 顺序）。
     """
     force_corners = force_corners or set()
+    force_merges = force_merges or set()
+    force_merge_pts = set()
+    for (fi, fj) in force_merges:
+        force_merge_pts.add(fi)
+        force_merge_pts.add(fj)
     if len(anchors) < 4:
         return set(), set()
     winding = _contour_winding(contour, anchors)
@@ -207,7 +223,11 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
         if not (straight.get((h, i)) and straight.get((i, j))):
             continue
         if not (_collinear_enough(contour, h, i, n) and _collinear_enough(contour, i, j, n)):
-            continue  # straight[] 只看"中间没有 on-curve 点"，没查真共线，这里补一道
+            if i not in force_merge_pts:
+                continue  # straight[] 只看"中间没有 on-curve 点"，没查真共线，这里补一道
+            # 白名单点：共线检查没过，但调用方已经人工核实过这是该合并的浅弧（比如
+            # "了"钩尾），放行进入候选——仍然要过下面角度/凹角安全探测等其余全部
+            # 检查，以及后面 risky/合并配对/plan_safety 自交检测，不是无条件放行。
         d_in, len_in = _unit(contour[h], contour[i])
         d_out, len_out = _unit(contour[i], contour[j])
         if len_in < 4 or len_out < 4:
@@ -262,9 +282,12 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
             _, shared_len = _unit(contour[i], contour[j])
             if shared_len < CORNER_SHORT_SHARED:
                 risky = True
-        if not risky:
+        if not risky and i not in force_merge_pts:
             safe.add(i)
         else:
+            # 白名单点（force_merge_pts）无条件走 risky 分支，就算算出来"没有相邻
+            # 短连接段"也不直接放进 safe——这类点本来就没通过共线检查，只有真的
+            # 并成一条合并弧才安全，不该退回去按普通单独拐角的小圆角处理。
             risky_set.add(i)
     # 合并候选：risky_set 里相邻（anchors 顺序上紧挨着）、转向一致、且不是 force_corners
     # 的一对，合并成一条连续弧。额外要求两端的"外侧"锚点（pair 之前/之后那个点）
@@ -286,8 +309,12 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
         # 处理、拆掉原有 off-curve 点换成合并圆弧，会跟原弧线的真实弯曲方向对不上，在
         # Heavy 字重复现过自交。这里直接按原始点序号（不只是 anchors 里的 on-curve 序号）
         # 要求 i、j 中间一个点都没有（含 off-curve），才当"货真价实的短直线共享边"处理。
-        if (j - i) % n != 1:
+        if (j - i) % n != 1 and (i, j) not in force_merges:
             continue
+        # 白名单对（force_merges）跳过"中间一个点都没有"这道硬门槛，允许中间
+        # 隔着 off-curve 控制点——但后面 shared_len/turn_sign/外侧邻点 这几道
+        # 检查一个都不跳过，而且 _merge_drop() 本来就是整段无条件丢弃（不区分
+        # 是不是纯直线），不需要额外改合并本身的几何实现。
         _, shared_len = _unit(contour[i], contour[j])
         if shared_len >= CORNER_SHORT_SHARED:
             continue
@@ -306,7 +333,7 @@ def detect_corners(contour, n, anchors, straight, cap_anchor_set, tip_set, all_p
     return safe, merge_pairs
 
 
-def detect(glyph, glyf_table, skip_caps=None):
+def detect(glyph, glyf_table, skip_caps=None, force_merges=None):
     """只做结构判断，不涉及"切多大才安全"——那部分跟每个字重自己的绝对坐标
     尺度有关（同一个比例，Heavy 的绝对半径比 Regular 大很多），不能只用参照
     字重的坐标去判，必须在所有字重上都验证过才安全（见 plan_safety()）。
@@ -325,6 +352,11 @@ def detect(glyph, glyf_table, skip_caps=None):
     这是给"贴平"那类修复用的收尾步骤——贴平只改坐标，不会让这里的"是否已被盖住"
     探测自动认出来（贴平/本来就贴平的笔画，如果它本身比被贴的那条笔画更往外凸出
     一截，探测点会落在凸出来的那段缝隙里，判定"没被盖住"，照样独立鼓一个包）。
+
+    force_merges: 可选，{contour_idx: {(i, j) 原始点序号二元组集合}}——原样透传给
+    detect_corners() 的同名参数（见该函数文档字符串），白名单制，默认不传等于
+    完全不影响现有行为。用来给"钩尾中间隔着浅弧、不满足纯直线合并条件，但逐字
+    核实过确实该合并"的点对开口子（2026-10-18，"了"字钩尾），不是通用自动规则。
     """
     cap_plan, tip_plan, corner_plan, merge_plan = {}, {}, {}, {}
     skip_caps = skip_caps or {}
@@ -405,8 +437,10 @@ def detect(glyph, glyf_table, skip_caps=None):
             cap_anchor_points.add(i)
             cap_anchor_points.add(b)
         force_corners = skip_caps.get(c, set()) - cap_anchor_points
+        contour_force_merges = (force_merges or {}).get(c, set())
         corners, merge_pairs = detect_corners(contour, n, anchors, straight, cap_anchor_points, tips,
-                                               all_polys, force_corners=force_corners)
+                                               all_polys, force_corners=force_corners,
+                                               force_merges=contour_force_merges)
         if corners:
             corner_plan[c] = corners
         if merge_pairs:
@@ -424,16 +458,34 @@ def _flatten_quad(p0, c, p1, steps=8):
     return pts
 
 
+_SEG_CROSS_EPS = 1.0  # 单位(1000upm)。2026-10-18（"了"钩尾合并实测发现）：原始版本只用
+# 裸叉积的正负号判"在线的哪一侧"，坐标落盘前会取整成 int，对于本来就设计成贴着/
+# 端点落在同一条原边上的线段（比如合并弧线的端点 P1/P2 本来就取在 outer_prev→h、
+# i→outer_next 这两条没动过的原边上），取整噪声能让叉积在 0 附近随机抖到正或负，
+# 被判成"穿过去了"的假阳性（_merge_vs_background 复现：半径缩到 1/32 仍然报交叉，
+# 实际渲染出来是干净的）。这里把裸叉积换成按线段长度归一化之后的"到直线的垂直距离"，
+# 落在 ±EPS 以内一律算"贴在线上"（不算在任一侧），不再满足"两侧符号不同"这个交叉
+# 条件——这是标准计算几何处理浮点/取整噪声的做法（给共线搭边一个死区），不是放宽了
+# 判定本身：两条线段只要真的穿过去，垂直距离会远超 1 个单位，死区不会把它们放过。
+
+
 def _seg_cross(p1, p2, p3, p4):
     """两条直线段 p1-p2、p3-p4 是不是真的交叉（不含端点重合/共线贴边这种
     擦边情况，只认"穿过去了"）。"""
-    def _cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-    d1 = _cross(p3, p4, p1)
-    d2 = _cross(p3, p4, p2)
-    d3 = _cross(p1, p2, p3)
-    d4 = _cross(p1, p2, p4)
-    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+    def _side(o, a, b):
+        cross = (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+        length = math.hypot(a[0] - o[0], a[1] - o[1])
+        if length < 1e-9:
+            return 0
+        dist = cross / length
+        if abs(dist) < _SEG_CROSS_EPS:
+            return 0  # 贴在直线附近（含取整噪声），不算任一侧
+        return 1 if dist > 0 else -1
+    s1 = _side(p3, p4, p1)
+    s2 = _side(p3, p4, p2)
+    s3 = _side(p1, p2, p3)
+    s4 = _side(p1, p2, p4)
+    return (s1 != 0 and s2 != 0 and s1 != s2) and (s3 != 0 and s4 != 0 and s3 != s4)
 
 
 def _tip_self_crosses(p1, q1, apex, q2, nxt, prev=None):
