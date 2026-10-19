@@ -32,22 +32,31 @@
 不依赖这些图；需要翻当时画面可以 `git log --oneline -- docs/evidence/` 找到
 对应提交。
 
-当前目录只有一张图：
-
-- `2026-10-18-selfrounds-corner-merge-preview.png` —— Selfrounds 阶段一（拐角
-  合并通用规则）落地后的当前状态：电/乙/已/也/己/了/包/国 八个代表字，
-  Light/Regular/Heavy 三档字重，直接用 `tools/vf_round.py --corners` 对
-  `WenYuanSansSCVF.ttf` 实例渲染（未经过 `dian_box_compress`/`foot_trim`/
-  `hook_cut`/`le_slant.py` 等针对单个字手工重构的前置步骤，只看通用拐角合并
-  规则本身的效果）。可见电/乙/已/也/己/了/包各自的钩笔转角从"两个独立尖角"
-  变成一条连续圆弧，国的外框凸角正常保持既有的拐角圆化，三档字重下形状一致、
-  无自交。
-
-当前字体构建流水线（固定顺序，若要连同单字手工修复一起出图，按这个顺序跑）：
+当前字体构建流水线（固定顺序）：
 
 ```
 dian_box_compress.py → le_slant.py → foot_trim.py → hook_cut.py → vf_round.py --corners --skip-caps-json
 ```
+
+当前目录两张图（2026-10-19，首次把上面五个工具按固定顺序串成完整链路一次性跑通，取代
+此前只测 `vf_round.py --corners` 单一步骤的旧图，旧图已按本节"只留当前状态"规则删除，
+历史在 `git log --oneline -- docs/evidence/` 能翻到）：
+
+- `2026-10-19-selfrounds-完整流水线-13字3档字重.png` —— 本仓库常用的 13 字回归集
+  （乙也了包囚回国子己已田电暖）在 `WenYuanSansSCVF.ttf` 上跑完整流水线
+  （`dian_box_compress → le_slant → foot_trim → hook_cut → vf_round --corners
+  --skip-caps-json`）后的当前状态，Light/Regular/Heavy 三档字重。对应
+  `docs/decisions-笔画简化.md` 认定的四类具体问题：电字箱体墙厚跨字重保持
+  不变（问题1）、回/国/田/电的框形部首腿脚不再越出底横（问题2）、带钩的
+  9 个字形（乙也了包子己已电等）钩尖换成干净圆头而不是尖角（问题3）、
+  短连接段夹死角处的拐角改用连续圆弧而不是退回尖角（问题4，阶段一通用
+  规则 + 了字顶部转角的专项重构共同作用）。`tools/check_self_intersect.py`
+  对 13 字 × 3 档字重共 39 项逐轮廓自交检测，0 处失败。
+- `2026-10-19-selfrounds-了字端头细节.png` —— 了字三处关键位置放大：顶部
+  横笔左端自由端头（半圆弧收尾，半径=笔画高度一半，对称）、顶部横转竖的
+  转角（`le_slant.py` 的单样条连续曲线重构，衔接处只有一个方向突变，没有
+  紧跟着的第二个直角）、底部钩尾（`hook_cut.py` 切除钩尖后的圆头收尾，
+  由连续的 off-curve 控制点样条构成，不是裸露的直线硬切）。
 
 ## 取证（设备上跑，一条一张）
 
