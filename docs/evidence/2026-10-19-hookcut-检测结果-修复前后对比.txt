@@ -1,0 +1,16 @@
+# tools/hook_cut.py 修复后，在 p3_foot/w400.ttf（hook_cut 之前一步的产物）上重跑 detect_hook_plan() 的结果
+# 可复现命令：python3 tools/hook_cut.py 内 detect_hook_plan(glyf, glyph_order)，字体路径 font-eval/wenyuan/p3_foot/w400.ttf
+
+? glyph00003 [(0, 5, 8)]
+也 uni4E5F [(1, 11, 21), (3, 12, 23)]
+了 uni4E86 [(0, 7, 17)]
+包 uni5305 [(2, 13, 22), (3, 13, 24)]
+子 uni5B50 [(3, 2, 19)]
+电 uni7535 [(1, 12, 23)]
+? glyph00026 [(0, 6, 9)]
+? glyph00029 [(0, 6, 9)]
+? glyph00033 [(0, 5, 8)]
+
+# 对照：修复前（min_excursion_ratio 门槛加入之前）同一字体的结果是
+# 了 uni4E86 [(0, 23, 2)]  <- 假阳性，闸门落在顶部横转竖的衔接鼓包上，不是真钩
+# 其余字形（也/包/子/电/glyph00003/26/29/33）跟上面修复后的结果逐项核对一致，未变化
