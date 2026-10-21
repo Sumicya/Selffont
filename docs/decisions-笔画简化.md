@@ -173,4 +173,5 @@
 - 找到 GitHub 社区仓库 [`Zolyn/TsukuBRdGothic-Std`](https://github.com/Zolyn/TsukuBRdGothic-Std)，固定提交 `88a5c2d44e034c5655c6c59ad913e345de0bf1f5`。Light/Regular/Medium 三个静态文件 `usWeightClass` 为 300/400/500，UPM 1000；首轮 63 项去重为 62 字后均有 cmap 覆盖。文件仅下载到 `/tmp` 做分析，不提交或重新分发。
 - 来源未获官方认证；仓库无许可证文件，README 声明版权属于字体公司、仅供学习交流、禁止商用/倒卖。公开 B 样张与候选“包”字重量差异明显；因此仅称社区参考候选，不宣称已核实为官方版本，也不把该 TTF 打包。
 - 直接比较三档静态轮廓的点数、轮廓数、端点与点标记：Light–Regular `59/62`、Regular–Medium `58/62`、Light–Medium `59/62` 样本字结构不一致。字符映射一致，但静态文件不能直接作为一组可变字体母版；后续若进入原型，需在筑紫 B 几何目标下重建共享拓扑。
-- 因 B 候选已找到，当前不回退筑紫 A。先前的筑紫 A 圆 D 原型仍只属历史实验；本轮不改生产字体、不做字体实现。当前设计与来源限制见 `docs/round-preview/2026-10-19-maruko-track/13-tsukushi-b-redesign-brief.md`。
+- 因 B 候选已找到，当前不回退筑紫 A。先前的筑紫 A 圆 D 原型仍只属历史实验；本轮不改生产字体、不做字体实现。当前设计与来源限制见 `docs/round-preview/2026-10-19-maruko-track/13-tsukushi-b-redesign-brief.md`；社区候选 63 项 × 三档参考图见 `docs/round-preview/2026-10-21-tsukushi-b/01-community-candidate-63-items-3-weights.png`（不是新设计结果）。
+- 上一提交只推送了文字设计稿，没有本轮对应图片。用户指出后复查仓库图像规范，补图并记录 10 点复盘，见 `docs/round-preview/2026-10-21-tsukushi-b/02-delivery-retrospective.md`。

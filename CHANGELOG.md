@@ -18,10 +18,11 @@
 ## 2026-10-21 · 筑紫 B 单一目标设计澄清与参考源审计
 
 - 用户更正：只选筑紫 B 丸，马路口不作为视觉/结构混合来源；先交设计稿、不改生产字体。第一轮仍为 63 项 × Light/Regular/Medium，并要求检查字重间拓扑兼容。允许测量筑紫坐标，目标轮廓不逐点复制。
-- 找到社区参考候选 `Zolyn/TsukuBRdGothic-Std`（固定提交 `88a5c2d44e034c5655c6c59ad913e345de0bf1f5`），包含五档；Light/Regular/Medium 的 `usWeightClass` 为 300/400/500，UPM 1000，63 项样本去重后的 62 字均有 cmap 覆盖。候选 TTF 仅存于 `/tmp`，未入库。
-- 来源未经官方验证；仓库无许可证文件，README 声明版权属于字体公司、仅供学习且禁止商用/倒卖。公开 B 样张与候选“包”字重量差异明显，须谨慎对待，不得将其宣称为官方验证或再分发授权。B 候选已找到，当前不回退到 A。
+- 找到社区参考候选 `Zolyn/TsukuBRdGothic-Std`（固定提交 `88a5c2d44e034c5655c6c59ad913e345de0bf1f5`），包含五档；Light/Regular/Medium 的 `usWeightClass` 为 300/400/500，UPM 1000，63 项样本去重后的 62 字均有 cmap 覆盖。候选 TTF 仅存于 `/tmp`，未入库；另生成 `docs/round-preview/2026-10-21-tsukushi-b/01-community-candidate-63-items-3-weights.png`，只展示社区候选的 63 项 × 三档参考样张，不是新设计字形。
+- 来源未经官方验证；仓库无许可证文件，README 声明版权属于字体公司、仅供学习且禁止商用/倒卖。公开 B 样张与候选“包”字重量差异明显，须谨慎对待，不得将其宣称为官方验证或再分发授权。PNG 标明来源及研究限制，未提交 TTF。B 候选已找到，当前不回退到 A。
 - 静态轮廓拓扑审计：Light–Regular `59/62`、Regular–Medium `58/62`、Light–Medium `59/62` 的样本字点/轮廓结构不一致。字符映射一致，但不能直接把三份 TTF 拼成可变字体；设计稿需以 B 为唯一造型目标，后续如进入原型应先重建三档共享拓扑。
 - 更新 `13-tsukushi-b-redesign-brief.md`；`12-*` 筑紫 A 圆 D 原型仍仅作历史实验，不是本轮目标或验收依据。此次只做参考源/拓扑分析，未开始新轮廓实现。
+- 复盘上一轮只交文字、缺少本轮视觉材料的问题：补入带来源/限制标注的候选参考 PNG `docs/round-preview/2026-10-21-tsukushi-b/01-community-candidate-63-items-3-weights.png`，并记录 10 点交付检讨 `02-delivery-retrospective.md`。该图是社区候选参考，不是新设计字形；未提交字体文件。
 
 ## 2026-10-20 · CI 清理 scope 分权 + 63 项笔画宽度原型评估
 

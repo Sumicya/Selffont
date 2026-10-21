@@ -237,4 +237,6 @@ AI 造字项目作为"重写马路口"的可能路线，均已查证并排除，
 
 已找到 GitHub 社区参考候选 [`Zolyn/TsukuBRdGothic-Std`](https://github.com/Zolyn/TsukuBRdGothic-Std)，固定提交 `88a5c2d44e034c5655c6c59ad913e345de0bf1f5`。三个本机检查文件为 Light/Regular/Medium，weightClass 300/400/500，UPM 1000，首轮 62 个唯一字均有字符映射；下载文件仅在 `/tmp`，未入库。该来源未获官方认证，仓库无许可证文件，README 称仅供学习交流并禁止商用/倒卖；公开 B 样张与候选“包”字重量差异明显。故只称社区参考候选，不宣称官方验证或再分发授权，不提交/打包 TTF。B 候选已找到，当前不回退筑紫 A。
 
+为补上上一提交缺失的视觉材料，新增[社区候选 63 项 × 三档样张](../2026-10-21-tsukushi-b/01-community-candidate-63-items-3-weights.png)；它只展示候选文件，不是新设计字形或官方 B 认证，来源及用途限制见[图片说明](../2026-10-21-tsukushi-b/README.md)。交付缺图的 10 点检讨见[复盘](../2026-10-21-tsukushi-b/02-delivery-retrospective.md)。
+
 三档静态文件直接做轮廓点/端点结构比较时，Light–Regular 有 `59/62` 字不兼容，Regular–Medium `58/62`，Light–Medium `59/62`。因此后续如进入原型，需以筑紫 B 为唯一造型方向，重新构造共拓扑母版；不能直接把这三份静态 TTF 当作可插值母版。第 9 节及 `12-*` 属于筑紫 A 圆 D 历史实验，不是本轮目标或验收依据。当前设计稿见 [`13-tsukushi-b-redesign-brief.md`](13-tsukushi-b-redesign-brief.md)。
