@@ -1,6 +1,8 @@
 # 待办（下个会话）
 
-**2026-10-21 当前方向（本次重新澄清后，优先于下文旧记录）**：先重做设计，不立即改生产字体；用户只选**筑紫 B 丸ゴシック**，马路口不作为混合审美目标；路线采取更激进的整体轮廓/笔势重构，并由代理说明效果与理由。允许测量筑紫几何，但目标轮廓不逐点复制。首轮仍是 63 项×Light/Regular/Medium，且要在这批样本上验证可变拓扑兼容，再谈扩大全字库。已在 GitHub 找到 `Zolyn/TsukuBRdGothic-Std` 的筑紫 B 五字重社区候选；仓库声明仅供学习且禁止商用/倒卖，未获再分发许可，TTF 只在 `/tmp` 分析，不提交、不打包。已新增注明来源与限制的 63 项 × 三档候选参考图 `docs/round-preview/2026-10-21-tsukushi-b/01-community-candidate-63-items-3-weights.png`；它不是新设计字形。因 B 候选已找到，当前不回退到 A。新设计稿：`docs/round-preview/2026-10-19-maruko-track/13-tsukushi-b-redesign-brief.md`；此前 A 圆 D 原型仅作历史实验，不是本次方案或验收依据。
+**2026-10-21 当前方向（纠正后，优先于下文旧记录）**：用户指出 `Zolyn/TsukuBRdGothic-Std` 的“包”与目标样张字重不符，已撤销其有效 B 参考资格；此前“B 已找到、无需回退 A”及其三档候选图均作废。Fontworks 官方 B 产品存在，但本地没有可核验且已获许可的 B 字体文件，因此按用户条件回退到筑紫 A。当前实际比较源为 `Totoro625/totoro625-font-family/zhuziawan/zhuziawan.ttf` 的单一静态 D（`usWeightClass=400`、无 `fvar`），不是五字重套装。已生成 63 项（62 唯一字）A-D 基准与同基准 + 钩尾简化对照：`docs/round-preview/2026-10-21-tsukushi-a/README.md`。简化只触及 7 个唯一字形的 8 处钩，不代表全套笔画问题解决。无可信 A Light/Regular/Medium 源，因此三档拓扑验收仍未完成；不改生产字体、不接 `build.py`。
+
+**规范文件状态**：`selfs/GLOBAL.md` 在当前工作树、`HEAD`、远端 `main`/本分支、GitHub 按路径提交查询及代码搜索中均未找到。不得声称已阅读；本轮按现存 `docs/evidence/README.md`、`docs/round-preview/README.md` 与 `docs/decisions-笔画简化.md` 执行，并在 `docs/round-preview/2026-10-21-tsukushi-a/03-ten-point-review.md` 说明查证边界。
 
 按会话约定：下面的事**本会话不做**，下个会话开工前先读本文件、`README.md` 与 `CHANGELOG.md`，动手前先提问核对（`AGENTS.md` 已于 2026-10-15 由主人删除，不再维护）。
 
@@ -87,9 +89,10 @@
   抽样样本更容易撞上拐角密集的复杂结构。扫描是主动中途停掉的（避免又一次长时间无人值守运行），
   GB2312 范围真实的回归率还没有量化，需要主人决定是否要专门为此再跑一轮完整扫描。
 - **插曲**：本轮会话开始时发现 `arena/7478d6df-selffont` 分支的提交历史被重置回分支点
-  （`origin/main` 独立推进到一个新的孤立根提交 `b5692bc`，删了 `AGENTS.md`，规范指针只留
+  （`origin/main` 独立推进到新的孤立根提交 `b5692bc`；提交说明称规范指针只留
   `selfs/GLOBAL.md`），不是本会话造成的；好在工作区文件本身都还在，只是没有提交记录，这次是
-  把干净的工作区内容重新提交到新的 `main` 基线上，没有重做任何设计决策。
+  把干净的工作区内容重新提交到新的 `main` 基线上，没有重做任何设计决策。**后续核查发现
+  `selfs/GLOBAL.md` 不在该提交、当前树或远端可检索历史中；该规范当前无法读取，不能把提交说明当成规范正文。**
 - 仍未做：GB2312/全量 CJK 范围的完整回归扫描、`uni4910` 类并发碰撞的真正修复、阶段二笔画简化
   的方案讨论、`build.py` 的 `--font` 接入、真机验证。
 

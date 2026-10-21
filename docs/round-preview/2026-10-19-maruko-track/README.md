@@ -231,12 +231,10 @@ AI 造字项目作为"重写马路口"的可能路线，均已查证并排除，
 
 对照图和详细方法、来源、SHA-256、复现命令、拓扑限制与未完成项见 [`12-tsukushi-centerline-prototype.md`](12-tsukushi-centerline-prototype.md)。14 字放大图以及三个字重各自的全 62 字检查页均已生成；186 个输出字形的单轮廓自交检查通过。它们仍是研究用静态字体，不是全字库修复或生产输出。
 
-## 10. 2026-10-21：筑紫 B 单一目标（覆盖此前混合方案）
+## 10. 2026-10-21：筑紫 B 方向曾被选中，后因候选字重不符撤回
 
-用户要求从设计方向重做，并在五级澄清中决定先产出设计稿、暂不改生产字体；目标仅为**筑紫 B 丸**，要求采用更激进的几何方向并解释效果与原因；首轮为 63 项 × Light/Regular/Medium，并要求检查可变拓扑兼容。用户随后明确纠正：**马路口不是混合来源，不保留马路口轮廓、骨架、字面比例或笔画风格作为设计依据。** 前文中“保留马路口覆盖/字宽/字重层级”的混合建议作废。
+用户当时要求先做设计稿、不改生产字体；目标定为筑紫 B 丸，首轮规划 63 项 × Light/Regular/Medium，并检查拓扑兼容。用户也明确规定马路口不是混合来源，不保留马路口轮廓、骨架、字面比例或笔画风格。此前混合方案作废。
 
-已找到 GitHub 社区参考候选 [`Zolyn/TsukuBRdGothic-Std`](https://github.com/Zolyn/TsukuBRdGothic-Std)，固定提交 `88a5c2d44e034c5655c6c59ad913e345de0bf1f5`。三个本机检查文件为 Light/Regular/Medium，weightClass 300/400/500，UPM 1000，首轮 62 个唯一字均有字符映射；下载文件仅在 `/tmp`，未入库。该来源未获官方认证，仓库无许可证文件，README 称仅供学习交流并禁止商用/倒卖；公开 B 样张与候选“包”字重量差异明显。故只称社区参考候选，不宣称官方验证或再分发授权，不提交/打包 TTF。B 候选已找到，当前不回退筑紫 A。
+当时曾从 [`Zolyn/TsukuBRdGothic-Std`](https://github.com/Zolyn/TsukuBRdGothic-Std) 取得 Light/Regular/Medium 社区文件，记录了 weightClass 300/400/500、样本 cmap 覆盖和静态拓扑差异；这些只是对该社区文件的技术记录，**不能证明它是目标筑紫 B 的适用版本**。用户随后明确指出候选“包”字视觉重量不符，因此“B 候选已找到、当前不回退 A”结论撤销，候选 63 项图已从当前树移除。旧拓扑数字只描述那组被否定的文件，不再作本任务设计或验收依据。
 
-为补上上一提交缺失的视觉材料，新增[社区候选 63 项 × 三档样张](../2026-10-21-tsukushi-b/01-community-candidate-63-items-3-weights.png)；它只展示候选文件，不是新设计字形或官方 B 认证，来源及用途限制见[图片说明](../2026-10-21-tsukushi-b/README.md)。交付缺图的 10 点检讨见[复盘](../2026-10-21-tsukushi-b/02-delivery-retrospective.md)。
-
-三档静态文件直接做轮廓点/端点结构比较时，Light–Regular 有 `59/62` 字不兼容，Regular–Medium `58/62`，Light–Medium `59/62`。因此后续如进入原型，需以筑紫 B 为唯一造型方向，重新构造共拓扑母版；不能直接把这三份静态 TTF 当作可插值母版。第 9 节及 `12-*` 属于筑紫 A 圆 D 历史实验，不是本轮目标或验收依据。当前设计稿见 [`13-tsukushi-b-redesign-brief.md`](13-tsukushi-b-redesign-brief.md)。
+Fontworks 官方页面证明筑紫 B 产品存在，但本地没有可核验、且取得相应用途许可的 B 文件。按用户的回退条件，本轮改用单一静态筑紫 A D（`usWeightClass=400`），生成原始 A-D 与同基准钩尾简化的对照；不伪造 Light/Regular/Medium。当前来源、图片及限制见 [`2026-10-21-tsukushi-a/README.md`](../2026-10-21-tsukushi-a/README.md)，十点检讨见 [`2026-10-21-tsukushi-a/03-ten-point-review.md`](../2026-10-21-tsukushi-a/03-ten-point-review.md)。B 方向旧文稿现仅作作废记录：[`13-tsukushi-b-redesign-brief.md`](13-tsukushi-b-redesign-brief.md)。
