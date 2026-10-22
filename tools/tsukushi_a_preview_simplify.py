@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Create a research-only Tsukushi A D/400 hook-end preview.
 
-Only the eight previously selected hook cuts in the 63-entry sample are changed.
-All corner, short-turn, stroke-width, frame, and production-font processing is omitted.
-The source and output TTFs must stay outside the repository.
+Only the eight selected hook cuts in the 63-entry sample are changed. A shared bisector
+axis keeps each two-arc cap balanced; candidates that cannot meet the tangent/bulge limits
+are rejected. All corner, short-turn, stroke-width, frame, and production processing is
+omitted. Source and output TTFs must stay outside the repository.
 """
 from __future__ import annotations
 
@@ -14,7 +15,10 @@ from pathlib import Path
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
 
-import hook_cut
+if __package__:
+    from . import hook_cut
+else:
+    import hook_cut
 
 
 CHARS_63 = (
@@ -36,52 +40,66 @@ def signature(glyph, glyf_table):
 
 
 def round_cap(contour, n, i, j):
-    """Replace the selected hook loop with two G1-joined quadratic cap arcs."""
+    """Replace one hook loop with a balanced, two-arc round cap.
+
+    A single bisector axis is shared by both quadratic arcs, avoiding the visibly
+    uneven crown produced when each side independently follows a different tangent.
+    The cap is accepted only when that axis is close enough to the gate normal and
+    both original endpoint tangents; rejected geometry is never silently reshaped.
+    """
     ax, ay = contour[i][0], contour[i][1]
     bx, by = contour[j][0], contour[j][1]
     prev = contour[(i - 1) % n]
     next_point = contour[(j + 1) % n]
     dx, dy = ax - prev[0], ay - prev[1]
-    dlen = math.hypot(dx, dy) or 1.0
-    incoming = (dx / dlen, dy / dlen)
+    dlen = math.hypot(dx, dy)
     ox, oy = next_point[0] - bx, next_point[1] - by
-    olen = math.hypot(ox, oy) or 1.0
+    olen = math.hypot(ox, oy)
+    if dlen <= 1e-9 or olen <= 1e-9:
+        raise AssertionError("Cannot construct a cap from a zero-length tangent")
+    incoming = (dx / dlen, dy / dlen)
     outgoing = (ox / olen, oy / olen)
+
     gx, gy = bx - ax, by - ay
-    glen = math.hypot(gx, gy) or 1.0
+    glen = math.hypot(gx, gy)
+    if glen <= 1e-9:
+        raise AssertionError("Cannot construct a cap across a zero-length gate")
     gate = (gx / glen, gy / glen)
     normal = (-gate[1], gate[0])
     if incoming[0] * normal[0] + incoming[1] * normal[1] < 0:
         normal = (-normal[0], -normal[1])
 
-    # Match the existing contour tangents at both cap ends. Equal-length controls
-    # place the join halfway between them, where the two quadratic arcs are G1.
-    r = glen * 0.5
-    q1 = (ax + incoming[0] * r, ay + incoming[1] * r)
-    q2 = (bx - outgoing[0] * r, by - outgoing[1] * r)
-    apex = ((q1[0] + q2[0]) * 0.5, (q1[1] + q2[1]) * 0.5)
-    gate_mid = ((ax + bx) * 0.5, (ay + by) * 0.5)
-    outward = ((apex[0] - gate_mid[0]) * normal[0]
-               + (apex[1] - gate_mid[1]) * normal[1])
+    # Bisect the two cap-facing contour tangents: incoming and reverse(outgoing).
+    dx, dy = incoming[0] - outgoing[0], incoming[1] - outgoing[1]
+    axis_len = math.hypot(dx, dy)
+    if axis_len <= 1e-9:
+        raise AssertionError("Endpoint tangents do not define a cap axis")
+    axis = (dx / axis_len, dy / axis_len)
+    outward_alignment = axis[0] * normal[0] + axis[1] * normal[1]
+    if outward_alignment < math.cos(math.radians(25)):
+        raise AssertionError("Balanced cap axis is too skewed from the outward gate normal")
 
-    # The cap must bulge out from the gate, match both endpoint tangents, and
-    # meet with a common tangent at the apex; otherwise the candidate is unsafe.
-    left = (apex[0] - q1[0], apex[1] - q1[1])
-    right = (q2[0] - apex[0], q2[1] - apex[1])
-    cross = left[0] * right[1] - left[1] * right[0]
-    dot = left[0] * right[0] + left[1] * right[1]
-    if outward <= 0 or abs(cross) > 1e-8 or dot <= 0:
-        raise AssertionError("Rounded cap is inward-facing or not G1-continuous")
-    for vector, tangent in (
-        ((q1[0] - ax, q1[1] - ay), incoming),
-        ((bx - q2[0], by - q2[1]), outgoing),
-    ):
-        end_cross = vector[0] * tangent[1] - vector[1] * tangent[0]
-        end_dot = vector[0] * tangent[0] + vector[1] * tangent[1]
-        if abs(end_cross) > 1e-8 or end_dot <= 0:
-            raise AssertionError("Rounded cap does not match an endpoint tangent")
+    tangent_error = max(
+        math.degrees(math.acos(max(-1.0, min(1.0,
+            incoming[0] * axis[0] + incoming[1] * axis[1])))),
+        math.degrees(math.acos(max(-1.0, min(1.0,
+            -outgoing[0] * axis[0] - outgoing[1] * axis[1])))),
+    )
+    if tangent_error > 15:
+        raise AssertionError(
+            f"Balanced cap endpoint tangent mismatch is too large: {tangent_error:.2f}°"
+        )
+
+    # A shared direction and half-gate radius make the two quadratic arcs meet
+    # symmetrically at their apex. The join is G1; endpoint mismatch is bounded above.
+    r = glen * 0.5
+    q1 = (ax + axis[0] * r, ay + axis[1] * r)
+    apex = ((ax + bx) * 0.5 + axis[0] * r,
+            (ay + by) * 0.5 + axis[1] * r)
+    q2 = (bx + axis[0] * r, by + axis[1] * r)
     return [(ax, ay, True), (q1[0], q1[1], False),
-            (apex[0], apex[1], True), (q2[0], q2[1], False), (bx, by, True)]
+            (apex[0], apex[1], True), (q2[0], q2[1], False),
+            (bx, by, True)]
 
 
 def apply_round_cuts(glyph, glyf_table, hooks):
@@ -151,7 +169,7 @@ def simplify(font: TTFont) -> tuple[TTFont, list[tuple[str, list[tuple[int, int,
             if count != len(hooks):
                 raise AssertionError(f"{ch}: applied {count} of {len(hooks)} detected cuts")
             reports.append((ch, gates))
-            print(f"{ch} ({name}): {count} G1 round-cap cut(s), gates={gates}")
+            print(f"{ch} ({name}): {count} balanced round-cap cut(s), gates={gates}")
         else:
             print(f"{ch} ({name}): no hook detected; unchanged")
 
@@ -167,7 +185,7 @@ def simplify(font: TTFont) -> tuple[TTFont, list[tuple[str, list[tuple[int, int,
             f"got {hook_count} cuts on {len(changed)} glyphs."
         )
     print(f"sample={len(CHARS_63)} entries / {len(names)} unique glyphs")
-    print(f"proposal={hook_count} G1 round-cap cuts on {len(changed)} glyphs")
+    print(f"proposal={hook_count} balanced two-arc round-cap cuts on {len(changed)} glyphs")
     print("No corner, short-turn, stroke-width, frame, or production processing was run.")
     return font, reports
 

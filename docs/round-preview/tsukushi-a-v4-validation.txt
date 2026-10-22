@@ -1,0 +1,30 @@
+筑紫 A D/400 钩尾研究预览 V4 验证
+日期：2026-10-22
+状态：V4 是继续优化中的候选，尚未获用户视觉验收。V3 已被用户明确反馈“丑”，不再作为当前方案；几何检查不代表审美认可。
+
+输入源（仅在本机临时使用）
+- 来源：Totoro625/totoro625-font-family/zhuziawan/zhuziawan.ttf
+- 源仓库提交：3ad8753c4bce763682174a41cd742fb344be3c36
+- Git blob：ed7e2afa0331494c24676db68204471cc2e8dd9e
+- SHA-256：1b5b1c00c0bccf6feda1c55434879016d4c8ced78677d2b83ed2ae756e19c11c
+- 字体名：FOT-TsukuARdGothic Std D；UPM 1000；usWeightClass=400；静态 TTF、无 fvar。
+- 来源仓库未找到正式字体许可证；原字体及派生 TTF 不入库、不打包、不宣称可再分发。
+
+V4 范围与改动
+- 样本 63 项 / 62 个唯一字；全部有 cmap 映射。
+- 仅处理“也、了、包、子、己、已、电”7 个唯一字形里的 8 处钩尾；“包”两处，“乙”没有候选。未运行通用拐角圆化、短弯合并、框脚裁切、笔画宽度归一或生产处理。
+- 闸门点：也 contour 0 (8,20)；了 contour 0 (8,20)；包 contour 0 (12,24)、contour 1 (10,20)；子 contour 0 (8,18)；己 contour 0 (40,52)；已 contour 0 (35,48)；电 contour 0 (32,42)。
+- 相比 V3 分别贴合两端切线的做法，V4 用“进入切线”和“反向离开切线”的共享平分轴构造对称双弧；端点切线偏差上限 15°，轴线与闸门外法线偏差上限 25°，超限会拒绝该候选而不是强行弯形。图中完整字形上下文与同尺度叠加取代 V3 的孤立轮廓碎片页。
+- 临时 V4 TTF 仅在 /tmp，SHA-256：164151e899239d63e44ab1b7c7d7cc4ac8208e49c70c18fdf95e01e01598ad58；同输入重复生成 SHA 一致，未入库。8 处候选的最大端点切线偏差为 12.85°，最大轴线/闸门法线偏差为 23.20°（均低于脚本上限）；脚本打印 8 处平衡圆头候选、7 个唯一字形改变。
+
+检查结果
+- `tools/check_self_intersect.py` 对原字体和 V4 各按 63 项序列检查：共 126 项，0 个单轮廓自交失败。
+- `PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v`：11 项通过，其中 3 项覆盖 V4 双弧的对称性、平分轴和超限拒绝。
+- `PYTHONPATH=tools .venv/bin/python build.py --check`：仓库现有 9 项通过。该检查不是 V4 字体生产构建；V4 未接入 `build.py`。
+- 三张 PNG 由 fontTools 轮廓直接绘制：`tsukushi-a-d-63-hook-only-v4-overview.png`、`tsukushi-a-v4-full-glyph-review.png`、`tsukushi-a-v4-endpoint-detail.png`；局部页裁切自完整字形并带定位缩略图，不是孤立 contour 页，也不是设备截图。
+- PNG SHA-256：总览 `a728bb45a343b0139dedfffcf45362bf7d30a08fadc9b12f3c50409559b9520f`；完整字形页 `ccff72e197ac5549ac67866d98e0ac77c128446e90da2270d3546081246200ab`；端头细节页 `3c87dbb5a2bf26a78568d3dd2164bfb4e0722e8e7e43ae5832b4fd50a146057b`。
+
+未完成 / 限制
+- 自交检查不判断轮廓间覆盖、字形语义、阅读感、审美或真实设备显示；不得以此宣称 V4 好看或已验收。
+- 没有可信的 A Light/Regular/Medium 源文件；未验证三档拓扑、全字库或完整生产流水线，也未做真机渲染。
+- 未重新计算笔画宽度 CV；不声称粗细已改善。生产字体、共享 `tools/hook_cut.py`、`build.py` 均未修改。

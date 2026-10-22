@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Render the 63-entry Tsukushi A D/400 hook-only research comparison."""
+"""Render overview, full-glyph, and context-preserving detail views of the V4 study."""
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path as FilePath
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import PathPatch, Rectangle
-from matplotlib.path import Path as MplPath
 from fontTools.ttLib import TTFont
-from fontTools.ttLib.tables._g_l_y_f import Glyph, GlyphCoordinates
 
-import hook_cut
-from render_grid import MplPathPen, glyph_path
-from tsukushi_a_preview_simplify import round_cap
+if __package__:
+    from . import hook_cut
+    from .render_grid import glyph_path
+else:
+    import hook_cut
+    from render_grid import glyph_path
 
 
 CHARS_63 = (
@@ -51,61 +53,26 @@ def draw_glyph(ax, font: TTFont, ch: str, color="#20252d", alpha=1.0, limits=Non
     ax.axis("off")
 
 
-def contour_path(font: TTFont, ch: str, contour_index: int) -> MplPath:
-    """Draw only the changed contour, so nearby unrelated strokes do not clutter crops."""
-    name = font.getBestCmap()[ord(ch)]
-    glyph = font["glyf"][name]
-    glyf = font["glyf"]
-    coords, ends, flags = glyph.getCoordinates(glyf)
-    start = 0 if contour_index == 0 else int(ends[contour_index - 1]) + 1
-    end = int(ends[contour_index]) + 1
-    one = Glyph()
-    one.numberOfContours = 1
-    one.coordinates = GlyphCoordinates(coords[start:end])
-    one.endPtsOfContours = [end - start - 1]
-    one.flags = list(flags[start:end])
-    pen = MplPathPen(font.getGlyphSet())
-    one.draw(pen, glyf)
-    return MplPath(pen.verts, pen.codes)
-
-
-def draw_contour(ax, font: TTFont, ch: str, contour_index: int, color: str,
-                 alpha: float = 1.0, limits=None):
-    ax.add_patch(PathPatch(contour_path(font, ch, contour_index),
-                           facecolor=color, edgecolor="none", alpha=alpha))
-    ax.set_xlim(limits[0], limits[1])
-    ax.set_ylim(limits[2], limits[3])
-    ax.set_aspect("equal")
-    ax.axis("off")
-
-
 def hook_rows(base: TTFont):
+    """Return fixed-size full-glyph crops around the eight selected gates."""
     cmap = base.getBestCmap()
     glyf = base["glyf"]
     rows = []
     for ch in HOOK_CANDIDATES:
         name = cmap[ord(ch)]
-        coords, ends, flags = glyf[name].getCoordinates(glyf)
+        glyph = glyf[name]
+        coords, ends, flags = glyph.getCoordinates(glyf)
         contours = hook_cut.split_contours(coords, ends, flags)
         for ci, i, j, *_ in hook_cut.find_hooks(contours):
             contour = contours[ci]
-            n = len(contour)
-            segment = []
-            k = i
-            while True:
-                segment.append(contour[k])
-                if k == j:
-                    break
-                k = (k + 1) % n
-            points = segment + round_cap(contour, n, i, j)
-            xs, ys = [p[0] for p in points], [p[1] for p in points]
-            gate = max(1.0, ((contour[i][0] - contour[j][0]) ** 2
-                             + (contour[i][1] - contour[j][1]) ** 2) ** .5)
-            side = max(gate * 1.65, (max(xs) - min(xs)) * 1.2,
-                       (max(ys) - min(ys)) * 1.2, 150)
-            cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
-            rows.append((ch, ci, i, j, (cx - side / 2, cx + side / 2,
-                                        cy - side / 2, cy + side / 2)))
+            ax, ay = contour[i][0], contour[i][1]
+            bx, by = contour[j][0], contour[j][1]
+            gate = math.hypot(bx - ax, by - ay)
+            side = max(gate * 4.0, 260.0)
+            cx, cy = (ax + bx) * 0.5, (ay + by) * 0.5
+            limits = (cx - side / 2, cx + side / 2,
+                      cy - side / 2, cy + side / 2)
+            rows.append((ch, ci, i, j, limits))
     if len(rows) != 8:
         raise AssertionError(f"Expected eight selected hook cuts, got {len(rows)}")
     return rows
@@ -125,14 +92,14 @@ def render_main(base: TTFont, variant: TTFont, out_path: FilePath):
         9, 15, left=.025, right=.975, top=.855, bottom=.105,
         wspace=.08, hspace=.12, width_ratios=[1] * 7 + [.22] + [1] * 7,
     )
-    fig.text(.025, .965, "TSUKUSHI A · D/400 · HOOK-ONLY V3", fontsize=25,
+    fig.text(.025, .965, "TSUKUSHI A · D/400 · HOOK-ONLY V4", fontsize=25,
              fontweight="bold", color="#171a1f", ha="left", va="top")
     fig.text(.025, .928,
              "63 audit entries · 62 unique glyphs · same static source weight · research-only outline comparison",
              fontsize=11.5, color="#666a70", ha="left", va="top")
     fig.text(.025, .887, "BASELINE · original A-D outline", fontsize=14,
              fontweight="bold", color="#262930", ha="left", va="top")
-    fig.text(.515, .887, "V3 · selected hook-end cuts only", fontsize=14,
+    fig.text(.515, .887, "V4 · selected hook-end cuts only", fontsize=14,
              fontweight="bold", color="#262930", ha="left", va="top")
 
     for i, ch in enumerate(CHARS_63):
@@ -166,41 +133,105 @@ def render_main(base: TTFont, variant: TTFont, out_path: FilePath):
 
 
 def render_detail(base: TTFont, variant: TTFont, out_path: FilePath):
-    rows = hook_rows(base)
-    fig = plt.figure(figsize=(15.5, 15.0), facecolor="#fbfaf7")
+    """Review each changed glyph in context instead of displaying isolated contour scraps."""
+    chars = [ch for ch in HOOK_CANDIDATES
+             if signature(base, ch) != signature(variant, ch)]
+    if len(chars) != 7:
+        raise AssertionError(f"Expected seven changed full glyphs, got {len(chars)}")
+
+    fig = plt.figure(figsize=(17.0, 17.0), facecolor="#fbfaf7")
     gs = fig.add_gridspec(
-        len(rows), 4, left=.035, right=.985, top=.90, bottom=.045,
-        wspace=.10, hspace=.16, width_ratios=[.8, 1.1, 1.1, 1.1],
+        len(chars), 4, left=.035, right=.985, top=.875, bottom=.045,
+        wspace=.035, hspace=.10, width_ratios=[.72, 1.0, 1.0, 1.0],
     )
-    fig.text(.035, .965, "V3 · ROUND HOOK-END CLOSE-UPS", fontsize=22,
+    fig.text(.035, .965, "V4 · FULL-GLYPH VISUAL REVIEW", fontsize=22,
              fontweight="bold", color="#171a1f", ha="left", va="top")
     fig.text(.035, .925,
-             "Eight selected cuts; each row uses the same crop and scale before and after.",
-             fontsize=11, color="#666a70", ha="left", va="top")
-    for x, title in ((.035, "CUT"), (.24, "BASELINE"), (.49, "V3"), (.74, "OVERLAY")):
-        fig.text(x, .905, title, fontsize=10, fontweight="bold",
+             "Same full-glyph scale in all columns; blue = baseline, orange = candidate in overlay. "
+             "Research candidate only, not visually accepted.",
+             fontsize=10.5, color="#666a70", ha="left", va="top")
+    for x, title in ((.035, "GLYPH"), (.22, "BASELINE"), (.48, "V4 CANDIDATE"), (.74, "OVERLAY")):
+        fig.text(x, .895, title, fontsize=10, fontweight="bold",
                  color="#55585d", ha="left", va="top")
 
-    for row, (ch, ci, i, j, limits) in enumerate(rows):
+    for row, ch in enumerate(chars):
         ax = fig.add_subplot(gs[row, 0])
         ax.axis("off")
-        ax.text(.02, .88, f"U+{ord(ch):04X} · hook cut {row + 1}", fontsize=9.1,
-                color="#45484d", ha="left", va="top", wrap=True)
+        ax.text(.04, .80, f"U+{ord(ch):04X}", fontsize=11, fontweight="bold",
+                color="#45484d", ha="left", va="top")
+        ax.text(.04, .58, f"{row + 1:02d} / 07", fontsize=8.5,
+                color="#777a7e", ha="left", va="top")
 
         ax = fig.add_subplot(gs[row, 1])
-        draw_contour(ax, base, ch, ci, color="#26364a", limits=limits)
+        draw_glyph(ax, base, ch, color="#26364a")
         ax = fig.add_subplot(gs[row, 2])
-        draw_contour(ax, variant, ch, ci, color="#20252d", limits=limits)
+        draw_glyph(ax, variant, ch, color="#20252d")
         ax = fig.add_subplot(gs[row, 3])
-        ax.add_patch(PathPatch(contour_path(base, ch, ci), facecolor="#52677e",
-                               edgecolor="none", alpha=.58))
-        ax.add_patch(PathPatch(contour_path(variant, ch, ci), facecolor="#e97642",
-                               edgecolor="none", alpha=.58))
+        ax.add_patch(PathPatch(glyph_path(base, base.getBestCmap()[ord(ch)]),
+                               facecolor="#52677e", edgecolor="none", alpha=.58))
+        ax.add_patch(PathPatch(glyph_path(variant, variant.getBestCmap()[ord(ch)]),
+                               facecolor="#e97642", edgecolor="none", alpha=.58))
+        ax.set_xlim(-100, 1100)
+        ax.set_ylim(-190, 1010)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    fig.text(.035, .018,
+             "Only the selected hook-end outlines change; full glyph context is retained for visual judgment. "
+             "No production font was modified.",
+             fontsize=8.5, color="#777a7e", ha="left", va="bottom")
+    fig.savefig(out_path, dpi=170, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print("saved", out_path)
+
+
+def render_local_detail(base: TTFont, variant: TTFont, out_path: FilePath):
+    """Show local cap crops from complete glyph paths, with a miniature location map."""
+    rows = hook_rows(base)
+    fig = plt.figure(figsize=(18.0, 16.0), facecolor="#fbfaf7")
+    gs = fig.add_gridspec(
+        len(rows), 4, left=.035, right=.985, top=.895, bottom=.04,
+        wspace=.08, hspace=.12, width_ratios=[1.0, 1.0, 1.0, 1.0],
+    )
+    fig.text(.035, .965, "V4 · END-CAP DETAILS WITH FULL-GLYPH CONTEXT", fontsize=21,
+             fontweight="bold", color="#171a1f", ha="left", va="top")
+    fig.text(.035, .925,
+             "Each crop is drawn from the complete glyph (not an isolated contour); the left thumbnail marks its location.",
+             fontsize=10.3, color="#666a70", ha="left", va="top")
+    for x, title in ((.035, "LOCATION"), (.285, "BASELINE CROP"),
+                     (.535, "V4 CROP"), (.785, "OVERLAY")):
+        fig.text(x, .905, title, fontsize=9.5, fontweight="bold",
+                 color="#55585d", ha="left", va="top")
+
+    for row, (ch, _ci, _i, _j, limits) in enumerate(rows):
+        ax = fig.add_subplot(gs[row, 0])
+        draw_glyph(ax, base, ch, color="#26364a")
+        ax.add_patch(Rectangle(
+            (limits[0], limits[2]), limits[1] - limits[0], limits[3] - limits[2],
+            fill=False, edgecolor="#e97642", linewidth=1.4, zorder=5,
+        ))
+        ax.text(.03, .97, f"U+{ord(ch):04X} · cut {row + 1}",
+                transform=ax.transAxes, ha="left", va="top", fontsize=7.7,
+                color="#45484d", fontweight="bold")
+        ax = fig.add_subplot(gs[row, 1])
+        draw_glyph(ax, base, ch, color="#26364a", limits=limits)
+        ax = fig.add_subplot(gs[row, 2])
+        draw_glyph(ax, variant, ch, color="#20252d", limits=limits)
+        ax = fig.add_subplot(gs[row, 3])
+        ax.add_patch(PathPatch(glyph_path(base, base.getBestCmap()[ord(ch)]),
+                               facecolor="#52677e", edgecolor="none", alpha=.58))
+        ax.add_patch(PathPatch(glyph_path(variant, variant.getBestCmap()[ord(ch)]),
+                               facecolor="#e97642", edgecolor="none", alpha=.58))
         ax.set_xlim(limits[0], limits[1])
         ax.set_ylim(limits[2], limits[3])
         ax.set_aspect("equal")
         ax.axis("off")
-    fig.savefig(out_path, dpi=165, bbox_inches="tight", facecolor=fig.get_facecolor())
+
+    fig.text(.035, .012,
+             "Orange outline on the thumbnail marks the crop; blue = baseline, orange = candidate. "
+             "V4 remains a research candidate, not accepted artwork.",
+             fontsize=8.2, color="#777a7e", ha="left", va="bottom")
+    fig.savefig(out_path, dpi=170, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     print("saved", out_path)
 
@@ -209,7 +240,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True, help="Original static A D/400 TTF")
     parser.add_argument("--variant", required=True, help="Temporary hook-only preview TTF")
-    parser.add_argument("--outdir", required=True, help="Directory for the two PNGs")
+    parser.add_argument("--outdir", required=True, help="Directory for the three PNGs")
     args = parser.parse_args()
     base, variant = TTFont(args.baseline), TTFont(args.variant)
     for label, font in (("baseline", base), ("variant", variant)):
@@ -219,8 +250,9 @@ def main():
             raise ValueError(f"{label} is missing at least one sample character")
     outdir = FilePath(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    render_main(base, variant, outdir / "01-tsukushi-a-d-63-baseline-vs-hook-only-v3.png")
-    render_detail(base, variant, outdir / "02-tsukushi-a-hook-end-detail-v3.png")
+    render_main(base, variant, outdir / "tsukushi-a-d-63-hook-only-v4-overview.png")
+    render_detail(base, variant, outdir / "tsukushi-a-v4-full-glyph-review.png")
+    render_local_detail(base, variant, outdir / "tsukushi-a-v4-endpoint-detail.png")
 
 
 if __name__ == "__main__":
