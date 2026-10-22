@@ -237,4 +237,4 @@ AI 造字项目作为"重写马路口"的可能路线，均已查证并排除，
 
 当时曾从 [`Zolyn/TsukuBRdGothic-Std`](https://github.com/Zolyn/TsukuBRdGothic-Std) 取得 Light/Regular/Medium 社区文件，记录了 weightClass 300/400/500、样本 cmap 覆盖和静态拓扑差异；这些只是对该社区文件的技术记录，**不能证明它是目标筑紫 B 的适用版本**。用户随后明确指出候选“包”字视觉重量不符，因此“B 候选已找到、当前不回退 A”结论撤销，候选 63 项图已从当前树移除。旧拓扑数字只描述那组被否定的文件，不再作本任务设计或验收依据。
 
-Fontworks 官方页面证明筑紫 B 产品存在，但本地没有可核验、且取得相应用途许可的 B 文件。按用户的回退条件，本轮改用单一静态筑紫 A D（`usWeightClass=400`），生成原始 A-D 与同基准钩尾简化的对照；不伪造 Light/Regular/Medium。当前来源、图片及限制见 [`2026-10-21-tsukushi-a/README.md`](../2026-10-21-tsukushi-a/README.md)，十点检讨见 [`2026-10-21-tsukushi-a/03-ten-point-review.md`](../2026-10-21-tsukushi-a/03-ten-point-review.md)。B 方向旧文稿现仅作作废记录：[`13-tsukushi-b-redesign-brief.md`](13-tsukushi-b-redesign-brief.md)。
+Fontworks 官方页面证明筑紫 B 产品存在，但本地没有可核验、且取得相应用途许可的 B 文件。按用户的回退条件，本轮改用单一静态筑紫 A D（`usWeightClass=400`），生成原始 A-D 与同基准钩尾简化的对照；不伪造 Light/Regular/Medium。当前来源、图片及限制见 [`2026-10-21-tsukushi-a/README.md`](../2026-10-21-tsukushi-a/README.md)。B 方向旧文稿现仅作作废记录：[`13-tsukushi-b-redesign-brief.md`](13-tsukushi-b-redesign-brief.md)。

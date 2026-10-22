@@ -5,6 +5,6 @@
 - 此社区候选不能作为本任务的有效筑紫 B 基准；旧参考图已从当前树删除。
 - Fontworks 官方页面证明筑紫 B 产品存在，但本地没有可核验、且取得相应用途许可的 B 字体文件；不能把“产品存在”说成“已取得字体”。
 - 按用户给出的条件，当前回退使用筑紫 A D 单一静态字重，做“原 A-D 基准”与“同基准 + 钩尾端头简化”对照。
-- 当前实际来源、SHA、字重、覆盖、图片和局部简化边界见 [`docs/round-preview/2026-10-21-tsukushi-a/README.md`](../2026-10-21-tsukushi-a/README.md)。十点检讨见同目录 [`03-ten-point-review.md`](../2026-10-21-tsukushi-a/03-ten-point-review.md)。
+- 当前实际来源、SHA、字重、覆盖、图片和局部简化边界见 [`docs/round-preview/2026-10-21-tsukushi-a/README.md`](../2026-10-21-tsukushi-a/README.md)。
 
 **未满足的旧验收项：**可信的 A Light / Regular / Medium 三档来源、63 项 × 三档拓扑兼容检查仍未完成。本轮只用一个 D 静态源，不伪造其它字重，不改生产字体。
