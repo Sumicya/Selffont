@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Selffont 打包器：一个主字体 + 基础包 → KernelSU 模块 zip;--check 跑内建自检。
+"""Selffont 打包器：一个主字体 + 基础包 + 固定许可补充字体 → KernelSU 模块 zip;--check 跑内建自检。
 
   pip install -r requirements.txt
   python3 build.py --check                       # 自检：无框架，assert 直跑，不下载不打包
@@ -67,6 +67,25 @@ PRIMARY_NAME = "Selffont-WenYuanRoundedSCVF.ttf"  # 默认源的安装名
 RENAME = "Selffont Rounded SC VF"                 # 安装副本内部家族名（OFL 保留名合规）
 BASE_URL = "https://github.com/Numbersf/MakeFontsGreatAgain/releases/download/1717180003/MFGA-SELFUSE-17.0.1.08-31-alpha2.1717180003.zip"
 BASE_SHA256 = "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b"
+
+# MFGA 17.0.1 删除了不可再分发的 Symbola-13.otf。Google Fonts 的 Noto Music（OFL-1.1）
+# 在 U+1D100..U+1D1FF 补回约 200 个原先仅由 Symbola 提供的可见音符字形。使用不可变 Git blob
+# URL 与 SHA-256，字体和对应许可证只在构建时下载、随模块打包，不把 TTF/OTF 放进仓库。
+NOTO_MUSIC_SOURCE = {
+    "filename": "NotoMusic-Regular.ttf",
+    "url": "https://api.github.com/repos/google/fonts/git/blobs/7f1d616dd5efee190bb631231cf5f35fa8b8ab95",
+    "sha256": "aeb2998c380f5807cda77e1d94e4ac596429cb74d4fffb8da279d4f3144c0eae",
+    "accept": "application/vnd.github.raw",
+    "family": "Noto Music",
+    "license_filename": "NotoMusic-OFL.txt",
+    "license_url": "https://api.github.com/repos/google/fonts/git/blobs/b6cd8a88e3c1ed12552e242d6428fd6bd8f292b1",
+    "license_sha256": "1679cb60544990b4c2445320c6d5298e4bb0c08ff00dbb5a526f3793fdaa1e6f",
+    "license_accept": "application/vnd.github.raw",
+    "license_marker": "SIL OPEN FONT LICENSE Version 1.1",
+    "coverage_range": (0x1D100, 0x1D1FF),
+    "minimum_outline_mappings": 200,
+}
+SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE,)
 
 # ---------------------------------------------------------------- 配置数据
 CARRIER = "Roboto-Regular.ttf"  # 输入 fonts.xml 的默认家族必须保留的度量空壳
@@ -143,18 +162,26 @@ def digest(path: Path) -> str:
 
 # ---------------------------------------------------------------- 来源（自由）
 
-def fetch(url: str, destination: Path, expected: str | None = None) -> Path:
-    """下载到 destination（已存在就复用）；expected 是默认源哈希，漂移只警告不拦截。"""
+def fetch(url: str, destination: Path, expected: str | None = None,
+          accept: str | None = None, strict: bool = False) -> Path:
+    """下载到 destination（已存在就复用）；默认哈希漂移告警，固定许可资源可要求严格匹配。"""
     if destination.exists():
         print(f"[缓存] {destination}")
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
         print(f"[下载] {url}")
-        request = urllib.request.Request(url, headers={"User-Agent": "Selffont-builder"})
+        headers = {"User-Agent": "Selffont-builder"}
+        if accept:
+            headers["Accept"] = accept
+        request = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(request, timeout=300) as response, destination.open("wb") as out:
             shutil.copyfileobj(response, out, 1 << 20)
-    if expected and digest(destination) != expected:
-        warn(f"默认源内容已变：期望 sha256 {expected[:12]}…，实际 {digest(destination)[:12]}…。继续构建。")
+    actual = digest(destination)
+    if expected and actual != expected:
+        message = f"来源 sha256 不匹配：期望 {expected}，实际 {actual}。"
+        if strict:
+            raise ValueError(message)
+        warn(f"默认源内容已变：期望 sha256 {expected[:12]}…，实际 {actual[:12]}…。继续构建。")
     return destination
 
 
@@ -182,6 +209,69 @@ def font_face(data: bytes) -> dict:
     """家族名与可变轴——全部现场读取，读到什么用什么。"""
     with TTFont(io.BytesIO(data), lazy=True) as font:
         return {"family": font["name"].getDebugName(1) or "", "axes": font_axes(font)}
+
+
+def pinned_artifact(spec: str, destination: Path, expected: str, accept: str | None = None) -> Path:
+    """读取固定哈希的外部资源；支持不可变 URL，也支持测试用的本地文件。"""
+    if spec.startswith(("http://", "https://")):
+        return fetch(spec, destination, expected, accept=accept, strict=True)
+    path = Path(spec)
+    if not path.is_file():
+        raise FileNotFoundError(f"补充字体来源不存在：{path}")
+    actual = digest(path)
+    if actual != expected:
+        raise ValueError(f"补充字体来源 sha256 不匹配：{path} 期望 {expected}，实际 {actual}。")
+    return path
+
+
+def load_supplemental_fonts(sources: tuple[dict, ...], cache: Path) -> list[dict]:
+    """下载并验证许可明确的补充字体；只读源文件，不把二进制写进仓库。"""
+    loaded, filenames = [], set()
+    for spec in sources:
+        filename = spec["filename"]
+        license_filename = spec["license_filename"]
+        if PurePosixPath(filename).name != filename or PurePosixPath(filename).suffix.lower() not in FONT_SUFFIXES:
+            raise ValueError(f"补充字体文件名不安全：{filename!r}")
+        if PurePosixPath(license_filename).name != license_filename:
+            raise ValueError(f"补充字体许可证文件名不安全：{license_filename!r}")
+        if filename in filenames:
+            raise ValueError(f"补充字体文件名重复：{filename}")
+        filenames.add(filename)
+
+        font_path = pinned_artifact(spec["url"], cache / filename, spec["sha256"], spec.get("accept"))
+        data = font_path.read_bytes()
+        try:
+            with TTFont(io.BytesIO(data), lazy=True) as font:
+                family = font["name"].getDebugName(1) or ""
+                cmap = font.getBestCmap() or {}
+                glyphs = font.getGlyphSet()
+                start, end = spec["coverage_range"]
+                visible = set()
+                for codepoint, glyph_name in cmap.items():
+                    if start <= codepoint <= end:
+                        pen = BoundsPen(glyphs)
+                        glyphs[glyph_name].draw(pen)
+                        if pen.bounds is not None:
+                            visible.add(codepoint)
+        except Exception as error:
+            raise ValueError(f"补充字体无法解析：{filename}: {error}") from error
+        if family != spec["family"]:
+            raise ValueError(f"补充字体家族名漂移：{filename} 期望 {spec['family']!r}，实际 {family!r}")
+        minimum = spec["minimum_outline_mappings"]
+        if len(visible) < minimum:
+            raise ValueError(f"补充字体覆盖不足：{filename} 在 U+{start:04X}..U+{end:04X} "
+                             f"只有 {len(visible)} 个非空轮廓，至少需要 {minimum} 个")
+
+        license_path = pinned_artifact(spec["license_url"], cache / license_filename,
+                                       spec["license_sha256"], spec.get("license_accept"))
+        license_data = license_path.read_bytes()
+        marker = spec["license_marker"].encode("utf-8")
+        if marker not in license_data:
+            raise ValueError(f"补充字体许可证不符合预期：{license_filename} 缺少 {spec['license_marker']!r}")
+        loaded.append({"filename": filename, "data": data, "sha256": spec["sha256"], "family": family,
+                       "license_filename": license_filename, "license_data": license_data,
+                       "outline_mappings": len(visible)})
+    return loaded
 
 
 def layout_metrics(font: TTFont) -> dict:
@@ -572,8 +662,12 @@ def font_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 def build(base: str | None = None, font: str | None = None, output: Path | None = None,
           build_num: str | None = None, day: str | None = None, date: str | None = None,
-          query: bool = False, keep_web_fonts: bool = False) -> list[str]:
-    """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。"""
+          query: bool = False, keep_web_fonts: bool = False,
+          supplemental_font_sources: tuple[dict, ...] | None = None) -> list[str]:
+    """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。
+
+    supplementals=None 使用仓库固定的 OFL 来源；显式空 tuple 仅供离线自检夹具使用。
+    """
     cache = ROOT / "build/cache"
     build_num = build_num or os.environ.get("SELFFONT_BUILD") or None
     day = day or os.environ.get("SELFFONT_DAY") or None
@@ -596,6 +690,9 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     primary = Path(source(font, PRIMARY_URL, PRIMARY_SHA256, cache / name)).read_bytes()
     face = font_face(primary)
     ladder = weight_ladder(face["axes"])
+    supplemental_sources = (SUPPLEMENTAL_FONT_SOURCES if supplemental_font_sources is None
+                            else supplemental_font_sources)
+    supplementals = load_supplemental_fonts(supplemental_sources, cache)
 
     with zipfile.ZipFile(base_path) as archive:
         members = font_members(archive)
@@ -614,25 +711,40 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
         # 只出新语法（Android 15+ 的 font_fallback.xml）；库存 fonts.xml 不再替换。
         xml = configure_fonts((ROOT / "fonts.xml").read_bytes(), name, ladder)
-        referenced = {(node.text or "").strip() for node in ET.fromstring(xml).iter("font")}
+        xml_root = ET.fromstring(xml)
+        references = [(node.text or "").strip() for node in xml_root.iter("font")]
+        referenced = set(references)
+        member_by_file = {PurePosixPath(member.filename).name: member for member in members}
+        extra_by_file = {extra["filename"]: extra for extra in supplementals}
+        for extra in supplementals:
+            filename = extra["filename"]
+            if references.count(filename) != 1:
+                raise ValueError(f"补充字体必须在 fonts.xml 中恰好引用一次：{filename}")
+            member = member_by_file.get(filename)
+            if member and hashlib.sha256(archive.read(member)).hexdigest() != extra["sha256"]:
+                raise ValueError(f"基础包已有同名但内容不同的补充字体：{filename}")
         bundled = [member for member in members if PurePosixPath(member.filename).name in referenced]
 
         # 火狐 pref 尾链：火狐的逐字回退不读 fonts.xml，逐字兜底时全清单乱序扫描，选中的字体和系统
         # 不同（花体/生僻字符两副面孔）。把补充字库的内部家族名按 fonts.xml 顺序追加到每条名单末尾，
         # 让它和系统走同一条链。火狐只认字件内部名（优先 typographic），现场从基础包读取。
-        member_by_file = {PurePosixPath(m.filename).name: m for m in members}
         families, done = [], set()
-        for node in ET.fromstring(xml).iter("font"):
+        for node in xml_root.iter("font"):
             fname = (node.text or "").strip()
-            member = member_by_file.get(fname)
-            if not member or fname in (name, CARRIER) or fname in OLD_PRIMARY or fname in done:
-                continue  # 设备自带（读不到内部名）或主字体/空壳：前者交给系统，后者已是名单头部
-            done.add(fname)
-            try:
-                with TTFont(io.BytesIO(archive.read(member)), lazy=True) as font:
-                    family = font["name"].getDebugName(16) or font["name"].getDebugName(1)
-            except Exception:  # 坏字件跳过，不影响构建
+            if fname in done or fname in (name, CARRIER) or fname in OLD_PRIMARY:
                 continue
+            done.add(fname)
+            member = member_by_file.get(fname)
+            if member:
+                try:
+                    with TTFont(io.BytesIO(archive.read(member)), lazy=True) as font:
+                        family = font["name"].getDebugName(16) or font["name"].getDebugName(1)
+                except Exception:  # 坏字件跳过，不影响构建
+                    continue
+            elif fname in extra_by_file:
+                family = extra_by_file[fname]["family"]
+            else:
+                continue  # 设备自带（读不到内部名），交给系统
             if family and family not in families:
                 families.append(family)
         config = (ROOT / "module/geckoview-config.yaml").read_text(encoding="utf-8")
@@ -644,12 +756,13 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
         config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
-        write_module(output, archive, bundled, name, packaged, xml, prop, config)
+        write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}")
     print(f"  主字体 {face['family']!r} → {RENAME}（{name},{len(ladder)} 档）")
-    print(f"  补充字库 {len(bundled)} 个，fonts.xml 其余引用由设备自带（Noto/OEM，不打包）")
+    print(f"  补充字库 {len(bundled)} 个基础字体 + {len(supplementals)} 个固定许可外部字体；"
+          "fonts.xml 其余引用由设备自带（Noto/OEM，不打包）")
     print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成文渊")
     for message in warnings:
         warn(message)
@@ -657,8 +770,9 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
-                 name: str, packaged: bytes, xml: bytes, prop: str, config: str) -> None:
-    """写模块 zip：被配置引用的基础包字体 + 主字体 + 原生 KSU 模块布局。
+                 name: str, packaged: bytes, xml: bytes, prop: str, config: str,
+                 supplementals: list[dict]) -> None:
+    """写模块 zip：被配置引用的基础包字体 + 固定许可外部字体 + 主字体 + 原生 KSU 模块布局。
 
     包内只有一份字体配置 font_fallback.xml（新语法）：安装脚本把它投放到系统里存在的
     font_fallback*.xml 上；库存 fonts.xml 不替换（没有该文件的设备不支持，安装直接失败）。
@@ -666,6 +780,12 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as destination:
         for member in bundled:
             destination.writestr(member.filename, archive.read(member))
+        bundled_names = {PurePosixPath(member.filename).name for member in bundled}
+        for supplemental in supplementals:
+            if supplemental["filename"] not in bundled_names:
+                destination.writestr(f"system/fonts/{supplemental['filename']}", supplemental["data"])
+            destination.writestr(f"licenses/{supplemental['license_filename']}",
+                                 supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("module.prop", prop)
@@ -720,6 +840,26 @@ def make_font(family="Test Primary", upm=1000, axes=True):
     b.setupPost()
     if axes:
         b.setupFvar(axes=[("wght", 100, 400, 900, "Weight"), ("ital", 0, 0, 1, "Italic")], instances=[])
+    out = io.BytesIO()
+    b.save(out)
+    return out.getvalue()
+
+
+def make_music_font(glyph_count=200):
+    """离线构建测试用字体：足够覆盖 Noto Music 的固定音符区段门槛。"""
+    codepoints = range(0x1D100, 0x1D100 + glyph_count)
+    order = [".notdef", *(f"u{codepoint:04X}" for codepoint in codepoints)]
+    b = FontBuilder(1000, isTTF=True)
+    b.setupGlyphOrder(order)
+    b.setupCharacterMap({codepoint: f"u{codepoint:04X}" for codepoint in codepoints})
+    b.setupGlyf({name: box(40, 0, 460, 700) for name in order})
+    b.setupHorizontalMetrics(dict.fromkeys(order, (500, 0)))
+    b.setupHorizontalHeader(ascent=800, descent=-200)
+    b.setupNameTable({"familyName": "Noto Music", "styleName": "Regular",
+                      "uniqueFontIdentifier": "Noto Music Test", "fullName": "Noto Music Regular",
+                      "psName": "NotoMusic-Regular"})
+    b.setupOS2(sTypoAscender=800, sTypoDescender=-200, usWinAscent=800, usWinDescent=200, usWeightClass=400)
+    b.setupPost()
     out = io.BytesIO()
     b.save(out)
     return out.getvalue()
@@ -936,6 +1076,10 @@ def blank_prune():
 def build_end_to_end():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
+
+        def test_build(**kwargs):
+            kwargs.setdefault("supplemental_font_sources", ())
+            return build(**kwargs)
         fonts_dir = tmp / "fonts"
         fonts_dir.mkdir()
         regular = fonts_dir / "P-Regular.ttf"
@@ -944,13 +1088,27 @@ def build_end_to_end():
         base_zip(base, {"Roboto-Regular.ttf": make_carrier(),
                         "NotoSansPro.otf": make_font(family="Noto Sans Pro"),  # 真字体：验尾链要读内部家族名
                         "DeadWeight.ttf": b"dead"})
-        build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
+        music_font_path = tmp / "NotoMusic-Regular.ttf"
+        music_font_path.write_bytes(make_music_font())
+        music_license_path = tmp / "NotoMusic-OFL.txt"
+        music_license_path.write_text("SIL OPEN FONT LICENSE Version 1.1\nTest license fixture\n", encoding="utf-8")
+        music_source = {
+            "filename": "NotoMusic-Regular.ttf", "url": str(music_font_path),
+            "sha256": digest(music_font_path), "family": "Noto Music",
+            "license_filename": "NotoMusic-OFL.txt", "license_url": str(music_license_path),
+            "license_sha256": digest(music_license_path),
+            "license_marker": "SIL OPEN FONT LICENSE Version 1.1",
+            "coverage_range": (0x1D100, 0x1D1FF), "minimum_outline_mappings": 200,
+        }
+        test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30",
+                   supplemental_font_sources=(music_source,))
 
         with zipfile.ZipFile(output) as archive:
             members = set(archive.namelist())
             for expected in ("module.prop", "LICENSES.md", "customize.sh",
                              "firefox.sh", "web-fonts.sh", "action.sh", "geckoview-config.yaml",
                              "font_fallback.xml", "licenses/WenYuan-OFL.txt",
+                             "system/fonts/NotoMusic-Regular.ttf", "licenses/NotoMusic-OFL.txt",
                              "system/fonts/P-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
                              "system/fonts/NotoSansPro.otf", "licenses/MFGA-base-LICENSES.md"):
                 assert expected in members, f"缺成员 {expected}"
@@ -964,6 +1122,10 @@ def build_end_to_end():
             packaged = archive.read("system/fonts/P-Regular.ttf")
             xml = archive.read("font_fallback.xml").decode()
             config = archive.read("geckoview-config.yaml").decode()
+            assert "  layout.css.font-variations.enabled: true" in config.splitlines(), \
+                "ZIP 内 Gecko 配置未开启 CSS 可变字体支持"
+            music_packaged = archive.read("system/fonts/NotoMusic-Regular.ttf")
+            music_license_packaged = archive.read("licenses/NotoMusic-OFL.txt")
 
         # 归一 + 改名之后：轮廓/cmap/轴不动，家族名换成 RENAME,hhea 对齐空壳。
         before, after = glyph_signature(make_font()), glyph_signature(packaged)
@@ -971,6 +1133,12 @@ def build_end_to_end():
         assert before["axes"] == after["axes"] and after["family"] == RENAME
         assert TTFont(io.BytesIO(packaged))["hhea"].ascent == 930, "包内字体未归一"
         assert "P-Regular.ttf" in xml
+        assert "NotoMusic-Regular.ttf" in xml
+        assert music_packaged == music_font_path.read_bytes()
+        assert b"SIL OPEN FONT LICENSE Version 1.1" in music_license_packaged
+        assert ", Noto Music\"" in config, "补充 OFL 字体家族未追加到 Gecko 尾链"
+        music_cmap = TTFont(io.BytesIO(music_packaged)).getBestCmap() or {}
+        assert sum(0x1D100 <= codepoint <= 0x1D1FF for codepoint in music_cmap) >= 200
         # 单一配置、单一写法：主字体一律「一条 supportedAxes 字件」，接管家族与旧版一致。
         def ours_by_family(document):
             root = ET.fromstring(document)
@@ -999,13 +1167,13 @@ def build_end_to_end():
                        and len(f.findall("font")) > 1 for f in locale), "语言区不许混主字体与其他字件（真机卡开机）"
         assert "MiSans" not in xml, "包内配置不该引用 MiSans"
         # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，开头（本来字体或文渊）不动。
-        assert ", Noto Sans Pro\"" in config, "尾链未拼进火狐配置"
+        assert ", Noto Sans Pro, Noto Music\"" in config, "补充字体尾链顺序未拼进火狐配置"
         for line in config.splitlines():
             if line.strip().startswith("font.name-list."):
                 name_list_ok(line)
 
         # --keep-web-fonts 时那一行应带 Selffont:keep 标记。
-        build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30",
+        test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30",
               keep_web_fonts=True)
         with zipfile.ZipFile(output) as archive:
             kept = archive.read("geckoview-config.yaml").decode()
@@ -1016,7 +1184,7 @@ def build_end_to_end():
                     name_list_ok(line)
         # 没有五段版本数据就不出包（规范：取数失败停止出包和上传）。
         try:
-            build(base=str(base), font=str(regular), output=tmp / "out" / "nostamp.zip")
+            test_build(base=str(base), font=str(regular), output=tmp / "out" / "nostamp.zip")
             raise AssertionError("没有版本数据的构建未被拒绝")
         except ValueError as error:
             assert "版本号缺少" in str(error), error
@@ -1026,12 +1194,12 @@ def build_end_to_end():
         # 自由化：主字体按自己的文件名安装，不要求固定命名；非字体后缀明确报错。
         custom = fonts_dir / "Weird-Name.ttf"
         custom.write_bytes(make_font(family="Custom Face"))
-        build(base=str(base), font=str(custom), output=output, build_num="9", day="2", date="26.9.30")
+        test_build(base=str(base), font=str(custom), output=output, build_num="9", day="2", date="26.9.30")
         with zipfile.ZipFile(output) as archive:
             assert "system/fonts/Weird-Name.ttf" in archive.namelist()
             assert "Weird-Name.ttf" in archive.read("font_fallback.xml").decode()
         try:
-            build(base=str(base), font=str(fonts_dir / "x.woff2"), output=output,
+            test_build(base=str(base), font=str(fonts_dir / "x.woff2"), output=output,
                   build_num="9", day="2", date="26.9.30")
             raise AssertionError("非字体后缀未被拒绝")
         except ValueError:
@@ -1041,13 +1209,13 @@ def build_end_to_end():
         base_zip(base, {"SomeFont.ttf": b"supplemental"})
         for message in ("没有它就不做归一",):
             try:
-                build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
+                test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
                 raise AssertionError("缺空壳未被拒绝")
             except ValueError as error:
                 assert message in str(error), error
         base_zip(base, {"Roboto-Regular.ttf": make_carrier(visible=True)})  # 可见字形的 Roboto 不是空壳
         try:
-            build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
+            test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
             raise AssertionError("可见字形的空壳未被拒绝")
         except ValueError as error:
             assert "度量空壳" in str(error), error
@@ -1056,7 +1224,7 @@ def build_end_to_end():
         static_font.write_bytes(make_font(axes=False))
         base_zip(base, {"Roboto-Regular.ttf": make_carrier()})
         try:
-            build(base=str(base), font=str(static_font), output=output, build_num="9", day="2", date="26.9.30")
+            test_build(base=str(base), font=str(static_font), output=output, build_num="9", day="2", date="26.9.30")
             raise AssertionError("静态主字体未被拒绝")
         except ValueError as error:
             assert "wght" in str(error), error
@@ -1068,7 +1236,7 @@ def build_end_to_end():
             with zipfile.ZipFile(bad_zip, "a") as archive:
                 archive.writestr(bad, b"x")
             try:
-                build(base=str(bad_zip), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
+                test_build(base=str(bad_zip), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
                 raise AssertionError(f"危险成员未拒绝：{bad}")
             except ValueError:
                 pass
@@ -1079,12 +1247,12 @@ def build_end_to_end():
             info.external_attr = (stat.S_IFLNK | 0o644) << 16
             archive.writestr(info, "/etc/passwd")
         try:
-            build(base=str(link_zip), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
+            test_build(base=str(link_zip), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
             raise AssertionError("符号链接字体未被拒绝")
         except ValueError:
             pass
         try:
-            build(base=str(base), font=str(regular), output=base, build_num="9", day="2", date="26.9.30")
+            test_build(base=str(base), font=str(regular), output=base, build_num="9", day="2", date="26.9.30")
             raise AssertionError("输出覆盖了输入")
         except ValueError:
             pass
@@ -1180,6 +1348,8 @@ def firefox_bridge():
     """火狐接入：首选项只前置不清空 + install/remove 行为（PATH 上的 am 用替身）。"""
     config = (ROOT / "module/geckoview-config.yaml").read_text(encoding="utf-8")
     assert config.startswith("prefs:\n") or "\nprefs:\n" in config, "Gecko 配置必须只有 prefs 段"
+    assert "  layout.css.font-variations.enabled: true" in config.splitlines(), \
+        "Gecko 必须启用 CSS 可变字体支持，才能按 ital 轴绘制真斜体"
     lines = [line.strip() for line in config.splitlines() if line.strip().startswith("font.name-list.")]
     assert len(lines) >= 20, f"首选项太少：{len(lines)}"
     for line in lines:  # 只插入不清空：开头是谁由 NATIVE_FIRST 定，后面原样保留 Gecko 默认回退链
@@ -1369,6 +1539,25 @@ def repo_constants():
     # 真实模板引用的字体名与基础包目录约定一致。
     assert all(not name.startswith("/") and ".." not in name
                for name in {node.text.strip() for node in root.iter("font")})
+
+
+@check
+def supplemental_font_reference():
+    """OFL 替代字体必须处在通用回退链，紧随 NotoUnicode，且来源固定。"""
+    root = ET.fromstring((ROOT / "fonts.xml").read_bytes())
+    references = [(node.text or "").strip() for node in root.iter("font")]
+    filename = NOTO_MUSIC_SOURCE["filename"]
+    assert references.count(filename) == 1, f"{filename} 必须恰好引用一次"
+    assert "Symbola-13.otf" not in references, "不可再分发的 Symbola 不得重新打包"
+    assert references.index(filename) == references.index("NotoUnicode.otf") + 1, \
+        "Noto Music 应在 NotoUnicode 之后补缺，避免覆盖它的控制字符字形"
+    families = [family for family in root.findall("family")
+                if any((node.text or "").strip() == filename for node in family.findall("font"))]
+    assert len(families) == 1 and families[0].get("lang") is None, \
+        "通用音乐符号回退不应误标为单一 Unicode Script"
+    assert len(NOTO_MUSIC_SOURCE["sha256"]) == len(NOTO_MUSIC_SOURCE["license_sha256"]) == 64
+    assert NOTO_MUSIC_SOURCE["coverage_range"] == (0x1D100, 0x1D1FF)
+    assert NOTO_MUSIC_SOURCE["minimum_outline_mappings"] >= 200
 
 
 def run_checks() -> None:

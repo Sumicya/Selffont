@@ -1,6 +1,6 @@
 # 筑紫 A D/400 V10：可逆研究候选、全样本审计与限制
 
-> **状态：V10 可逆研究候选，待主人审阅；尚无审美验收。** 这是单一静态 D/400 的本机临时预览，不是生产字体、不进入安装包或 `build.py`。筑紫源字体的正式再分发许可尚未确认；源 TTF 和派生 TTF 均只留在 `/tmp`，不入库、不打包、不宣称可再分发。
+> **历史记录：筑紫 A D/400 V10，不是当前设计方向，也未获审美验收。** 当前方向只基于 Maruko；唯一当前图见 [`docs/round-preview/README.md`](README.md)。V10 曾是单一静态 D/400 的本机研究候选，不是生产字体、不进入安装包或 `build.py`。筑紫源字体的正式再分发许可尚未确认；源 TTF 和派生 TTF 均只留在 `/tmp`，不入库、不打包、不宣称可再分发。旧版 PNG 已于 2026-10-24 从工作树清理；可用 `git show 3583a8a:docs/round-preview/tsukushi-a-v10-63-sample-overview.png` 从历史提交读取。
 
 ## 输入、基线与范围
 
@@ -23,10 +23,7 @@ V10 以 V9 74-FU 共享宽度候选为底，只用 V10 几何替换以下 12 个
 
 ## 可直接审阅的 PNG
 
-- [完整 63 项对照：原字形 vs V10](tsukushi-a-v10-63-sample-overview.png)
-- [重点字完整字形同尺度对照：颜、暖、电、己、已、巳、也、乙、包、鸟、色、龙、子](tsukushi-a-v10-focused-glyphs.png)
-- [钩尾/圆弧末端放大细节：同一行 source 与 V10 使用相同裁切范围](tsukushi-a-v10-terminal-detail.png)
-- [“鸟”“也”分别与各自草图对照](tsukushi-a-v10-sketch-gesture-study.png)
+V10 曾有四张 PNG 样图（全样本、重点字、端头细节、草图思路对照）。为避免与当前 Maruko 新稿混淆，旧图已从工作树清理；研究记录仍保留在本文件，旧图可用 `git show 3583a8a:docs/round-preview/tsukushi-a-v10-63-sample-overview.png` 等路径从归档提交读取。
 
 这些是基于未 hint 的矢量轮廓渲染，不是操作系统 / 真机截图；图像用于主人正常字面和放大细节审阅，不能代替主人审美签核。量化通过也不代表视觉通过。
 

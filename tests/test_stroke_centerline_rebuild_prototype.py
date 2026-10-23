@@ -51,6 +51,5 @@ class StrokeCenterlineRebuildPrototypeTests(unittest.TestCase):
         self.assertEqual(len(contours), 1)
         self.assertGreater(_contour_area(contours[0]), 0)
 
-
 if __name__ == "__main__":
     unittest.main()

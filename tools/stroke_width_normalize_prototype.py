@@ -14,7 +14,8 @@ glyf outlines and offers three modes:
   control for rasterization and contour tracing effects.
 
 Every mode rasterizes and retraces glyphs, so none is a production converter.
-The output glyphs are simplified in a separate ``curve_simplify.py`` step.
+A separate ``curve_simplify.py`` pass may re-fit the traced outlines; that only
+changes curve/control-point representation and is not semantic stroke simplification.
 Advances and font metrics are left untouched; variation data is unsupported.
 Optional research dependencies are listed in ``requirements-research.txt``.
 """

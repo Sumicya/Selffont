@@ -1,14 +1,16 @@
 # 待办（下个会话）
 
-**2026-10-23 当前方向（V10 可逆候选，优先于下文旧记录）**：继续以单一静态筑紫 A D/400（UPM 1000、`usWeightClass=400`、无 `fvar`）为研究来源。用户确认的“鸟”“也”草图分别只作对应字形的整体笔势参照。V10 以已验证 V9 的 74-FU 候选为基线，对 12 字定点恢复/重绘矢量：“颜”“暖”恢复源轮廓；己/已/巳/也/包（双端）/色/龙/子修圆弧端头；“鸟”三段手势重绘；“乙”开放单笔去回钩。63 项/62 唯一字形均有样本审计；唯一获准的 source→geometry 拓扑变化是“鸟”3→1 轮廓。量化、自交和 PNG 已生成，但**未获审美验收**；“电”沿用 V9 中框 0.97 处理、bbox 仍少 5 FU。正常字面及放大端头图与完整复现见 [`docs/round-preview/README.md`](docs/round-preview/README.md) 和 [`V10 验证记录`](docs/round-preview/tsukushi-a-v10-validation.md)。V10 仍可逆、不是生产字体；源/派生 TTF 不入库。未验证其他字重、全字库、安装包或真机。
+**2026-10-24 当前方向（用户最新指令，覆盖下文旧方向）**：只以 Maruko Gothic 自身字形为来源，扩展 CJK 并分别审计 SC / TC / JP；没有上游 KR 字体时研究用 Maruko 自有 Jamo 组合 Hangul，不停在建议系统回退。当前唯一主图区分两项：SC Regular 63 项 / 62 个唯一字形的实际笔宽原型，以及 45,007 个唯一映射字形的轮廓曲线/控制点重新拟合；**控制点减少不等于笔画简化**。笔宽样本使用已选共享目标 62.01 FU（`文` 回退 63.50 FU），审计跨字宽度 CV 在 360 px 为 0.040 -> 0.020；仅是一个问题类别和小样本原型，不是全字库处理或视觉验收。另从 Maruko Jamo 组合 U+AC00..U+D7A3 全部 11,172 个 Hangul 音节。SC 原 CJK 缺口、KR Hanja、Light/Medium、TC/JP 以及逐字审美验收仍未完成；未改生产字体路由，不接 `build.py`。当前图与边界见 [`docs/round-preview/README.md`](docs/round-preview/README.md)。
 
 **规范文件状态（2026-10-23 收尾重核）**：`git ls-remote https://github.com/Sumicya/selfs refs/heads/main` 返回 [`ff2a18821903b3db949e3ae2b9006f73e58d01dc`](https://github.com/Sumicya/selfs/commit/ff2a18821903b3db949e3ae2b9006f73e58d01dc)，与本轮开始前读取的 main SHA 相同；`GLOBAL.md` blob 为 `fe404a18898a568ab5b88cca2baad0212fa5d93d`。本轮按该规范及 S7/S8 方法执行：Ponytail HEAD [`09c434ab73ca43761c5d8b0c5d341926c2fba710`](https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md)；Nagi Skills HEAD [`b0eefa19f516b2b29a5a556dc4c569a02da157e8`](https://github.com/nagi-studio/skills/tree/b0eefa19f516b2b29a5a556dc4c569a02da157e8)，读取 `skills/pondering/grill/SKILL.md` 与 `skills/pondering/architect/SKILL.md`。
 
 继续前先读本文件、`README.md`、`CHANGELOG.md` 及 [`docs/round-preview/README.md`](docs/round-preview/README.md)，以该入口标注的当前版本为准；除非材料不足以判断或存在会改变实现方向的重要歧义，不重复要求主人手写已有说明。`AGENTS.md` 已于 2026-10-15 由主人删除，不再维护。
 
-## ① 自制圆体主字体（类筑紫 A 丸ゴシック风格）
+## ① 自制圆体主字体（历史生产目标；当前视觉来源已改为 Maruko）
 
-**目标**：做一款自研圆角黑体（风格参照 FONTWORKS 筑紫 A 丸ゴシック：丸ゴシック体、圆润笔端、字面饱满），作为 `--font` 的可选主字体，替代/补位于现在的文渊圆体 VF。
+> 下列 `--font` / 可变字体 / 全 CJK 要求仍是历史生产目标与未完成事项；它们不表示当前原型已生产化。2026-10-24 的当前视觉来源只基于 Maruko Gothic，不能把旧筑紫样稿或轮廓带入当前稿。
+
+**历史目标（2026-10-10）**：做一款自研圆角黑体（当时风格参照 FONTWORKS 筑紫 A 丸ゴシック：丸ゴシック体、圆润笔端、字面饱满），作为 `--font` 的可选主字体，替代/补位于现在的文渊圆体 VF。
 
 **硬约束（沿用本仓库现有裁决，开工前先复核）**
 - 主字体必须是**可变字体且含 `wght` 轴**——静态字体被 `build.py` 直接拒绝（配置只出 `supportedAxes`，只做新包不做降级，见本文件与 `README.md`）。

@@ -1,4 +1,7 @@
-"""马路口圆体（Maruko Gothic）曲线重新拟合/精简工具（原型，2026-10-19 新建）。
+"""马路口圆体（Maruko Gothic）轮廓曲线重新拟合工具（研究原型，2026-10-19 新建）。
+
+重要边界：本工具只重拟合轮廓曲线并精简控制点，不解析语义笔画，不合并/删除笔画，不调整笔画粗细；
+控制点下降不能称为实际笔画简化或视觉质量改善。
 
 背景：马路口圆体作者自己在 README 里承认"几乎都是电脑用 notosans 推论为 zen maru 产生的
 字形，很粗糙……直线可能变阶梯形狀"——实测核验过（见会话记录）：它的"回"字 117 个点，
@@ -14,12 +17,14 @@
 拟合误差超过阈值就在最大偏差点处切开递归细分，而不是像自动描摹那样见到曲率变化就无脑
 多插点。
 
-用法（原型阶段，先在一两个字上验证，未接入批处理）：
+用法：
     python3 curve_simplify.py 字体.ttf 输出.ttf --chars 回了 --tolerance 3.0
+    python3 curve_simplify.py 字体.ttf 输出.ttf --all-mapped --tolerance 4.0 --seg-len 1.5
 """
 import argparse
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
 from fontTools.ttLib import TTFont
@@ -209,26 +214,50 @@ def simplify_glyph(glyphSet, pen_seg_len=4.0, tolerance=3.0):
     return flat
 
 
-def process_font(font, chars, tolerance=3.0, seg_len=4.0):
-    glyf = font["glyf"]
-    glyphSet = font.getGlyphSet()
-    cmap = font.getBestCmap()
+def unique_mapped_chars(font):
+    """Return one Unicode representative per mapped glyph, in codepoint order."""
+    cmap = font.getBestCmap() or {}
+    seen = set()
+    chars = []
+    for codepoint, glyph_name in sorted(cmap.items()):
+        if glyph_name in seen:
+            continue
+        seen.add(glyph_name)
+        chars.append(chr(codepoint))
+    return chars
+
+
+def process_font(font, chars, tolerance=3.0, seg_len=4.0, source_font=None):
+    """Rewrite selected glyphs in ``font`` using geometry from an immutable source.
+
+    Pass a separately opened ``source_font`` when processing a whole font. Otherwise,
+    simplifying an early component can silently change the geometry later read from
+    composites that reference it, making the result order-dependent or cumulatively
+    simplified. The default is kept for small in-memory callers and simple tests.
+    """
+    source_font = source_font or font
+    output_glyf = font["glyf"]
+    source_glyf = source_font["glyf"]
+    source_glyph_set = source_font.getGlyphSet()
+    cmap = source_font.getBestCmap() or {}
     report = []
+    processed = set()
     for ch in chars:
         if ord(ch) not in cmap:
             report.append((ch, None, "missing"))
             continue
         gname = cmap[ord(ch)]
-        flat = FlattenPen(glyphSet, seg_len=seg_len)
-        glyphSet[gname].draw(flat)
+        if gname in processed:
+            continue
+        processed.add(gname)
+        flat = FlattenPen(source_glyph_set, seg_len=seg_len)
+        source_glyph_set[gname].draw(flat)
 
-        before_pts = sum(len(c) for c in flat.contours)  # 密集采样点数，仅做参照
-
-        g = glyf[gname]
-        coords, ends, flags = g.getCoordinates(glyf)
+        g = source_glyf[gname]
+        coords, ends, flags = g.getCoordinates(source_glyf)
         before_real = len(coords)
 
-        tt_pen = TTGlyphPen(glyphSet)
+        tt_pen = TTGlyphPen(source_glyph_set)
         for contour in flat.contours:
             start, segs = simplify_contour(contour, tolerance)
             tt_pen.moveTo((round(start[0]), round(start[1])))
@@ -240,7 +269,7 @@ def process_font(font, chars, tolerance=3.0, seg_len=4.0):
                     tt_pen.qCurveTo((round(p1[0]), round(p1[1])), p2r)
             tt_pen.closePath()
         new_glyph = tt_pen.glyph()
-        glyf[gname] = new_glyph
+        output_glyf[gname] = new_glyph
         after_real = len(new_glyph.coordinates) if hasattr(new_glyph, "coordinates") else 0
         report.append((ch, gname, f"{before_real} -> {after_real} 点"))
     return report
@@ -250,17 +279,38 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("infont")
     ap.add_argument("outfont")
-    ap.add_argument("--chars", default="回了", help="要精简的字符（默认 回了，先做小样）")
+    selection = ap.add_mutually_exclusive_group()
+    selection.add_argument("--chars", help="要精简的字符（不指定时默认 回了）")
+    selection.add_argument("--all-mapped", action="store_true", help="处理 cmap 中所有唯一映射字形")
     ap.add_argument("--tolerance", type=float, default=3.0, help="允许的最大几何偏差（字体单位，1000upm 下建议 2~5）")
     ap.add_argument("--seg-len", type=float, default=4.0, help="密集采样步长（字体单位）")
     args = ap.parse_args()
 
+    if Path(args.infont).resolve() == Path(args.outfont).resolve():
+        ap.error("输入与输出字体路径不能相同")
+    source_font = TTFont(args.infont)
     font = TTFont(args.infont)
-    report = process_font(font, list(args.chars), tolerance=args.tolerance, seg_len=args.seg_len)
+    chars = unique_mapped_chars(source_font) if args.all_mapped else list(args.chars or "回了")
+    report = process_font(
+        font, chars, tolerance=args.tolerance, seg_len=args.seg_len,
+        source_font=source_font,
+    )
     font.save(args.outfont)
-    for ch, gname, msg in report:
-        print(f"{ch} ({gname}): {msg}")
+    if args.all_mapped:
+        counts = [(int(msg.split(" -> ")[0]), int(msg.split(" -> ")[1].split()[0]))
+                  for _, glyph_name, msg in report if glyph_name is not None]
+        before = sum(old for old, _ in counts)
+        after = sum(new for _, new in counts)
+        reduced = sum(new < old for old, new in counts)
+        print(f"mapped glyphs={len(counts)}; points={before:,}->{after:,}; "
+              f"reduced glyphs={reduced:,}; reduction={(before-after)/before:.1%}" if before else
+              f"mapped glyphs={len(counts)}; no contour points")
+    else:
+        for ch, gname, msg in report:
+            print(f"{ch} ({gname}): {msg}")
     print(f"saved -> {args.outfont}")
+    font.close()
+    source_font.close()
 
 
 if __name__ == "__main__":

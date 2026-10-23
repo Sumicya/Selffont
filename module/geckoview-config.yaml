@@ -14,6 +14,9 @@
 # 构建时会把模块补充字库的内部家族名（按 fonts.xml 顺序）追加到每条名单末尾：火狐的逐字回退
 # 不读 fonts.xml，同一条链让它和系统选到同一个兜底字体（花体/生僻字符不再两副面孔）。
 prefs:
+  # 文渊的真斜体由 OpenType `ital` 轴提供；明确开启 Gecko 的 CSS 可变字体映射。
+  layout.css.font-variations.enabled: true
+
   # emoji:SamsungColorEmoji / Noto Color Emoji / Noto Color Emoji Flags 是 Gecko 在 Android 上的默认名单。
   # 前置只在缺色字时才落到后面的彩色字体（Gecko 对 emoji 表现字符优先彩色的）。
   font.name-list.emoji: "Selffont Rounded SC VF, SamsungColorEmoji, Noto Color Emoji, Noto Color Emoji Flags"

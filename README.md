@@ -160,7 +160,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 
 ### 字形研究候选（非生产）
 
-[筑紫 A D/400 全样本 V10 研究候选](docs/round-preview/README.md) 是独立、可逆的预览，不属于安装包或生产构建；[研究文档入口](docs/README.md) 汇总设计原则、决策与证据。V10 基于 V9 74-FU 共享宽度候选，仅对 12 个指定字形恢复/重绘矢量形状，覆盖完整 63 项 / 62 个唯一字形；用户确认的“鸟”“也”草图各自只提炼本字的整体造型思路，不逐点描摹。高分辨率拓扑、映射、advance、自交检查均有记录；“鸟”从 3 个轮廓重绘为 1 个是明确例外，48 px/em 仍有 11 个尺寸诊断差异。所有图和量化数据仍待主人视觉审阅，不能当作审美通过；“电”的可见 bbox 仍有 5 FU 差异，筑紫源字体与派生 TTF 不入库。
+[当前 Maruko 审阅入口](docs/round-preview/README.md) 只展示一张清楚标注的新稿：SC Regular 的 62 字实际笔宽样本、全映射曲线重新拟合，以及 Maruko Jamo 组合 Hangul 原型；[研究文档入口](docs/README.md) 汇总范围和审计。全映射控制点减少不等于全字库笔画简化；当前仍是静态研究候选，不接入生产构建。Light / Medium、TC / JP、KR 地区 Hanja、全字库视觉验收与可变字体构建尚未完成。
 
 ### 未验证项的真机清单
 
