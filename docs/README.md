@@ -4,7 +4,7 @@
 
 ## 当前设计与审阅
 
-1. [`round-preview/README.md`](round-preview/README.md) — 当前筑紫 A D/400 全样本统一笔画粗细 V8 候选、图片、验证与版本状态。
+1. [`round-preview/README.md`](round-preview/README.md) — 当前筑紫 A D/400 全样本统一笔宽 V9 研究候选、六张审阅图、全样本审计与版本状态。
 2. [`design-principles.md`](design-principles.md) — 已确认的视觉规则与本轮手绘反馈。
 3. [`decisions-笔画简化.md`](decisions-笔画简化.md) — 方案裁决、回退原因与研究边界。
 
@@ -16,4 +16,4 @@
 - [`evidence/README.md`](evidence/README.md) 与本目录 TXT — 验证方法、结果及证据边界；旧 PNG 已按用户要求清理。
 - [`zhuzi-design-principles.md`](zhuzi-design-principles.md) — 筑紫参考分析规则；与当前样稿状态分开阅读。
 
-要看当前结果请从上面的第一项进入；日期目录仅在查研究过程时打开。2026-10-23 清理并更新后，`docs/round-preview/` 根目录只保留当前 V8 四张研究图；“鸟”“也”草图仅作各自字符的造型思路参照，旧版本过程保留在 Git 历史和变更记录中。
+要看当前结果请从上面的第一项进入；日期目录仅在查研究过程时打开。2026-10-23 清理并更新后，`docs/round-preview/` 根目录保留当前 V9 六张研究图、两张用户原始草图及逐字审计材料；“鸟”“也”草图仅作各自字符的造型思路参照，旧版本过程保留在 Git 历史和变更记录中。

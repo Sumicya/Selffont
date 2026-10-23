@@ -2,8 +2,64 @@ import unittest
 
 import numpy as np
 import shapely.geometry as sg
+from scipy import ndimage
+from skimage.morphology import skeletonize
 
-from tools.stroke_width_normalize_prototype import glyph_from_mask, transform_skeleton_x
+from tools.stroke_width_normalize_prototype import (
+    glyph_from_mask,
+    shared_width_reconstruction_mask,
+    transform_skeleton_x,
+    transform_skeleton_x_profiled,
+)
+
+
+class SharedWidthTopologyTests(unittest.TestCase):
+    def setUp(self):
+        self.mask = np.zeros((26, 20), dtype=bool)
+        self.mask[3:23, 4:7] = True
+        self.mask[3:23, 11:14] = True
+        self.skeleton = skeletonize(self.mask)
+
+    def test_optional_guard_keeps_nearby_source_components_separate(self):
+        raw = shared_width_reconstruction_mask(
+            self.mask, self.skeleton, target_width=10.0, units_per_pixel=1.0
+        )
+        guarded = shared_width_reconstruction_mask(
+            self.mask,
+            self.skeleton,
+            target_width=10.0,
+            units_per_pixel=1.0,
+            preserve_components=True,
+        )
+
+        self.assertEqual(ndimage.label(raw, structure=np.ones((3, 3)))[1], 1)
+        self.assertEqual(ndimage.label(guarded, structure=np.ones((3, 3)))[1], 2)
+        self.assertTrue(np.all(guarded[self.skeleton]))
+        self.assertLess(guarded.sum(), raw.sum())
+
+    def test_guard_does_not_change_reconstruction_when_components_do_not_overlap(self):
+        raw = shared_width_reconstruction_mask(
+            self.mask, self.skeleton, target_width=4.0, units_per_pixel=1.0
+        )
+        guarded = shared_width_reconstruction_mask(
+            self.mask,
+            self.skeleton,
+            target_width=4.0,
+            units_per_pixel=1.0,
+            preserve_components=True,
+        )
+        np.testing.assert_array_equal(guarded, raw)
+
+    def test_guard_validates_shapes_and_width_inputs(self):
+        with self.assertRaisesRegex(ValueError, "same-sized 2D"):
+            shared_width_reconstruction_mask(
+                self.mask, self.skeleton[:, :-1], 10.0, 1.0, preserve_components=True
+            )
+        for width in (0.0, -1.0, float("inf")):
+            with self.subTest(width=width), self.assertRaisesRegex(ValueError, "target_width"):
+                shared_width_reconstruction_mask(
+                    self.mask, self.skeleton, width, 1.0, preserve_components=True
+                )
 
 
 class SkeletonCompressionTests(unittest.TestCase):
@@ -29,6 +85,34 @@ class SkeletonCompressionTests(unittest.TestCase):
         # Raster row 1 maps outside the selected font-y band and remains unchanged.
         np.testing.assert_array_equal(result[1], skeleton[1])
         self.assertTrue(result[:, 7].any())
+
+    def test_profiled_compression_preserves_frame_extrema_and_centerline(self):
+        skeleton = np.zeros((15, 15), dtype=bool)
+        skeleton[1:14, 2] = True
+        skeleton[1:14, 7] = True
+        skeleton[1:14, 12] = True
+        skeleton[8, 2:13] = True
+        transform = (0.0, 0.0, 1.0, 0.0, 1.0, 1)
+
+        result = transform_skeleton_x_profiled(
+            skeleton,
+            transform,
+            center_x=7.0,
+            y_min=2.0,
+            y_max=12.0,
+            scale_x=0.5,
+            edge_fraction=0.2,
+        )
+
+        # Font y=7 maps to raster row 8 and reaches peak compression. The axis stays
+        # fixed; the upper/lower frame bounds (rows 3 and 13) remain full width.
+        self.assertTrue(result[8, 5])
+        self.assertTrue(result[8, 7])
+        self.assertTrue(result[8, 10])
+        self.assertFalse(result[8, 2])
+        self.assertFalse(result[8, 12])
+        np.testing.assert_array_equal(result[3], skeleton[3])
+        np.testing.assert_array_equal(result[13], skeleton[13])
 
     def test_rejects_invalid_scale_and_y_range(self):
         skeleton = np.eye(9, dtype=bool)

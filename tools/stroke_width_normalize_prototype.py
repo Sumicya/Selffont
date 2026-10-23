@@ -110,6 +110,81 @@ def skeleton_widths(mask: np.ndarray, units_per_pixel: float):
     return skeleton, widths
 
 
+def shared_width_reconstruction_mask(
+    mask: np.ndarray,
+    skeleton: np.ndarray,
+    target_width: float,
+    units_per_pixel: float,
+    preserve_components: bool = False,
+) -> np.ndarray:
+    """Dilate the skeleton to a shared width, optionally preserving source components.
+
+    If a common radius would merge two originally disconnected strokes, assign the
+    expanded pixels to the nearest component skeleton and remove their shared seam.
+    This keeps the shared radius everywhere else instead of allowing unrelated strokes
+    to fuse. The guard fails loudly if it cannot preserve the original component count.
+    """
+    if mask.ndim != 2 or skeleton.ndim != 2 or mask.shape != skeleton.shape:
+        raise ValueError("Mask and skeleton must be same-sized 2D arrays")
+    if not np.isfinite(target_width) or target_width <= 0:
+        raise ValueError("target_width must be finite and positive")
+    if not np.isfinite(units_per_pixel) or units_per_pixel <= 0:
+        raise ValueError("units_per_pixel must be finite and positive")
+    if not np.any(mask) or not np.any(skeleton):
+        raise ValueError("Mask and skeleton must both be non-empty")
+
+    radius_px = target_width / (2.0 * units_per_pixel)
+    expanded = ndimage.distance_transform_edt(~skeleton) <= radius_px
+    if not preserve_components:
+        return expanded
+
+    structure = np.ones((3, 3), dtype=bool)
+    source_labels, source_count = ndimage.label(mask, structure=structure)
+    expanded_count = int(ndimage.label(expanded, structure=structure)[1])
+    if expanded_count == source_count:
+        return expanded
+    if expanded_count > source_count:
+        raise ValueError(
+            "Shared-width reconstruction split source components "
+            f"({source_count} -> {expanded_count})"
+        )
+    if source_count <= 1:
+        raise ValueError(
+            "Shared-width reconstruction changed topology without separable components"
+        )
+
+    distances = []
+    for component_id in range(1, source_count + 1):
+        component_skeleton = skeletonize(source_labels == component_id)
+        if not np.any(component_skeleton):
+            raise ValueError(f"Source component {component_id} has no skeleton")
+        distances.append(ndimage.distance_transform_edt(~component_skeleton))
+    distance_stack = np.stack(distances, axis=0)
+    nearest_id = np.argmin(distance_stack, axis=0) + 1
+    nearest_distance = np.min(distance_stack, axis=0)
+    owner = np.where(nearest_distance <= radius_px, nearest_id, 0).astype(np.int16)
+
+    # A one-pixel seam on both sides prevents an 8-connected diagonal join when the
+    # independently expanded components meet. Only their overlap boundary is shaved.
+    sentinel = source_count + 1
+    min_owner = ndimage.minimum_filter(
+        np.where(owner > 0, owner, sentinel), size=3, mode="constant", cval=sentinel
+    )
+    max_owner = ndimage.maximum_filter(owner, size=3, mode="constant", cval=0)
+    seam = (min_owner != max_owner) & (min_owner < sentinel) & (max_owner > 0)
+    # Leave one additional pixel beyond the label seam: curve tracing and integer
+    # TrueType point rounding can otherwise close sub-pixel gaps on re-render.
+    seam = ndimage.binary_dilation(seam, iterations=1)
+    separated = (owner > 0) & ~seam
+    separated_count = int(ndimage.label(separated, structure=structure)[1])
+    if separated_count != source_count:
+        raise ValueError(
+            "Unable to preserve disconnected sample strokes after shared-width "
+            f"reconstruction ({source_count} -> {separated_count})"
+        )
+    return separated
+
+
 def transform_skeleton_x(
     skeleton: np.ndarray,
     transform,
@@ -141,6 +216,59 @@ def transform_skeleton_x(
     y_units = ((skeleton.shape[0] - rows) - margin_px) / scale + ymin
     selected = (y_units >= y_min) & (y_units <= y_max)
     x_units[selected] = center_x + (x_units[selected] - center_x) * scale_x
+    new_columns = np.rint((x_units - xmin) * scale + margin_px).astype(int)
+    if np.any(new_columns < 0) or np.any(new_columns >= skeleton.shape[1]):
+        raise ValueError("Transformed skeleton leaves the raster canvas")
+    transformed = np.zeros_like(skeleton, dtype=bool)
+    transformed[rows, new_columns] = True
+    if not transformed.any():
+        raise ValueError("Transformed skeleton is empty")
+    return transformed
+
+
+def transform_skeleton_x_profiled(
+    skeleton: np.ndarray,
+    transform,
+    center_x: float,
+    y_min: float,
+    y_max: float,
+    scale_x: float,
+    edge_fraction: float = 0.125,
+) -> np.ndarray:
+    """Narrow a frame's middle band while retaining its original outer extrema.
+
+    The horizontal scale reaches ``scale_x`` only at the profile midpoint and eases
+    smoothly back to 1.0 toward the upper/lower frame bounds. This bends the frame's
+    side centerlines inward without scaling stroke radius or shortening the full-width
+    top and bottom extents. The caller must reconstruct at the shared stroke radius.
+    """
+    if not np.isfinite(center_x) or not np.isfinite(y_min) or not np.isfinite(y_max):
+        raise ValueError("Skeleton transform coordinates must be finite")
+    if y_min >= y_max:
+        raise ValueError("Profiled transform requires y_min < y_max")
+    if not np.isfinite(scale_x) or not 0 < scale_x <= 1:
+        raise ValueError("scale_x must be finite and in the interval (0, 1]")
+    if not np.isfinite(edge_fraction) or not 0 <= edge_fraction < 0.5:
+        raise ValueError("edge_fraction must be finite and in the interval [0, 0.5)")
+    if skeleton.ndim != 2 or skeleton.shape[0] != skeleton.shape[1]:
+        raise ValueError("Skeleton must be a square 2D raster")
+
+    xmin, ymin_units, scale, margin_px, _units_per_pixel, _outer_sign = transform
+    rows, columns = np.nonzero(skeleton)
+    if rows.size == 0:
+        raise ValueError("Cannot transform an empty skeleton")
+    x_units = (columns - margin_px) / scale + xmin
+    y_units = ((skeleton.shape[0] - rows) - margin_px) / scale + ymin_units
+    span = y_max - y_min
+    profile_min = y_min + span * edge_fraction
+    profile_max = y_max - span * edge_fraction
+    if profile_min >= profile_max:
+        raise ValueError("Profiled transform has no interior band")
+    t = np.clip((y_units - profile_min) / (profile_max - profile_min), 0.0, 1.0)
+    envelope = np.sin(np.pi * t) ** 2
+    local_scale = 1.0 - (1.0 - scale_x) * envelope
+    x_units = center_x + (x_units - center_x) * local_scale
+
     new_columns = np.rint((x_units - xmin) * scale + margin_px).astype(int)
     if np.any(new_columns < 0) or np.any(new_columns >= skeleton.shape[1]):
         raise ValueError("Transformed skeleton leaves the raster canvas")
@@ -256,6 +384,7 @@ def normalize_font(
     global_strength: float = 0.5,
     fallback_chars: str = "",
     shared_target_width: float | None = None,
+    preserve_components: bool = False,
 ) -> None:
     if mode not in ("median", "global", "roundtrip"):
         raise ValueError("--mode 必须是 median/global/roundtrip")
@@ -325,9 +454,13 @@ def normalize_font(
                 local_target if mode == "median" or use_fallback
                 else global_target * (1.0 - global_strength) + local_target * global_strength
             )
-            target_radius_px = target_width / (2 * transform[4])
-            to_skeleton = ndimage.distance_transform_edt(~skeleton)
-            rebuilt_mask = to_skeleton <= target_radius_px
+            rebuilt_mask = shared_width_reconstruction_mask(
+                mask,
+                skeleton,
+                target_width,
+                transform[4],
+                preserve_components=preserve_components,
+            )
             cv = float(np.std(widths) / np.mean(widths))
             shift = target_width / local_target - 1
             fallback_note = " fallback=per-glyph-median" if use_fallback else ""
@@ -373,11 +506,15 @@ def main() -> None:
         "--shared-target-width", type=float, default=None,
         help="explicit shared width in font units; available only in global mode",
     )
+    parser.add_argument(
+        "--preserve-components", action="store_true",
+        help="keep originally disconnected glyph components separate when shared radii overlap",
+    )
     args = parser.parse_args()
     normalize_font(
         args.font, args.out, args.chars, args.mode, args.px,
         args.margin_frac, args.global_strength, args.fallback_chars,
-        args.shared_target_width,
+        args.shared_target_width, args.preserve_components,
     )
 
 

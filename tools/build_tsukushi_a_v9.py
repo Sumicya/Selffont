@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Build a reversible V8 Tsukushi A D/400 research candidate.
+"""Build a reversible V9 Tsukushi A D/400 research candidate.
 
 The source font and generated TTF are temporary inputs/outputs, never release assets.
 The shared width target is informed by the median of Noto Sans SC 400's 62 sample
 medians (OFL-1.1 reference only); its outlines are not copied. The glyph skeletons are
-reconstructed at a common radius, and 电's four-cell frame is horizontally narrowed
-around its own divider centerline before that same radius is restored.
+reconstructed at a common radius, and 电's frame gets a tapered middle-band spacing
+adjustment around its own divider centerline before that same radius is restored.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from scipy import ndimage
 from fontTools.ttLib import TTFont
 
 from tools.hook_cut import split_contours
@@ -24,13 +23,14 @@ from tools.stroke_width_normalize_prototype import (
     glyph_from_mask,
     normalize_font,
     raster_mask,
+    shared_width_reconstruction_mask,
     skeleton_widths,
-    transform_skeleton_x,
+    transform_skeleton_x_profiled,
 )
 from tools.tsukushi_a_preview_simplify import CHARS_63, simplify
 
 DEFAULT_SHARED_WIDTH = 74.0
-DEFAULT_FRAME_X_SCALE = 0.94
+DEFAULT_FRAME_X_SCALE = 0.97
 DEFAULT_RASTER_PX = 1400
 DEFAULT_MARGIN_FRAC = 0.08
 
@@ -175,7 +175,7 @@ def build_candidate(
     center_x, frame_y_min, frame_y_max = electric_frame_geometry(geometry_font, shared_width, px)
     electric_name = geometry_font.getBestCmap()[ord("电")]
 
-    with tempfile.TemporaryDirectory(prefix="selffont-tsukushi-v8-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="selffont-tsukushi-v9-") as tmpdir:
         tmpdir = Path(tmpdir)
         geometry_path = tmpdir / "geometry-base.ttf"
         normalized_path = tmpdir / "shared-width.ttf"
@@ -190,27 +190,34 @@ def build_candidate(
             margin_frac=DEFAULT_MARGIN_FRAC,
             global_strength=0.0,
             shared_target_width=shared_width,
+            preserve_components=True,
         )
         candidate = TTFont(normalized_path)
 
-        # Reconstruct 电 from the same geometry base as every other glyph, but first
-        # bring the four-cell frame side-to-side distance in by 6%. Its divider axis
-        # stays fixed; redilation at the shared radius prevents the side strokes from
-        # becoming heavier. The lower hook and advance width remain untouched.
+        # Reconstruct 电 from the same geometry base as every other glyph. Narrow the
+        # frame's middle band by at most 6% about its measured divider axis, easing the
+        # transform to zero near the top/bottom bounds so the full-width outer extrema
+        # remain. Redilation restores the shared radius; no divider is thickened.
         mask, transform = raster_mask(
             geometry_font, electric_name, px, DEFAULT_MARGIN_FRAC
         )
         skeleton, _widths = skeleton_widths(mask, transform[4])
-        adjusted_skeleton = transform_skeleton_x(
+        adjusted_skeleton = transform_skeleton_x_profiled(
             skeleton,
             transform,
             center_x=center_x,
             y_min=frame_y_min,
             y_max=frame_y_max,
             scale_x=frame_scale_x,
+            edge_fraction=0.125,
         )
-        target_radius_px = shared_width / (2 * transform[4])
-        adjusted_mask = ndimage.distance_transform_edt(~adjusted_skeleton) <= target_radius_px
+        adjusted_mask = shared_width_reconstruction_mask(
+            mask,
+            adjusted_skeleton,
+            shared_width,
+            transform[4],
+            preserve_components=True,
+        )
         candidate["glyf"][electric_name] = glyph_from_mask(adjusted_mask, candidate, transform)
 
         if _sample_glyph_names(candidate) != sample_names:
@@ -229,8 +236,9 @@ def build_candidate(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         candidate.save(output_path)
         print(
-            f"V8 candidate saved to {output_path}; shared width={shared_width:.2f} FU; "
-            f"电 frame x-scale={frame_scale_x:.3f} about divider centerline {center_x:.1f} FU; "
+            f"V9 candidate saved to {output_path}; shared width={shared_width:.2f} FU; "
+            f"电 frame peak x-scale={frame_scale_x:.3f} about divider centerline {center_x:.1f} FU "
+            "(tapered at top/bottom bounds); "
             f"frame centerline y-band={frame_y_min:.1f}..{frame_y_max:.1f} FU; "
             "62 unique glyphs, 63 sample entries; advances are unchanged and LSBs are "
             "recalculated to preserve each geometry-base origin offset."
@@ -242,11 +250,11 @@ def build_candidate(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--font", required=True, type=Path, help="static Tsukushi A D/400 source TTF")
-    parser.add_argument("--out", required=True, type=Path, help="temporary V8 research-preview TTF")
+    parser.add_argument("--out", required=True, type=Path, help="temporary V9 research-preview TTF")
     parser.add_argument("--shared-width", type=float, default=DEFAULT_SHARED_WIDTH,
                         help="shared stroke width in font units (default: 74, Noto SC 400 reference)")
     parser.add_argument("--electric-frame-scale-x", type=float, default=DEFAULT_FRAME_X_SCALE,
-                        help="horizontal centerline spacing scale for 电's 田 frame (default: 0.94)")
+                        help="peak horizontal spacing scale for 电's frame middle band (default: 0.97)")
     parser.add_argument("--px", type=int, default=DEFAULT_RASTER_PX,
                         help="raster canvas size for width reconstruction (default: 1400)")
     args = parser.parse_args()

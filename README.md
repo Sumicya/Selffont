@@ -160,7 +160,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 
 ### 字形研究候选（非生产）
 
-[筑紫 A D/400 全样本统一笔画粗细 V8](docs/round-preview/README.md) 是独立、可逆的研究预览，不属于安装包或生产构建；[研究文档入口](docs/README.md) 汇总设计原则、决策与证据。V8 覆盖完整 63 项 / 62 个唯一字形，依据获 OFL 1.1 授权的 Noto Sans SC 400 仅作笔宽参照，不复制字形；用户确认的“鸟”“也”草图仅提炼整体造型思路、不逐点描摹。图片和量化数据供主人审阅，候选未获视觉验收；筑紫源字体与派生 TTF 不入库。
+[筑紫 A D/400 全样本统一笔宽 V9](docs/round-preview/README.md) 是独立、可逆的研究预览，不属于安装包或生产构建；[研究文档入口](docs/README.md) 汇总设计原则、决策与证据。V9 审计覆盖完整 63 项 / 62 个唯一字形，依据获 OFL 1.1 授权的 Noto Sans SC 400 仅作笔宽参照，不复制字形；用户确认的“鸟”“也”草图仅提炼整体造型思路、不逐点描摹。候选经过高分辨率 FreeType 拓扑与 advance 检查、全样本单轮廓自交检查及预览审阅；图片和量化数据仍待主人审阅，候选未获视觉验收，且“电”的可见 bbox 仍有 5 FU 差异；筑紫源字体与派生 TTF 不入库。
 
 ### 未验证项的真机清单
 

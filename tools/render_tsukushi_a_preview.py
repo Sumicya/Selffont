@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the V8 research candidate, sketch study, width reference, and details."""
+"""Render the V9 research candidate, sketch study, width reference, and details."""
 from __future__ import annotations
 
 import argparse
@@ -18,22 +18,30 @@ if __package__:
     from .render_grid import glyph_path
     from .tsukushi_a_preview_simplify import (
         CAP_EXTENSION_RATIOS,
+        CAP_PRESERVE_EXTENT_EXTRA_FU,
+        COMPONENT_SPACING_TRANSLATIONS_FU,
         CHARS_63,
         EXPECTED_HOOKS,
+        EXPECTED_SPACING_GLYPHS,
         EXPECTED_ROUND_CAPS,
         EXPECTED_ROUND_TIPS,
         SAMPLE_CHARS,
+        cap_extension_to_preserve_extent,
     )
 else:
     import hook_cut
     from render_grid import glyph_path
     from tsukushi_a_preview_simplify import (
         CAP_EXTENSION_RATIOS,
+        CAP_PRESERVE_EXTENT_EXTRA_FU,
+        COMPONENT_SPACING_TRANSLATIONS_FU,
         CHARS_63,
         EXPECTED_HOOKS,
+        EXPECTED_SPACING_GLYPHS,
         EXPECTED_ROUND_CAPS,
         EXPECTED_ROUND_TIPS,
         SAMPLE_CHARS,
+        cap_extension_to_preserve_extent,
     )
 
 
@@ -88,6 +96,14 @@ def hook_rows(base: TTFont):
             bx, by = contour[j][0], contour[j][1]
             gate = math.hypot(bx - ax, by - ay)
             extension = gate * CAP_EXTENSION_RATIOS.get(ch, 0.0)
+            if ch in CAP_PRESERVE_EXTENT_EXTRA_FU:
+                extension = cap_extension_to_preserve_extent(
+                    contour,
+                    len(contour),
+                    i,
+                    j,
+                    extra=CAP_PRESERVE_EXTENT_EXTRA_FU[ch],
+                )
             side = max(gate * 4.0 + extension * 2.0, 260.0)
             cx, cy = (ax + bx) * 0.5, (ay + by) * 0.5
             limits = (cx - side / 2, cx + side / 2,
@@ -107,7 +123,7 @@ def render_overview(base: TTFont, geometry: TTFont, variant: TTFont, out_path: F
         9, len(col_widths), left=.018, right=.982, top=.835, bottom=.115,
         wspace=.075, hspace=.115, width_ratios=col_widths,
     )
-    fig.text(.018, .965, "TSUKUSHI A · D/400 · V8 RESEARCH CANDIDATE", fontsize=24,
+    fig.text(.018, .965, "TSUKUSHI A · D/400 · V9 RESEARCH CANDIDATE", fontsize=24,
              fontweight="bold", color="#171a1f", ha="left", va="top")
     fig.text(.018, .928,
              "63 sample entries · 62 unique glyphs · shared 74 FU stroke-width target · candidate only, not production",
@@ -116,7 +132,7 @@ def render_overview(base: TTFont, geometry: TTFont, variant: TTFont, out_path: F
              fontweight="bold", color="#262930", ha="left", va="top")
     fig.text(.355, .875, "GEOMETRY BASE · rounded ends + directed terminal edits", fontsize=12.5,
              fontweight="bold", color="#262930", ha="left", va="top")
-    fig.text(.692, .875, "V8 · shared stroke radius + narrower frame at U+7535", fontsize=12.5,
+    fig.text(.692, .875, "V9 · shared stroke radius + narrower frame at U+7535", fontsize=12.5,
              fontweight="bold", color="#262930", ha="left", va="top")
 
     for i, ch in enumerate(CHARS_63):
@@ -132,13 +148,18 @@ def render_overview(base: TTFont, geometry: TTFont, variant: TTFont, out_path: F
             ax.text(.055, .945, f"{i + 1:02d}", transform=ax.transAxes,
                     ha="left", va="top", fontsize=6.1, color="#8a8984")
 
+    spacing_labels = "/".join(
+        f"U+{ord(ch):04X}" for ch in COMPONENT_SPACING_TRANSLATIONS_FU
+    )
     fig.text(.018, .073,
              f"Geometry stage: {EXPECTED_HOOKS} manually reviewed semicircular hook caps + "
-             f"{EXPECTED_ROUND_CAPS} safe free-end rounds + {EXPECTED_ROUND_TIPS} safe tip round; "
-             "U+5DF1/U+5DF2 endings modestly extended. All 62 unique outlines then receive one shared stroke radius.",
+             f"{EXPECTED_ROUND_CAPS} safe free-end rounds + {EXPECTED_ROUND_TIPS} safe tip round + "
+             f"{EXPECTED_SPACING_GLYPHS} rigid spacing repairs ({spacing_labels}); "
+             "U+5DF1/U+5DF2 rounded caps extend 8 FU beyond measured source-tip projections. "
+             "All 62 unique outlines then receive one shared stroke radius.",
              fontsize=8.9, color="#53565b", ha="left", va="bottom")
     fig.text(.018, .041,
-             "U+7535: inner-frame centerline spacing ×0.94 about the measured divider axis; radius is restored to the shared target, not thickened. "
+             "U+7535: peak 0.97 spacing scale in the middle band about the measured divider axis, eased at outer bounds; stroke radius is restored. "
              "Geometry/width metrics are research proxies; no aesthetic approval or device-rendering claim.",
              fontsize=8.5, color="#777a7e", ha="left", va="bottom")
     fig.savefig(out_path, dpi=145, bbox_inches="tight", facecolor=fig.get_facecolor())
@@ -163,13 +184,13 @@ def render_sketch_study(
         2, 4, left=.035, right=.985, top=.825, bottom=.12,
         wspace=.075, hspace=.11, width_ratios=[.72, 1.0, 1.0, 1.0],
     )
-    fig.text(.035, .96, "V8 · SKETCH GESTURE STUDY", fontsize=22,
+    fig.text(.035, .96, "V9 · SKETCH GESTURE STUDY", fontsize=22,
              fontweight="bold", color="#171a1f", ha="left", va="top")
     fig.text(.035, .915,
              "Separate references for U+9E1F and U+4E5F. Sketch crops keep native aspect; sketch and glyph panels use independent scales, with no trace overlay or point map.",
              fontsize=10.2, color="#666a70", ha="left", va="top")
     for x, title in ((.035, "CODEPOINT / IDEA"), (.23, "USER SKETCH"),
-                     (.49, "SOURCE GLYPH"), (.75, "V8 CANDIDATE")):
+                     (.49, "SOURCE GLYPH"), (.75, "V9 CANDIDATE")):
         fig.text(x, .86, title, fontsize=9.5, fontweight="bold",
                  color="#55585d", ha="left", va="top")
 
@@ -210,13 +231,13 @@ def render_width_reference(base: TTFont, variant: TTFont, reference: TTFont, out
         len(chars), 4, left=.035, right=.985, top=.86, bottom=.15,
         wspace=.05, hspace=.075, width_ratios=[.7, 1.0, 1.0, 1.0],
     )
-    fig.text(.035, .96, "V8 · LICENSED STROKE-WIDTH REFERENCE", fontsize=21,
+    fig.text(.035, .96, "V9 · LICENSED STROKE-WIDTH REFERENCE", fontsize=21,
              fontweight="bold", color="#171a1f", ha="left", va="top")
     fig.text(.035, .92,
              "Noto Sans SC 400 (OFL 1.1) was studied for shared weight behavior only; no Noto outlines or glyph coordinates are copied.",
              fontsize=9.8, color="#666a70", ha="left", va="top")
     for x, title in ((.035, "CODEPOINT"), (.22, "SOURCE A-D"),
-                     (.48, "V8 SHARED WIDTH"), (.74, "NOTO SC 400 · WIDTH REFERENCE")):
+                     (.48, "V9 SHARED WIDTH"), (.74, "NOTO SC 400 · WIDTH REFERENCE")):
         fig.text(x, .885, title, fontsize=9.2, fontweight="bold",
                  color="#55585d", ha="left", va="top")
 
@@ -230,10 +251,10 @@ def render_width_reference(base: TTFont, variant: TTFont, reference: TTFont, out
             draw_glyph(ax, font, ch, limits=DEFAULT_LIMITS)
 
     fig.text(.035, .107,
-             "900 px skeleton-distance proxy, 62 unique sample glyphs: source median-of-medians 76.74 FU; Noto SC 400 73.89 FU; V8 target 74.00 FU.",
+             "900 px skeleton-distance proxy, 62 unique sample glyphs: source median-of-medians 76.74 FU; Noto SC 400 73.89 FU; V9 target 74.00 FU.",
              fontsize=9.0, color="#53565b", ha="left", va="bottom")
     fig.text(.035, .077,
-             "Across-glyph CV of per-glyph median width: source 0.0781 → V8 0.0096. Within-glyph CV mean: source 0.0745 → V8 0.0529 (max 0.1585, U+68EE).",
+             "Across-glyph CV of per-glyph median width: source 0.0781 → V9 0.0095. Within-glyph CV mean: source 0.0745 → V9 0.0510 (max 0.1585, U+68EE).",
              fontsize=8.8, color="#53565b", ha="left", va="bottom")
     fig.text(.035, .045,
              "These are raster/skeleton estimates, not an aesthetic pass or a claim that every junction has identical apparent weight. Noto was not a shape template.",
@@ -251,13 +272,13 @@ def render_endpoint_detail(base: TTFont, variant: TTFont, out_path: FilePath):
         len(rows), 4, left=.035, right=.985, top=.89, bottom=.06,
         wspace=.055, hspace=.075, width_ratios=[.9, 1.0, 1.0, 1.0],
     )
-    fig.text(.035, .965, "V8 · HOOK ENDS AND U+7535 FRAME", fontsize=21,
+    fig.text(.035, .965, "V9 · HOOK ENDS AND U+7535 FRAME", fontsize=21,
              fontweight="bold", color="#171a1f", ha="left", va="top")
     fig.text(.035, .925,
-             "Full glyph locations and detail crops. Blue = source; dark = V8; overlay aligns their rendered glyph coordinates.",
+             "Full glyph locations and detail crops. Blue = source; dark = V9; overlay aligns their rendered glyph coordinates.",
              fontsize=9.9, color="#666a70", ha="left", va="top")
     for x, title in ((.035, "LOCATION"), (.275, "SOURCE CROP"),
-                     (.515, "V8 CROP"), (.755, "OVERLAY")):
+                     (.515, "V9 CROP"), (.755, "OVERLAY")):
         fig.text(x, .9, title, fontsize=9.2, fontweight="bold",
                  color="#55585d", ha="left", va="top")
 
@@ -290,7 +311,8 @@ def render_endpoint_detail(base: TTFont, variant: TTFont, out_path: FilePath):
         overlay_ax.axis("off")
 
     fig.text(.035, .026,
-             "U+5DF1/U+5DF2 final strokes: +1.0×/+1.5× their gate width with rounded caps. U+7535: inner-frame x-spacing ×0.94 around the divider centerline; shared 74 FU width target is restored after spacing change.",
+             "U+5DF1/U+5DF2 rounded caps use measured source-path tip projections plus a modest 8 FU extension. "
+             "U+7535: peak 0.97 frame spacing about the divider axis, tapered at the top/bottom bounds; shared 74 FU radius is restored.",
              fontsize=8.2, color="#777a7e", ha="left", va="bottom")
     fig.savefig(out_path, dpi=165, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
@@ -302,11 +324,11 @@ def main():
     parser.add_argument("--baseline", required=True, type=FilePath, help="Original static A D/400 TTF")
     parser.add_argument("--geometry-base", required=True, type=FilePath,
                         help="Temporary output of tsukushi_a_preview_simplify.py")
-    parser.add_argument("--variant", required=True, type=FilePath, help="Temporary V8 candidate TTF")
+    parser.add_argument("--variant", required=True, type=FilePath, help="Temporary V9 candidate TTF")
     parser.add_argument("--reference-font", required=True, type=FilePath,
                         help="Static Noto Sans SC 400 TTF used only as a width reference")
     parser.add_argument("--outdir", required=True, type=FilePath,
-                        help="Directory for current V8 research PNGs")
+                        help="Directory for current V9 research PNGs")
     repo_root = FilePath(__file__).resolve().parents[1]
     parser.add_argument(
         "--bird-sketch", type=FilePath,
@@ -325,19 +347,19 @@ def main():
                         ("variant", variant), ("reference font", reference)):
         _font_checks(font, label)
     if len(CHARS_63) != 63 or len(SAMPLE_CHARS) != 62:
-        raise AssertionError("V8 requires 63 sample entries / 62 unique glyphs")
+        raise AssertionError("V9 requires 63 sample entries / 62 unique glyphs")
     outdir = args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
-    render_overview(base, geometry, variant, outdir / "tsukushi-a-v8-63-sample-overview.png")
+    render_overview(base, geometry, variant, outdir / "tsukushi-a-v9-63-sample-overview.png")
     render_sketch_study(
         base, variant, args.bird_sketch, args.ye_sketch,
-        outdir / "tsukushi-a-v8-sketch-gesture-study.png",
+        outdir / "tsukushi-a-v9-sketch-gesture-study.png",
     )
     render_width_reference(
-        base, variant, reference, outdir / "tsukushi-a-v8-stroke-width-reference.png"
+        base, variant, reference, outdir / "tsukushi-a-v9-stroke-width-reference.png"
     )
     render_endpoint_detail(
-        base, variant, outdir / "tsukushi-a-v8-endpoint-electric-detail.png"
+        base, variant, outdir / "tsukushi-a-v9-endpoint-electric-detail.png"
     )
     for font in (base, geometry, variant, reference):
         font.close()
