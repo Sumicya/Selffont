@@ -2,6 +2,12 @@
 
 当前可审阅的是 V9 静态研究候选，不是生产字体；图像与量化证据不等于主人审美验收，也不是设备截图。范围仍固定在筑紫 A D/400 的 63 个样本项 / 62 个唯一字形，没有扩展到其他字重或全字库。
 
+## 交互试调
+
+- [打开字形工作台](../../tools/glyph-lab/index.html)：本地加载字体，对单字实时试调栅格笔重、字面宽高与位置；逐字记录修改意图、审阅状态和备注，并导出 PNG/JSON。字体不会上传。
+- 工作台是审阅原型，不直接编辑或导出 TTF/OTF；笔重滑杆为栅格形态学预览。操作说明与限制见[工作台 README](../../tools/glyph-lab/README.md)。
+- 可选授权参照：[霞鹜文楷（OFL 1.1）](https://github.com/lxgw/LxgwWenKai)适合观察手写风格，[Noto Sans SC（OFL 1.1）](https://github.com/google/fonts/tree/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/notosanssc)可作笔重对照；仅提炼原则，不描摹字形。
+
 ## 当前候选：筑紫 A D/400 全样本统一笔宽 V9
 
 - [63 项 / 62 字完整总览：源字形、几何基底、V9](tsukushi-a-v9-63-sample-overview.png)
