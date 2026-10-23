@@ -206,7 +206,7 @@
           <button type="button" class="filter" data-filter="ok">认可</button>
         </div>
         <div class="glyph-grid" id="glyphGrid" role="listbox" aria-label="样本字形"></div>
-        <div class="sample-foot">点字切换；角标表示审阅状态。“国”在原样本中出现两次，调参仍按唯一字形保存。</div>
+        <div class="sample-foot">点字切换；角标表示审阅状态。“国”出现两次，调参按唯一字形保存。已预置你指出的 13 个问题；其余字仍标为未审，不代表已通过。</div>
       </aside>
 
       <main class="editor">
@@ -310,6 +310,21 @@
     'use strict';
     const SAMPLE_ENTRIES = Array.from('一二三十口日回国了乙人入八木林森永心必水走建进这远道你好中国语言文字书写规范长美丽颜色锦绣风雨雪龙马鸟虫鱼电子已己巳也包囚暖田');
     const UNIQUE_GLYPHS = Array.from(new Set(SAMPLE_ENTRIES));
+    const REVIEW_SEEDS = {
+      '颜': { status: 'fix', intent: 'protect-stroke', note: '点被压缩：保住点的可见重量，不要变细。' },
+      '暖': { status: 'fix', intent: 'protect-stroke', note: '丿被压缩：保留撇的可见重量，不要变细。' },
+      '电': { status: 'fix', intent: 'narrow-inner', note: '只收窄内部田框的左右边；不要挤压整字版式。保留外框、整体宽度和中心线，不加粗。' },
+      '己': { status: 'fix', intent: 'straighten', note: '最后一笔改直，端头半圆，不留钩。' },
+      '已': { status: 'fix', intent: 'straighten', note: '最后一笔改直，端头半圆，不留钩。' },
+      '巳': { status: 'fix', intent: 'remove-hook', note: '去掉末钩并直化，端头半圆。' },
+      '也': { status: 'fix', intent: 'remove-hook', note: '横折弯钩去钩、直化；从“也”草图提炼简化思路，不描点。' },
+      '鸟': { status: 'fix', intent: 'simplify', note: '按“鸟”板书提炼笔画简化并重绘；不要误用“也”草图，也不要逐点描摹。' },
+      '龙': { status: 'fix', intent: 'custom', note: '用户指出严重问题；需由助手对照源字形、全样本风格和轮廓细节自查，不能把查错工作转给用户。' },
+      '色': { status: 'fix', intent: 'straighten', note: '最后一笔按“己”直化；用户还指出严重问题，需助手继续自查其余结构。' },
+      '包': { status: 'fix', intent: 'remove-hook', note: '左右两钩都去掉并直化，端头半圆。' },
+      '子': { status: 'fix', intent: 'custom', note: '用户指出变形；助手先自行对比源轮廓和全样本，再提出修复，不要求用户逐笔找错。' },
+      '乙': { status: 'fix', intent: 'remove-hook', note: '按“巳”同一方向去钩并直化，端头半圆。' }
+    };
     const STORAGE_KEY = 'selffont-glyph-lab-v1';
     const CANVAS_SIZE = 520;
     const FONT_PX = 270;
@@ -317,7 +332,7 @@
     const state = {
       selected: '颜',
       filter: 'all',
-      records: {},
+      records: Object.fromEntries(Object.entries(REVIEW_SEEDS).map(([ch, value]) => [ch, { ...value }])),
       fonts: { source: null, reference: null },
       fontNames: { source: '', reference: '' },
       fontUrls: { source: null, reference: null }
@@ -344,7 +359,7 @@
     function safeLoadState() {
       try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-        if (saved.records && typeof saved.records === 'object') state.records = saved.records;
+        if (saved.records && typeof saved.records === 'object') state.records = { ...state.records, ...saved.records };
         if (UNIQUE_GLYPHS.includes(saved.selected)) state.selected = saved.selected;
       } catch (_) { /* Ignore malformed or unavailable local storage. */ }
     }
@@ -510,7 +525,7 @@
       saveControls();
       const ch = state.selected, r = record(ch), family = familyFor('source');
       const sourceMetrics = paintCanvas($('sourceCanvas'), ch, family, null);
-      const editedMetrics = paintCanvas($('editedCanvas'), ch, family, r);
+      paintCanvas($('editedCanvas'), ch, family, r);
       if (state.fonts.reference) {
         const refMetrics = paintCanvas($('referenceCanvas'), ch, familyFor('reference'), null);
         $('referenceCanvasLabel').textContent = state.fontNames.reference || '对照字体';
