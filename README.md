@@ -29,11 +29,6 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 - 非 CJK 语言区（`und-Arab` 之类）与 emoji 区（`und-Zsye`）逐字不动：那些字形主字体没有，插进去只会挡路。
 - **不要的厂商字体连引用一起清掉**：`MiSans`（模板里 `lang="zh"` 那条 `MiSansL3.otf`，以及火狐名单里的 `MiSans VF` / `MiSans TC` 等）在生成的配置与火狐名单里都不留——中文缺字不落到它上面，继续往默认区的补充字库（天珩 / Unicode 新平面等）走。清掉后空掉的家族节点一并删除，标注它的注释也删。安装时把它投放到设备实际会读的每一份配置上（内容都是这同一份新语法）：AOSP 的 `font_fallback*.xml`，以及 ColorOS 的 `/system_ext/etc/fonts_base.xml` 与 `fonts_ule.xml`——**读哪份按厂商而定**，只换 AOSP 那份时 ColorOS 会继续用厂商配置，字体看起来「没生效」；**库存 `fonts.xml` 不再替换**（AOSP 16 头注已把这份文件标为 DEPRECATED，且 AOSP 的 JSON 作者层是构建期管线、设备上不落地）。设备一份可替换配置都没有（Android 15 以下）时安装直接中止，不留下半套配置。
 
-## 研究文档
-
-- [文档总入口](docs/README.md)：按当前设计、历史记录、证据分类导航。
-- [当前筑紫 A D/400 钩尾预览](docs/round-preview/README.md)：仅为研究候选，不代表生产字体或视觉验收。
-
 ## 安装与使用
 
 ### 安装 / 卸载
@@ -162,6 +157,10 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
 - MFGA 基础包只取字体资源，绝不执行其代码（归属见 `LICENSES.md`）。
 - 主字体必须能被 fontTools 解析且含 `wght` 轴；`.ttf`/`.otf`/`.ttc` 之外的后缀、静态字体、缺空壳的基础包都直接拒绝。
+
+### 字形研究候选（非生产）
+
+[筑紫 A D/400 草图比例参考版 V7](docs/round-preview/README.md) 是独立、可逆的研究预览，不属于安装包或生产构建；[研究文档入口](docs/README.md) 汇总设计原则、决策与证据。预览含完整 63 项样本与用户确认的“鸟”“也”草图比例对照；字体轮廓与草图不是逐点描摹，候选未获视觉验收。源字体和派生 TTF 不入库。
 
 ### 未验证项的真机清单
 

@@ -1,5 +1,28 @@
 # 变更记录历史（已移出主 CHANGELOG，不对外展示）
 
+## 2026-10-21 · 筑紫中轴驱动的马路口轮廓预览
+
+- 针对用户指出“当前轮廓不像筑紫或马路口”，确认生产默认仍是 WenYuan Rounded VF，之前的长度审计未改轮廓。新增 `tools/stroke_centerline_rebuild_prototype.py`：从筑紫 A 圆 D 静态参考字体提取高分辨率中轴，将其归一到马路口 Regular 字面框，以 Light/Regular/Medium 全样本中位笔宽重建 62 个唯一字的静态预览；未逐点复制筑紫外轮廓。
+- 新增 `12-tsukushi-centerline-prototype.md`、14 字放大对照和 Light/Regular/Medium 各 62 字视觉复核页。186 个输出字形的单轮廓自交检查通过。筑紫参考 TTF 仅在 `/tmp` 本机分析，不入库；其来源仓库未声明授权。
+- 边界：静态研究预览，不接生产构建。`compatible` 模式在 25% 笔宽调整限制下仍无法对齐 `暖` Light 与 Regular；没有生成可变字体或全字库结果。生产默认仍是 WenYuan。
+- 新增 3 项轮廓匹配/重采样/微小轮廓过滤单测。
+
+## 2026-10-21 · 筑紫 B 单一目标设计澄清与参考源审计
+
+- 用户更正：只选筑紫 B 丸，马路口不作为视觉/结构混合来源；先交设计稿、不改生产字体。第一轮仍为 63 项 × Light/Regular/Medium，并要求检查字重间拓扑兼容。允许测量筑紫坐标，目标轮廓不逐点复制。
+- 曾找到社区参考候选 `Zolyn/TsukuBRdGothic-Std`（固定提交 `88a5c2d44e034c5655c6c59ad913e345de0bf1f5`），包含五档；Light/Regular/Medium 的 `usWeightClass` 为 300/400/500，UPM 1000，63 项样本去重后的 62 字均有 cmap 覆盖。候选 TTF 仅存于 `/tmp`，未入库；用户随后指出“包”字重量不符，故候选图撤回，不作为有效设计基准。
+- 来源未经官方验证；仓库无许可证文件，README 声明版权属于字体公司、仅供学习且禁止商用/倒卖。公开 B 样张与候选“包”字重量差异明显，须谨慎对待，不得将其宣称为官方验证或再分发授权。候选 TTF 未提交；当时曾得出“B 候选已找到、暂不回退 A”的结论，后因用户指出字重不符而撤销。
+- 静态轮廓拓扑审计：Light–Regular `59/62`、Regular–Medium `58/62`、Light–Medium `59/62` 的样本字点/轮廓结构不一致。字符映射一致，但不能直接把三份 TTF 拼成可变字体；设计稿需以 B 为唯一造型目标，后续如进入原型应先重建三档共享拓扑。
+- 更新 `13-tsukushi-b-redesign-brief.md`；`12-*` 筑紫 A 圆 D 原型仍仅作历史实验，不是本轮目标或验收依据。此次只做参考源/拓扑分析，未开始新轮廓实现。
+- 当日曾为社区候选补出参考图与交付检讨；后续发现“包”字重量不符，两者都已从当前树撤回。有效的字体基准与当前预览状态统一见 `docs/round-preview/README.md`。
+
+## 2026-10-20 · CI 清理 scope 分权 + 63 项笔画宽度原型评估
+
+- `.github/scripts/cleanup.py` 增加 `artifacts` / `releases` 两种 scope：artifact/run 使用 `actions: write` + `contents: read`；Build 默认分支才运行独立 Release/tag job，单独使用 `contents: write`。两工作流顶层 `SEGMENTS` / `CLEANUP_APPLY` 同值，所有 checkout 显式 `fetch-depth: 0`，清理任务共用 concurrency 锁。
+- 清理动作现在先输出完整对象/端点计划再执行；403 记录为未执行并明确标注，非 403 失败使 job 标红；Release 删除后再核验 tag 归属，避免 Release 删除失败时误删对应 tag。对 GitHub API 做了只读预演：Release/tag 无待处理项，artifact 5 个、build/pr-check 各 5 条 run，预演计划无删除动作；未执行实际删除，也未实际运行 Actions。
+- 新增 `tools/stroke_width_normalize_prototype.py` 与 `requirements-research.txt`，仅作可复现实验，不接生产构建。固定源字体三档、63 个审计项（62 个不同字形）上，纯共享目标 + Regular `文` 的逐字几何回退将跨字 CV 从原字 `0.035/0.040/0.051` 降至 `0.028/0.018/0.017`（Light/Regular/Medium）；单字内部平均 CV为 `0.065/0.052/0.058`。最终 62×3 项自交检查通过；逐字审计平均宽度变化最高约 −10.9%…+15.2%，仍非全字体、全量视觉或真机验证。详见 `docs/round-preview/2026-10-19-maruko-track/09-笔画宽度中轴试验-3档字重-63项.txt` 与 13 字对照图。
+- 验证：Python 编译、`build.py --check` 九项、YAML 解析及权限/checkout/concurrency 不变量检查通过；清理脚本 mock 的 403/非403/Release-tag 保护/成功/404 回退及 artifact/run 403 复核未完成等七类场景通过。
+
 ## 2026-10-18 · docs/evidence 旧图全清 + 阶段一拐角合并预览图
 
 - 按主人要求"旧图全清"：删除 `docs/evidence/` 目录下此前全部 9 张截图（`round-py-
@@ -9,7 +32,7 @@
   常量、墙厚比例、跨字重拓扑一致性等）均可直接读源码常量/注释核对，不依赖图；
   `TODO.md`/`docs/round-preview/README.md` 里指向这些文件名的旧指针已加注删除说明，
   不留断链。`docs/evidence/README.md` 同步重写，去掉围绕这些已删图片的历史审计段落。
-- 新增单张当前状态预览图 `docs/evidence/2026-10-18-selfrounds-corner-merge-preview.png`：
+- 当时新增了一张当前状态预览图（图像已于 2026-10-22 按用户要求清理）：
   重新从 `takushun-wu/WenYuanFonts` 取 `WenYuanSansSCVF.ttf`，子集出电/乙/已/也/己/
   了/包/国八个代表字，实例化 Light/Regular/Heavy 三档，直接跑
   `tools/vf_round.py --corners`（不经过任何针对单字手工重构的前置步骤），
@@ -149,7 +172,7 @@
   码位一个不少；② 8 批之间 cmap 两两不重叠，0 个码位同时出现在两批里；③ 跨 4 个不同批次文件用
   PIL+FreeType 渲染代表字（国/回/田/电/木/大/永/示）在 wght=100/400/900 三档，圆角/钩尖在全量
   CJK 规模下依旧干净、插值连续无自交——证据见
-  `docs/evidence/2026-10-15-full-cjk-batched-vf-corners-weights.png`。脚本整理进仓库：
+  对应的历史沙箱渲染图已按用户要求清理，文字结论保留。脚本整理进仓库：
   `tools/batch_vf_merge.py`（闭包一致性、码位覆盖/互斥都是硬断言，不满足直接报错退出）。
 - 这个方案的实际形态是"一次装 8 个小 VF 文件"，不是"一个大 VF 文件"——装机时作为同一语言
   fallback 链上相邻的 8 个 family（跟本仓库现有补充字库走 Android fallback 路由同一机制），
@@ -424,8 +447,8 @@
 ## 2026-10-13（续三）· 拐角半径 70→130 + 预览缓存失效修复 + 同步 GLOBAL.md 第 0 版
 
 - 主人反馈"拖 wght 都不变，圆在哪都是方的"：排查出两个独立问题。
-  1. **拐角半径量级不足**：`CORNER_R_MAX=70` 是"坐标确实发生了偏移"推出来的，没换算成实际观感——70 单位/1000upm 到正常渲染字号只有几像素，肉眼基本看不出圆角。重新量了筑紫参照（`ZhuZiAYuanJWD.ttf`，仅本机参照未入库）"回"字外框拐角实际跨度约 120–130 单位，把 `CORNER_R_MAX` 调到 **130**，全 7 字重重跑 `--corners` 管线 → GB2312 子集 → 合成新 VF（9624 字形/字重，与上一版字形数一致），bbox 增长量回归检查与上一版一致（最大约 94 单位，端头驱动），Heavy「电」钩尖放大检查确认无新增自相交。证据：`docs/evidence/2026-10-13-corner-r130-zoom-topleft.png`（国字左上角放大三连对比）、`docs/evidence/2026-10-13-corner-r130-overview.png`（正常字号整字对比）、`docs/evidence/2026-10-13-corner-r130-heavy-dian-hook.png`（电字钩尖检查）。
-  2. **实况预览有缓存隐患**：`docs/round-preview/index.html` 的 `@font-face` 一直用固定文件名 `SelffontRoundSC-VF.ttf`，文件内容换了但 URL 没变，浏览器可能一直用旧缓存——这大概率是"拖 wght 看起来一直不变"的根因。改成 `SelffontRoundSC-VF.ttf?v=20261013b` 带版本号查询参数强制重新拉取。额外用 `varLib.instancer` 在 wght=100/300/.../900 七个点各自钉实例渲染，证据 `docs/evidence/2026-10-13-wght-axis-live.png` 直接证明这份 VF 文件本身是随 wght 连续变化的，排除"字体文件本身没变"的疑点。
+  1. **拐角半径量级不足**：`CORNER_R_MAX=70` 是"坐标确实发生了偏移"推出来的，没换算成实际观感——70 单位/1000upm 到正常渲染字号只有几像素，肉眼基本看不出圆角。重新量了筑紫参照（`ZhuZiAYuanJWD.ttf`，仅本机参照未入库）"回"字外框拐角实际跨度约 120–130 单位，把 `CORNER_R_MAX` 调到 **130**，全 7 字重重跑 `--corners` 管线 → GB2312 子集 → 合成新 VF（9624 字形/字重，与上一版字形数一致），bbox 增长量回归检查与上一版一致（最大约 94 单位，端头驱动），Heavy「电」钩尖放大检查确认无新增自相交。当时生成的三张沙箱对照图（国字角部放大、正常字号整字、电字钩尖）已于 2026-10-22 按用户要求清理；上述文字结论仍作为历史记录保留。
+  2. **实况预览有缓存隐患**：`docs/round-preview/index.html` 的 `@font-face` 一直用固定文件名 `SelffontRoundSC-VF.ttf`，文件内容换了但 URL 没变，浏览器可能一直用旧缓存——这大概率是"拖 wght 看起来一直不变"的根因。改成 `SelffontRoundSC-VF.ttf?v=20261013b` 带版本号查询参数强制重新拉取。额外用 `varLib.instancer` 在 wght=100/300/.../900 七个点各自钉实例渲染；当时的轴向渲染图已于 2026-10-22 清理，文字记录只保留“该 VF 随 wght 连续变化”的历史结论，不作为当前图片证据。
   3. 已替换 `docs/round-preview/` 下的 VF（md5 `51640989b93794acb6853f1db56f9fe7`）、静态 Regular、designspace、index.html、README.md。
 - 读了 `Sumicya/selfs` 的 `GLOBAL.md` 新版，发现已从「第二十四版」整体重写为「第 0 版 · 2026-10-13」（四要领精简格式）。版本号格式、Release/Artifact 保留数、Arena 辱骂触发检讨等旧条文实质不变；新增明确要求「运行记录」（不只是 artifact）也要清理收口到 5 条——本仓库 `build.yml` 现有 `cleanup` job 只删 artifact，不删 run，这是本轮新发现、尚未实现的缺口，已记在 `AGENTS.md` 顶部，留给下一轮处理。`AGENTS.md` 版本戳同步改到第 0 版。
 - 遗留的真实失误：上一轮主人表达不满后，按规矩应先写满 1000 字检讨再继续，这一轮才在「看新规」提醒下补上，过程记在当次会话里，不单独建文件（本仓库不允许把检讨做成文件/脚本条目）。
@@ -444,9 +467,9 @@
 
 ## 2026-10-13 · 自制圆体第一个真实可装预览：round.py 炸刺 bug 修复 + 七字重合成 VF
 
-- **找到并修了 `tools/round.py` 的真 bug**：端头圆角化在横画/捺画这类「长直线接自由端头」的笔画上会把直线和新插的圆弧硬并成一整条二次曲线，渲染出来是细刺或扁椭圆（`木`/`大`/`永`/`示` 复现）。根因是原代码把端头两端的原始锚点坐标直接丢弃，只留偏移过的弧控制点。修复：两端锚点原样落笔，只在其间插两段真弧。对比图 `docs/evidence/2026-10-13-round-py-炸刺修复前后对比.png`。
+- **找到并修了 `tools/round.py` 的真 bug**：端头圆角化在横画/捺画这类「长直线接自由端头」的笔画上会把直线和新插的圆弧硬并成一整条二次曲线，渲染出来是细刺或扁椭圆（`木`/`大`/`永`/`示` 复现）。根因是原代码把端头两端的原始锚点坐标直接丢弃，只留偏移过的弧控制点。修复：两端锚点原样落笔，只在其间插两段真弧。该历史修复对比图已按 2026-10-22 用户要求清理，文字原因与修复方式保留。
 - **新增 `tools/vf_round.py`**，解决「七个字重各自独立圆角化后点数/点序不一致、没法再合成可变字体」的问题：只在参照字重（Regular）上做一次「切哪一刀」的结构判断，其余字重复用同一份判断、各自坐标独立求值。验证过圆角化前后七字重逐字形点数/点序均 0 处不同。
-- **产出 `docs/round-preview/SelffontRoundSC-VF.ttf`**：源字体文渊黑体 VF（`takushun-wu/WenYuanFonts` 仓库内 `vf/WenYuanSansSCVF.ttf`，OFL；取自 git blob API 而非会在沙箱里卡死的 release 资产）→ `varLib.instancer` 钉七个字重实例 → `tools/vf_round.py` 圆角化 → `fontTools.varLib.build` 合成，`wght` 100–900 真可变。非字重端点（250/550/850）插值渲染验证形状连续无裂变，见 `docs/evidence/2026-10-13-自制圆体VF插值渲染.png`。
+- **产出 `docs/round-preview/SelffontRoundSC-VF.ttf`**：源字体文渊黑体 VF（`takushun-wu/WenYuanFonts` 仓库内 `vf/WenYuanSansSCVF.ttf`，OFL；取自 git blob API 而非会在沙箱里卡死的 release 资产）→ `varLib.instancer` 钉七个字重实例 → `tools/vf_round.py` 圆角化 → `fontTools.varLib.build` 合成，`wght` 100–900 真可变。非字重端点（250/550/850）插值渲染当时验证形状连续无裂变；对应历史图像已按 2026-10-22 用户要求清理，文字结论保留。
 - **范围收到 GB2312 + 拉丁**（非全量 CJK）：全量 35225 字形 × 七字重一起喂 `varLib.build` 在本沙箱 4GB 内存下被 OOM-killed，这版先用 `fontTools.subset` 收到 GB2312（7445 字）再合并。扩到全量 CJK 需要更大内存的机器或分批合并，记在 `TODO.md`。
 - 方正 FW 筑紫A圆的网页子集字体只在本机 `/tmp` 下当设计参照看过（端头/转角处理方式），从未写入仓库、未提交——筑紫是商用授权字体，不是 OFL，不满足本仓库「源字体须 OFL 或等效可衍生许可」的硬约束。
 - 仍未做：度量归一、`build.py` 的 `--font` 接入、真机验证（这版只有沙箱 FreeType/PIL 渲染证据，按证据分层约定不能当真机证据用）、L 形拐角是否跟筑紫一样也带圆没定。
