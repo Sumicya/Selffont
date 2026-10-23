@@ -26,4 +26,4 @@ Suggested licensed references are linked in the app: [LXGW WenKai](https://githu
 - Font files stay in the browser and are not uploaded. The app does not bundle a font.
 - The weight slider uses a binary-style raster morphology preview; width/height/position are canvas transforms. These controls are **not** vector contour edits and do not produce a TTF/OTF.
 - PNG and JSON exports are review artifacts only. Use the JSON and notes to guide later, explicit vector-outline work; visually approve every glyph at actual font sizes before accepting a candidate.
-- The app intentionally does not infer a user's desired terminal shape from a generic slider. Use the per-glyph intent and note fields to say “straighten”, “remove hook”, “round cap”, “preserve dot”, or another specific instruction.
+- The per-glyph intent selector is an annotation only; it does not automatically straighten, remove hooks, round endpoints, or redraw glyphs. Use it and the note field to record the desired vector edit.
