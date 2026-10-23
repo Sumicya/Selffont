@@ -1,10 +1,10 @@
 # 待办（下个会话）
 
-**2026-10-23 当前方向（纠正后，优先于下文旧记录）**：基准为单一静态筑紫 A D/400（`usWeightClass=400`、无 `fvar`）；筑紫 B 社区候选因“包”字重量不符而撤回。V2 自动拐角改形已被否决；V3 用户明确反馈“丑”，不接受；V4 未获视觉验收；V5 仅改 7 个唯一字形，未满足全样本要求。用户确认两张新草图分别对应“鸟”“也”，用于整字比例和风格判断而非逐点描摹；本轮据此形成 V7，并继续处理完整 63 项/62 个唯一字形。26 个唯一字形发生变化：22 处筛选钩尾双弧圆头、1 处通过自交检查的外露尖端圆化、11 处自由端平头圆化，以及“鸟”“也”两处整字比例调整；全量尖端试跑的另 12 处因会在 7 个字中引入单轮廓自交而排除。其余 36 个保持轮廓不变；不做被否决的自动拐角。适度延长“己”“已”末笔；“电”四个内腔从 245/245/262/262 FU 对称压至 220/220/237/237 FU，保留外侧边、中线及整字墨迹边界。图、用户草图、来源与验证见 `docs/round-preview/README.md`。V7 仍待主人视觉审阅；A 的 Light/Regular/Medium、三档拓扑、真机渲染和全字库均未验证；不改生产字体、不接 `build.py`。
+**2026-10-23 当前方向（V10 可逆候选，优先于下文旧记录）**：继续以单一静态筑紫 A D/400（UPM 1000、`usWeightClass=400`、无 `fvar`）为研究来源。用户确认的“鸟”“也”草图分别只作对应字形的整体笔势参照。V10 以已验证 V9 的 74-FU 候选为基线，对 12 字定点恢复/重绘矢量：“颜”“暖”恢复源轮廓；己/已/巳/也/包（双端）/色/龙/子修圆弧端头；“鸟”三段手势重绘；“乙”开放单笔去回钩。63 项/62 唯一字形均有样本审计；唯一获准的 source→geometry 拓扑变化是“鸟”3→1 轮廓。量化、自交和 PNG 已生成，但**未获审美验收**；“电”沿用 V9 中框 0.97 处理、bbox 仍少 5 FU。正常字面及放大端头图与完整复现见 [`docs/round-preview/README.md`](docs/round-preview/README.md) 和 [`V10 验证记录`](docs/round-preview/tsukushi-a-v10-validation.md)。V10 仍可逆、不是生产字体；源/派生 TTF 不入库。未验证其他字重、全字库、安装包或真机。
 
-**规范文件状态（2026-10-22 更正）**：`selfs/GLOBAL.md` 不在 Selffont 工作树内，但用户给出 `Sumicya/selfs` 仓库链接后已读取最新规范提交 [`62c9e180f542257c628366ebc1ba8607ad68470a`](https://github.com/Sumicya/selfs/commit/62c9e180f542257c628366ebc1ba8607ad68470a)。此前称其在 GitHub 也找不到是错误的；本轮按该规范及其 S7/S8 必读资料执行。
+**规范文件状态（2026-10-23 收尾重核）**：`git ls-remote https://github.com/Sumicya/selfs refs/heads/main` 返回 [`ff2a18821903b3db949e3ae2b9006f73e58d01dc`](https://github.com/Sumicya/selfs/commit/ff2a18821903b3db949e3ae2b9006f73e58d01dc)，与本轮开始前读取的 main SHA 相同；`GLOBAL.md` blob 为 `fe404a18898a568ab5b88cca2baad0212fa5d93d`。本轮按该规范及 S7/S8 方法执行：Ponytail HEAD [`09c434ab73ca43761c5d8b0c5d341926c2fba710`](https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md)；Nagi Skills HEAD [`b0eefa19f516b2b29a5a556dc4c569a02da157e8`](https://github.com/nagi-studio/skills/tree/b0eefa19f516b2b29a5a556dc4c569a02da157e8)，读取 `skills/pondering/grill/SKILL.md` 与 `skills/pondering/architect/SKILL.md`。
 
-按会话约定：下面的事**本会话不做**，下个会话开工前先读本文件、`README.md` 与 `CHANGELOG.md`，动手前先提问核对（`AGENTS.md` 已于 2026-10-15 由主人删除，不再维护）。
+继续前先读本文件、`README.md`、`CHANGELOG.md` 及 [`docs/round-preview/README.md`](docs/round-preview/README.md)，以该入口标注的当前版本为准；除非材料不足以判断或存在会改变实现方向的重要歧义，不重复要求主人手写已有说明。`AGENTS.md` 已于 2026-10-15 由主人删除，不再维护。
 
 ## ① 自制圆体主字体（类筑紫 A 丸ゴシック风格）
 

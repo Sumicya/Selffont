@@ -114,6 +114,8 @@ def audit(
     render_size: int = DEFAULT_RENDER_SIZE,
     small_size: int = DEFAULT_SMALL_SIZE,
     width_px: int = 900,
+    redrawn_geometry_chars: str = "",
+    candidate_label: str = "V9",
 ) -> tuple[list[dict], dict]:
     fonts = {
         "source": TTFont(source_path),
@@ -125,10 +127,16 @@ def audit(
         "geometry": geometry_path,
         "candidate": candidate_path,
     }
+    redrawn_set = set(redrawn_geometry_chars)
+    if redrawn_set - set(CHARS_63):
+        raise ValueError(
+            f"Redrawn glyphs are outside the fixed sample: {''.join(sorted(redrawn_set - set(CHARS_63)))}"
+        )
     cache = {}
     rows: list[dict] = []
     seen: dict[str, dict] = {}
     topology_errors = []
+    redraw_topology_changes = []
     advance_errors = []
     mapping_errors = []
     small_topology_differences = []
@@ -169,18 +177,23 @@ def audit(
             role: _render_metrics(small_masks[role])
             for role in fonts
         }
-        if (
+        source_geometry_differs = (
             metrics["source"].components,
             metrics["source"].holes,
         ) != (
             metrics["geometry"].components,
             metrics["geometry"].holes,
-        ):
-            topology_errors.append(
+        )
+        if source_geometry_differs:
+            detail = (
                 f"{ch} U+{ord(ch):04X}: source → geometry "
                 f"{metrics['source'].components}/{metrics['source'].holes} → "
                 f"{metrics['geometry'].components}/{metrics['geometry'].holes}"
             )
+            if ch in redrawn_set:
+                redraw_topology_changes.append(detail)
+            else:
+                topology_errors.append(detail)
         if (
             metrics["geometry"].components,
             metrics["geometry"].holes,
@@ -285,6 +298,9 @@ def audit(
         "unique_glyphs": len(set(CHARS_63)),
         "large_render_px_per_em": render_size,
         "small_render_px_per_em": small_size,
+        "candidate_label": candidate_label,
+        "redrawn_geometry_chars": sorted(redrawn_set),
+        "redrawn_geometry_topology_changes": redraw_topology_changes,
         "topology_errors": topology_errors,
         "advance_errors": advance_errors,
         "mapping_errors": mapping_errors,
@@ -318,12 +334,15 @@ def write_markdown(path: Path, summary: dict, csv_path: Path | None) -> None:
         for codepoint in summary["small_size_topology_difference_codepoints"]
     ) or "none"
     lines = [
-        "# V9 sample-wide raster/topology audit",
+        f"# {summary['candidate_label']} sample-wide raster/topology audit",
         "",
         f"- Sample scope: {summary['sample_entries']} entries / {summary['unique_glyphs']} unique glyphs.",
+        f"- Intentional source-to-geometry redraw allowance: {''.join(summary['redrawn_geometry_chars']) or 'none'}.",
+        f"- Recorded intentional redraw topology changes: {len(summary['redrawn_geometry_topology_changes'])}.",
+        *[f"  - {detail}" for detail in summary['redrawn_geometry_topology_changes']],
         f"- Independent renderer: Pillow {summary['renderer_versions']['pillow']} / FreeType {summary['renderer_versions']['freetype']}; FontTools {summary['renderer_versions']['fonttools']}; large audit size {summary['large_render_px_per_em']} px per em.",
         "- Raster method: alpha threshold ≥128; 8-connected components; counters = components minus Euler number; binary-mask IoU.",
-        "- Hard checks: source → geometry and geometry → candidate component/counter topology, cmap mapping, UPM/weight, and advance widths.",
+        "- Hard checks: source → geometry component/counter topology except the explicitly listed redraws; geometry → candidate topology, cmap mapping, UPM/weight, and advance widths.",
         f"- Hard-check topology failures: {len(summary['topology_errors'])}.",
         f"- Advance-width failures: {len(summary['advance_errors'])}.",
         f"- Font/sample mapping failures: {len(summary['mapping_errors'])}.",
@@ -371,12 +390,16 @@ def main() -> None:
     parser.add_argument("--render-size", type=int, default=DEFAULT_RENDER_SIZE, help="large size in px/em; default 1000")
     parser.add_argument("--small-size", type=int, default=DEFAULT_SMALL_SIZE, help="diagnostic raster size in px/em; default 48")
     parser.add_argument("--width-px", type=int, default=900, help="skeleton-width audit canvas size")
+    parser.add_argument("--redrawn-geometry-chars", default="", help="glyphs intentionally redrawn from source")
+    parser.add_argument("--candidate-label", default="V9", help="candidate label written into the report")
     args = parser.parse_args()
     rows, summary = audit(
         args.source, args.geometry, args.candidate,
         render_size=args.render_size,
         small_size=args.small_size,
         width_px=args.width_px,
+        redrawn_geometry_chars=args.redrawn_geometry_chars,
+        candidate_label=args.candidate_label,
     )
     if args.csv:
         write_csv(args.csv, rows)
@@ -386,6 +409,9 @@ def main() -> None:
     print(f"topology failures={len(summary['topology_errors'])}")
     for issue in summary["topology_errors"]:
         print("TOPOLOGY:", issue)
+    print(f"intentional redraw topology changes={len(summary['redrawn_geometry_topology_changes'])}")
+    for issue in summary["redrawn_geometry_topology_changes"]:
+        print("REDRAW:", issue)
     print(f"advance failures={len(summary['advance_errors'])}")
     for issue in summary["advance_errors"]:
         print("ADVANCE:", issue)

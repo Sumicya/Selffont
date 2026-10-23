@@ -30,6 +30,9 @@ class RasterAuditMetricTests(unittest.TestCase):
 
     def test_report_does_not_link_to_unrequested_csv(self):
         summary = {
+            "candidate_label": "V10",
+            "redrawn_geometry_chars": ["鸟"],
+            "redrawn_geometry_topology_changes": ["鸟 U+9E1F: source → geometry 3/0 → 1/0"],
             "sample_entries": 1,
             "unique_glyphs": 1,
             "renderer_versions": {"pillow": "test", "freetype": "test", "fonttools": "test"},
@@ -60,6 +63,9 @@ class RasterAuditMetricTests(unittest.TestCase):
             content = report.read_text(encoding="utf-8")
 
         self.assertIn("No CSV was requested for this run.", content)
+        self.assertIn("# V10 sample-wide raster/topology audit", content)
+        self.assertIn("Intentional source-to-geometry redraw allowance: 鸟.", content)
+        self.assertIn("鸟 U+9E1F: source → geometry 3/0 → 1/0", content)
         self.assertNotIn("sample-audit.csv", content)
 
     def test_csv_writer_uses_clean_utf8_lf_lines(self):
