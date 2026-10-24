@@ -2,10 +2,11 @@
 
 ## 唯一当前新稿 · 2026-10-24 晚
 
-[打开当前审阅图：Maruko 三档静态字重重拓扑成 `wght 300–500` 可变字体的插值扫视](2026-10-24-maruko-vf-candidate/maruko-vf-candidate-v1-sweep.png)
+[打开当前审阅图：Maruko 可变字体候选 V1 现状总览（VF 实例 × 上游静态对照 × 中间档放大 × 实测数字）](2026-10-24-maruko-vf-candidate/maruko-vf-v1-state.png)
 
 旧图（`current-maruko-review.png` 与两张自交候选对照图）已按主人指令全部清空，git 历史可追溯；现在仓库里只有这一张当前图。
 
+- [插值扫视：300→500 五档连续](2026-10-24-maruko-vf-candidate/maruko-vf-candidate-v1-sweep.png)
 - [分段密度对照：seg-len 28 vs 60，同一批字三档字重并排](2026-10-24-maruko-vf-candidate/maruko-vf-v1-seg-compare.png)
 - [可变字体候选 V1：做法、实测限制与图上真实问题](2026-10-24-maruko-vf-candidate/README.md)
 

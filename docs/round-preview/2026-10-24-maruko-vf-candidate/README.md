@@ -1,6 +1,6 @@
 # Maruko 可变字体候选 V1：三档静态字重重拓扑后的插值原型
 
-**这是研究候选，不是生产字体，没有审美验收，没有真机验证。** 两张图：插值扫视 [`maruko-vf-candidate-v1-sweep.png`](maruko-vf-candidate-v1-sweep.png)、分段密度对照 [`maruko-vf-v1-seg-compare.png`](maruko-vf-v1-seg-compare.png)。
+**这是研究候选，不是生产字体，没有审美验收，没有真机验证。** 图三张：现状总览 [`maruko-vf-v1-state.png`](maruko-vf-v1-state.png)（**先看这张**）、插值扫视 [`maruko-vf-candidate-v1-sweep.png`](maruko-vf-candidate-v1-sweep.png)、分段密度对照 [`maruko-vf-v1-seg-compare.png`](maruko-vf-v1-seg-compare.png)。
 
 ## 做了什么
 
