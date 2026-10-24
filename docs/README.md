@@ -7,6 +7,7 @@
 3. [`decisions-笔画简化.md`](decisions-笔画简化.md) — 笔画简化方向、历史取舍与边界；旧轮次仅作历史，不可当作当前结果。
 4. [`round-preview/2026-10-24-maruko-stroke-refinement/full-map-sc-regular-korean-prototype.md`](round-preview/2026-10-24-maruko-stroke-refinement/full-map-sc-regular-korean-prototype.md) — 最新全 cmap + Hangul 原型的可复核报告。
 5. [`round-preview/2026-10-24-maruko-stroke-refinement/regional-coverage-audit.md`](round-preview/2026-10-24-maruko-stroke-refinement/regional-coverage-audit.md) — 同一 Maruko 提交的 SC / TC / JP 覆盖与地区轮廓签名审计。
+6. [`round-preview/2026-10-24-maruko-stroke-refinement/self-intersection-candidates-review.png`](round-preview/2026-10-24-maruko-stroke-refinement/self-intersection-candidates-review.png) — 8 个自交候选的三态对照；复核结论与两处工具修复见对应报告。
 
 ## 研究记录
 

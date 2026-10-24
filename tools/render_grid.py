@@ -8,9 +8,14 @@ matplotlib 默认字体库里有没有对应的 CJK 字形）。
 
 用法：
     python3 tools/render_grid.py out.png NAME1=weight1.ttf NAME2=weight2.ttf ... -- 字符串
+    python3 tools/render_grid.py out.png NAME1=w1.ttf --zoom=x,y,size -- 字符串   # 局部放大核对
 
 例：
     python3 tools/render_grid.py grid.png Light=w100.ttf Regular=w400.ttf Heavy=w900.ttf -- 乙也了回国
+    python3 tools/render_grid.py zoom.png src=a.ttf cand=b.ttf --zoom=200,399,120 -- 嫛
+
+`--zoom=x,y,size` 把每个格子都换成以 (x, y) 为中心、边长 size 字体单位的窗口，用于
+`docs/design-principles.md` 要求的"同基准正常字号 + 局部放大"核对；不给就是整字窗口。
 
 不传字符串时默认用本仓库常用的 13 字回归集（乙也了包囚回国子己已田电暖，带钩笔+方框两类代表字）。
 """
@@ -65,7 +70,7 @@ def glyph_path(font, gname):
     return Path(pen.verts, pen.codes)
 
 
-def draw_char(ax, font, ch, color="#222"):
+def draw_char(ax, font, ch, color="#222", zoom=None):
     cmap = font.getBestCmap()
     if ord(ch) not in cmap:
         ax.text(0.5, 0.5, "?", ha="center", va="center")
@@ -75,8 +80,14 @@ def draw_char(ax, font, ch, color="#222"):
     path = glyph_path(font, gname)
     ax.add_patch(PathPatch(path, facecolor=color, edgecolor="none", lw=0))
     upm = font["head"].unitsPerEm
-    ax.set_xlim(-100, upm + 100)
-    ax.set_ylim(-250, upm - 50)
+    if zoom:
+        cx, cy, size = zoom
+        half = size / 2.0
+        ax.set_xlim(cx - half, cx + half)
+        ax.set_ylim(cy - half, cy + half)
+    else:
+        ax.set_xlim(-100, upm + 100)
+        ax.set_ylim(-250, upm - 50)
     ax.set_aspect("equal")
     ax.axis("off")
 
@@ -87,6 +98,13 @@ def main(argv):
         sys.exit(1)
     out_path = argv[1]
     rest = argv[2:]
+    zoom = None
+    for i, token in enumerate(rest):
+        if token.startswith("--zoom="):
+            cx, cy, size = (float(v) for v in token.split("=", 1)[1].split(","))
+            zoom = (cx, cy, size)
+            rest = rest[:i] + rest[i + 1:]
+            break
     if "--" in rest:
         split = rest.index("--")
         specs = rest[:split]
@@ -103,17 +121,19 @@ def main(argv):
     n_rows = len(chars)
     n_cols = len(weights) + 1  # 首列=字符标签（从参照字重自己的字形抠出来，不依赖系统 CJK 字体）
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 1.5, n_rows * 1.5))
-    if n_rows == 1:
+    if n_rows == 1 and n_cols == 1:
+        # 只有一格时 plt.subplots 返回单个 Axes，包成列表让下面的下标统一成立；
+        # 单行多列返回的是一维数组，包起来反而会让 axes[0] 变成整个数组（2026-10-24 修）。
         axes = [axes]
     label_font = weights[0][1]
     for r, ch in enumerate(chars):
         ax = axes[r][0] if n_rows > 1 else axes[0]
-        draw_char(ax, label_font, ch, color="#888")
+        draw_char(ax, label_font, ch, color="#888", zoom=zoom)
         if r == 0:
             ax.set_title("char", fontsize=10)
         for c, (wname, font) in enumerate(weights):
             ax2 = axes[r][c + 1] if n_rows > 1 else axes[c + 1]
-            draw_char(ax2, font, ch)
+            draw_char(ax2, font, ch, zoom=zoom)
             if r == 0:
                 ax2.set_title(wname, fontsize=10)
     plt.tight_layout()

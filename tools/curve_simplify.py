@@ -27,9 +27,13 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import shapely.geometry as sg
 from fontTools.ttLib import TTFont
 from fontTools.pens.basePen import BasePen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
+
+# 拟合出的环自交时容差减半重试的次数；仍自交就退回密集采样折线（见 fit_contour_valid）。
+MAX_VALIDITY_RETRIES = 3
 
 
 def _dist(a, b):
@@ -227,6 +231,49 @@ def unique_mapped_chars(font):
     return chars
 
 
+def _rounded_points(start, segs):
+    points = [(round(start[0]), round(start[1]))]
+    for _kind, _p1, p2 in segs:
+        points.append((round(p2[0]), round(p2[1])))
+    return points
+
+
+def _ring_is_valid(points):
+    """拟合结果必须能构成一个合法环，否则宁可少精简也不能留下自交轮廓。"""
+    if len(points) < 3 or len(set(points)) < 3:
+        return False
+    try:
+        return sg.Polygon(points).is_valid
+    except ValueError:
+        return False
+
+
+def _emit_contour(tt_pen, start, segs):
+    tt_pen.moveTo((round(start[0]), round(start[1])))
+    for kind, p1, p2 in segs:
+        p2r = (round(p2[0]), round(p2[1]))
+        if kind == "line":
+            tt_pen.lineTo(p2r)
+        else:
+            tt_pen.qCurveTo((round(p1[0]), round(p1[1])), p2r)
+    tt_pen.closePath()
+
+
+def fit_contour_valid(contour, tolerance):
+    """拟合一条轮廓并保证结果环合法。
+
+    返回 ``(start, segs, used_tolerance)``；容差内拟合出的环自交时把容差减半重试，
+    重试到 ``MAX_VALIDITY_RETRIES`` 次仍自交就退回密集采样折线（点数多，形状合法）。
+    """
+    tol = tolerance
+    for _ in range(MAX_VALIDITY_RETRIES):
+        start, segs = simplify_contour(contour, tol)
+        if _ring_is_valid(_rounded_points(start, segs)):
+            return start, segs, tol
+        tol /= 2.0
+    return contour[0], [("line", None, pt) for pt in contour[1:]], None
+
+
 def process_font(font, chars, tolerance=3.0, seg_len=4.0, source_font=None):
     """Rewrite selected glyphs in ``font`` using geometry from an immutable source.
 
@@ -258,20 +305,36 @@ def process_font(font, chars, tolerance=3.0, seg_len=4.0, source_font=None):
         before_real = len(coords)
 
         tt_pen = TTGlyphPen(source_glyph_set)
+        kept_degenerate = 0
+        polyline_fallbacks = 0
+        tightened = 0
         for contour in flat.contours:
-            start, segs = simplify_contour(contour, tolerance)
-            tt_pen.moveTo((round(start[0]), round(start[1])))
-            for kind, p1, p2 in segs:
-                p2r = (round(p2[0]), round(p2[1]))
-                if kind == "line":
-                    tt_pen.lineTo(p2r)
-                else:
-                    tt_pen.qCurveTo((round(p1[0]), round(p1[1])), p2r)
-            tt_pen.closePath()
+            if len(set(contour)) < 3:
+                # 零面积残留轮廓（上游自动描摹留下的 2 点轮廓）原样保留：拟合只会把它变成
+                # 一个 shapely 构不成环的假环，被误报成自交。
+                _emit_contour(tt_pen, contour[0], [("line", None, pt) for pt in contour[1:]])
+                kept_degenerate += 1
+                continue
+            start, segs, used_tolerance = fit_contour_valid(contour, tolerance)
+            if used_tolerance is None:
+                polyline_fallbacks += 1
+            elif used_tolerance != tolerance:
+                tightened += 1
+            _emit_contour(tt_pen, start, segs)
         new_glyph = tt_pen.glyph()
         output_glyf[gname] = new_glyph
         after_real = len(new_glyph.coordinates) if hasattr(new_glyph, "coordinates") else 0
-        report.append((ch, gname, f"{before_real} -> {after_real} 点"))
+        notes = []
+        if kept_degenerate:
+            notes.append(f"{kept_degenerate} 处零面积轮廓原样保留")
+        if tightened:
+            notes.append(f"{tightened} 处收紧容差避免自交")
+        if polyline_fallbacks:
+            notes.append(f"{polyline_fallbacks} 处自交退回密集折线")
+        msg = f"{before_real} -> {after_real} 点"
+        if notes:
+            msg += "（" + "，".join(notes) + "）"
+        report.append((ch, gname, msg))
     return report
 
 
