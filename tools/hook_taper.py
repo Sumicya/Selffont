@@ -37,7 +37,8 @@ from skimage.morphology import skeletonize
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hook_cut import split_contours  # noqa: E402
-from hook_erase import find_hooks as raster_hooks  # noqa: E402
+from hook_erase import _edges, _graph, find_hooks as raster_hooks  # noqa: E402
+from hook_erase import TRIM_LENGTH_RATIO as TIP_TRIM_RATIO
 from stroke_width_normalize_prototype import raster_mask  # noqa: E402
 
 SAMPLE = 32
@@ -222,6 +223,70 @@ def _nearest_on_path(path, pt):
     return s_, math.sqrt(dd), q, e
 
 
+def _turn_at(path, i, span):
+    """骨架在 path[i] 处的折返角（度）：笔尖→这点 与 这点→笔身 的夹角。
+
+    0° = 笔直延续（撇、横的起笔端），180° = 整个折回来。
+    这是钩与普通笔画端头最干净的分界：实测普通端头 1–47°，
+    真钩 68–124°（`九` 124、`了` 底 76、`子` 底 68）。
+    """
+    a = path[max(0, i - span)] if i - span >= 0 else path[0]
+    b = path[i]
+    c = path[min(len(path) - 1, i + span)]
+    v1 = (b[0] - a[0], b[1] - a[1])
+    v2 = (c[0] - b[0], c[1] - b[1])
+    n1 = math.hypot(*v1)
+    n2 = math.hypot(*v2)
+    if n1 < 1e-9 or n2 < 1e-9:
+        return 0.0
+    cos = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+    return math.degrees(math.acos(cos))
+
+
+def find_tip_curls(mask, skeleton=None, distance=None, trim=TIP_TRIM_RATIO,
+                   min_body=3.0, min_turn=55.0):
+    """按**笔画末端 + 折返角**找钩：只有真的折回来的末端才算钩。
+
+    为什么不沿用 `hook_erase.find_hooks` 的位置
+    --------------------------------------------
+    它给的两类命中在这 8 个字上分不开：
+      · 真钩挂在笔画末端（`九` 16.0W、`也` 9.9W、`包` 14.6W、`必` 8.7W、`電` 11.1W）；
+      · 假钩是骨架在撇/竖转角处分叉出来的**短刺**，只有 1.1–1.25W
+        （`了` 1.25W、`子` 1.11W）。在那种地方下刀就是切笔画的转角，
+        `了` 的横撇左端因此被整块吃掉（xmin 94 → 266）。
+
+    所以这里只认「一端是骨架笔尖、另一端是分叉点、整条边 ≥ min_body 倍笔宽、
+    且末端折返角 ≥ min_turn」的边：从笔尖往内 trim 处下刀。两端都是笔尖的
+    独立笔画（点/撇/捺）不碰。
+
+    返回格式与 `find_hooks` 一致：[(cut_point, removed_path, width_px)]，
+    路径是笔尖 → 切点方向。
+    """
+    skeleton = skeletonize(mask) if skeleton is None else skeleton
+    distance = ndimage.distance_transform_edt(mask) if distance is None else distance
+    width_px = float(np.median(distance[skeleton]) * 2)
+    if not np.isfinite(width_px) or width_px <= 1.0:
+        return []
+    _pixels, adjacency = _graph(skeleton)
+    _nodes, edges = _edges(adjacency)
+    span = max(2, int(0.5 * width_px))
+    out = []
+    for edge in edges:
+        for path in (edge, list(reversed(edge))):
+            if len(adjacency[path[0]]) != 1:
+                continue
+            if len(path) < min_body * width_px:
+                continue
+            if len(adjacency[path[-1]]) == 1:
+                continue            # 两端都是笔尖：点/撇/捺，不碰
+            trimmed = min(len(path) - 1, max(2, int(trim * width_px)))
+            if _turn_at(path, trimmed, span) < min_turn:
+                continue
+            out.append((path[trimmed - 1], path[:trimmed], width_px))
+            break
+    return out
+
+
 def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
     """沿骨架找切口：在所有交点里取**短边**为钩，且弦长最接近局部笔宽。
 
@@ -241,9 +306,13 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
     step_px = arc[-1] / max(1, n_ - 1)
     smp = _samples(contour)
     nsm = len(smp)
-    per = 0.0
+    # 采样是「每段固定 12 个点」，长段和短段的点距能差上百倍，所以不能按点的
+    # 个数判长短——那样常把跨过整字的长弧当成"短边"（`子`/`包` 的被删弧离钩
+    # 骨架 257 单位，上限才 80）。改成按**几何弧长**累加。
+    cum = [0.0]
     for i in range(nsm):
-        per += _dist(smp[i][2], smp[(i + 1) % nsm][2])
+        cum.append(cum[-1] + _dist(smp[i][2], smp[(i + 1) % nsm][2]))
+    per = cum[-1]
     step = per / nsm
     hook_pts = hook_pts or []
 
@@ -276,48 +345,50 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
             d2 = _norm((a2[0] - b2[0], a2[1] - b2[1]))
             sites.append((hook_pts[m - 1 - k], d2, r, 0.0))
 
+    # 两档：先按严格窗口找（弦≈笔宽、被删弧贴着钩骨架）；一个都没有时退到
+    # 宽松窗口，**任何检测到的钩都要切掉**。主人要的是「去钩彻底」——
+    # 端头不外伸了，弦略宽只会让半圆略大一点，不会再鼓出脓包。
     best = None
-    for P, d, rl, arc_d in sites:
-        nv = (-d[1], d[0])
-        hits = cut_points(contour, P, nv)
-        if len(hits) < 2:
-            continue
-        for a in range(len(hits)):
-            for b in range(a + 1, len(hits)):
-                h1, h2 = hits[a], hits[b]
-                i1, i2 = sidx(h1[3]), sidx(h2[3])
-                fwd = (i2 - i1) % nsm
-                if fwd <= nsm - fwd:
-                    hS, hE, ln = h1, h2, fwd
-                else:
-                    hS, hE, ln = h2, h1, nsm - fwd
-                chord = _dist(hS[3], hE[3])
-                if not (0.92 * 2 * rl <= chord <= 1.10 * 2 * rl):
-                    if _DEBUG:
-                        print("   reject chord", round(chord, 1), "2rl", round(2 * rl, 1),
-                              "arc", round(arc_d, 1), "seg", round(ln * step, 1))
-                    continue
-                # 删掉的那段弧必须**贴着钩骨架**：钩的骨架点集是已知的，
-                # 真正该删的那一小块轮廓离它不超过一个笔宽。只看弦长和弧长
-                # 会配到笔身上的另一瓣（`子` 把整条竖钩当短边删掉，只剩横撇）。
-                if hook_pts:
-                    # 采样必须从**被删那段的起点**出发。配对交换过以后起点是 i2，
-                    # 还从 i1 走就会绕到另外半圈上，量出来的距离是整字的对角
-                    # （`了` 因此被判 10r 开外、真钩被跳过）。
-                    iS_ = sidx(hS[3])
-                    ds = [min(_dist(smp[(iS_ + ln * k // 6) % nsm][2], h) for h in hook_pts)
-                          for k in range(1, 6)]
-                    if max(ds) > 1.5 * r or sum(ds) / len(ds) > 1.2 * r:
+    for lo, hi, arc_max in (
+            (0.92, 1.10, 1.05),
+            (0.60, 1.60, 1.60)):
+        for P, d, rl, arc_d in sites:
+            if arc_d > arc_max * r:
+                continue
+            nv = (-d[1], d[0])
+            hits = cut_points(contour, P, nv)
+            if len(hits) < 2:
+                continue
+            for a in range(len(hits)):
+                for b in range(a + 1, len(hits)):
+                    h1, h2 = hits[a], hits[b]
+                    i1, i2 = sidx(h1[3]), sidx(h2[3])
+                    fwd = (i2 - i1) % nsm
+                    arc_fwd = (cum[i2] - cum[i1]) % per
+                    if arc_fwd <= per - arc_fwd:
+                        hS, hE, ln, seg_len = h1, h2, fwd, arc_fwd
+                    else:
+                        hS, hE, ln, seg_len = h2, h1, nsm - fwd, per - arc_fwd
+                    chord = _dist(hS[3], hE[3])
+                    if not (lo * 2 * rl <= chord <= hi * 2 * rl):
                         if _DEBUG:
-                            print("   reject far", round(max(ds), 1), "mean", round(sum(ds) / 5, 1),
-                                  "arc", round(arc_d, 1), "chord", round(chord, 1),
-                                  "seg", round(ln * step, 1))
+                            print("   chord", round(chord, 1), "window", round(lo*2*rl,1), round(hi*2*rl,1),
+                                  "arc", round(arc_d, 1), "seg", round(seg_len, 1))
                         continue
-                seg_len = ln * step
-                score = abs(chord - 2 * rl) / (2 * rl) + 0.45 * seg_len / (2 * rl)
-                if best is None or score < best[0]:
-                    best = (score, P, d, (hS[1], hS[2], hS[3]), (hE[1], hE[2], hE[3]),
-                            chord, arc_d, rl)
+                    # 被删的那段必须是**短的那一侧**（长度是几何弧长，不是点的个数）。
+                    # 只要它明显短于半圈就说明配的是钩那小块；配到笔身上的另一瓣
+                    # （`子` 曾把整条竖钩删掉）时长边会接近半圈。
+                    if seg_len > 0.45 * per:
+                        continue
+                    score = abs(chord - 2 * rl) / (2 * rl) + 0.45 * seg_len / (2 * rl)
+                    if best is None or score < best[0]:
+                        # 顺序很重要：hS→hE 在**轮廓参数方向**上就是短边（要删掉的那
+                        # 一小块）。以前这里按「段序短边」另算一次，方向反了就会把
+                        # 整条笔画当钩剪掉（`了` 的保留侧弧长一度是 5301，钩只有 468）。
+                        best = (score, P, d, (hS[1], hS[2], hS[3]), (hE[1], hE[2], hE[3]),
+                                chord, arc_d, rl)
+        if best is not None:
+            break
     return None if best is None else best[1:]
 
 
@@ -686,7 +757,16 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
 
     report = []
     diag = []
+    done_roots = []
     for _cut, removed, _w in hooks:
+        # 同一个钩会被两条规则各报一次（`乙` 的钩根同时命中 A 和 B），切完第一刀
+        # 轮廓已经变了，第二刀会落在笔身上——`了` 因此整条竖被挖空（IoU 0.19）。
+        # 钩根离已切过的钩根不到 2r 就跳过。
+        _root = to_font(int(removed[-1][0]), int(removed[-1][1]))
+        if any(_dist(_root, q) < 2.0 * r for q in done_roots):
+            report.append(("dup",))
+            continue
+        done_roots.append(_root)
         # `find_hooks` 的两条规则都把钩根放在 `removed[-1]`：
         # 规则 A 是 `reversed(edge[:trimmed])`，末位 = 分叉点；规则 B 是
         # `path[:trimmed]`，trimmed 从**笔尖**数起，末位 = 靠钩根那端。
@@ -727,6 +807,9 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
         else:
             P, d, (siS, tS_, pS), (siE, tE_, pE), chord, arc_d, r = fd
             diag.append(("pick", round(arc_d, 1), "chord", round(chord, 1), "r", round(r, 1)))
+        # 参数环是「切点 S 处轮廓自身的走向」：轮廓是有向的，S→E 在**轮廓方向**上
+        # 恰好是保留侧。`best_cut` 给的 S 是无向的，所以这里按有向面积判一次：
+        # 被删的那一段必须是短的那一侧。
         if siS == siE:
             report.append(("same-seg", siS))
             continue
@@ -808,6 +891,19 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
         while kept and _dist((kept[-1][0], kept[-1][1]), pS) < 1e-6:
             kept.pop()
         new = _despike([(pS[0], pS[1], True)] + cap + kept)
+        # 安全网：切完包围盒任何一边缩进超过 1.5r，说明切掉的是笔身而不是钩。
+        # 正常去钩只让包围盒变化 10–31（钩长）；`了` 的假钩一度让 xmin 从 94
+        # 跳到 266（+172），整条横撇被吃掉。宁可这次不切，也不能毁字。
+        def _bbox(pts):
+            xs = [q[0] for q in pts]
+            ys = [q[1] for q in pts]
+            return min(xs), max(xs), min(ys), max(ys)
+        _b0, _b1 = _bbox(contour), _bbox(new)
+        _grow = max(abs(_b1[k] - _b0[k]) for k in range(4))
+        if _grow > 1.5 * r:
+            report.append(("revert-bbox", round(_grow, 1)))
+            diag.append(("revert", round(_grow, 1), "limit", round(1.5 * r, 1)))
+            continue
         diag.append(("cut", round(pS[0]), round(pS[1]), "E", round(pE[0]), round(pE[1]),
                      "chord", round(_dist(pS, pE), 1), "2r", round(2 * r, 1),
                      "kept", len(kept)))
@@ -830,6 +926,11 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
     glyph.flags = [bool(on) for _, _, on in flat]
     glyph.endPtsOfContours = new_ends
     glyph.recalcBounds(glyf)
+    # 侧边距必须跟着 xMin 走：原字 lsb == xMin，切掉钩后 xMin 会变，
+    # 不同步的话 FreeType 会按旧 lsb 定位，整个字在格子里偏移（`了` 曾偏 172 单位）。
+    if "hmtx" in font and gname in font["hmtx"].metrics:
+        adv, lsb = font["hmtx"][gname]
+        font["hmtx"][gname] = (adv, glyph.xMin)
     return report
 
 
