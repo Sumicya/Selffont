@@ -293,7 +293,7 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
                 else:
                     hS, hE, ln = h2, h1, nsm - fwd
                 chord = _dist(hS[3], hE[3])
-                if not (0.80 * 2 * rl <= chord <= 1.18 * 2 * rl):
+                if not (0.92 * 2 * rl <= chord <= 1.10 * 2 * rl):
                     if _DEBUG:
                         print("   reject chord", round(chord, 1), "2rl", round(2 * rl, 1),
                               "arc", round(arc_d, 1), "seg", round(ln * step, 1))
@@ -794,7 +794,11 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
                         2 * (1 - t) * (c3[1] - q0[1]) + 2 * t * (q1[1] - c3[1]))
             return (q1[0] - q0[0], q1[1] - q0[1])
 
-        cap = build_straight_cap(pS, pE, nrm, _dist(pS, pE) / 2, STRAIGHT * r)
+        # 端头半径**绝不能超过半笔宽**。取弦的一半时，弦比笔宽大多少，端头就比
+        # 笔身宽多少——放大就是一个蘑菇头（主人说的脓包）。弦更窄时宁可按弦收，
+        # 也不反过来撑宽。
+        r_cap = min(r, _dist(pS, pE) / 2)
+        cap = build_straight_cap(pS, pE, nrm, r_cap, STRAIGHT * r)
         diag.append(("capchord", round(_dist(pS, pE), 1), "2r", round(2 * r, 1)))
 
         # 保留段：从 E 顺着段序走回 S。按段重建，不再往扁平点表里插点
