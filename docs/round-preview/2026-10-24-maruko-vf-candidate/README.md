@@ -1,6 +1,6 @@
 # Maruko 可变字体候选 V1：三档静态字重重拓扑后的插值原型
 
-**这是研究候选，不是生产字体，没有审美验收，没有真机验证。** 图三张：现状总览 [`maruko-vf-v1-state.png`](maruko-vf-v1-state.png)（**先看这张**）、插值扫视 [`maruko-vf-candidate-v1-sweep.png`](maruko-vf-candidate-v1-sweep.png)、分段密度对照 [`maruko-vf-v1-seg-compare.png`](maruko-vf-v1-seg-compare.png)。
+**这是研究候选，不是生产字体，没有审美验收，没有真机验证。** 本轮已按规范把本目录的旧图全部清出工作树（VF 候选不是当前方向，当前唯一主图见[预览导航](../README.md)）。三张旧图可从历史提交读取：`git show 5c0974d:docs/round-preview/2026-10-24-maruko-vf-candidate/maruko-vf-v1-state.png`（现状总览，先看这张）、`…maruko-vf-candidate-v1-sweep.png`（插值扫视）、`…maruko-vf-v1-seg-compare.png`（分段密度对照）。
 
 ## 做了什么
 
@@ -63,7 +63,7 @@ VF 里所有字重共用同一套分段，所以"简化"只能作为**统一的�
 
 ## 决策输入 2：全字符覆盖现状（主人第 0 条）
 
-[覆盖对比图](coverage-vs-wenyuan.png)
+覆盖对比图（已清出工作树）：`git show 5c0974d:docs/round-preview/2026-10-24-maruko-vf-candidate/coverage-vs-wenyuan.png`
 
 | | 文渊圆体 VF（现生产） | Maruko SC Regular |
 |---|---:|---:|
@@ -78,7 +78,7 @@ VF 里所有字重共用同一套分段，所以"简化"只能作为**统一的�
 
 ## B：跨字笔宽规整（已做）
 
-[B 对照图](b-uniform-stroke-width.png)
+B 对照图（已清出工作树）：`git show 5c0974d:docs/round-preview/2026-10-24-maruko-vf-candidate/b-uniform-stroke-width.png`
 
 用仓库既有 `tools/stroke_width_normalize_prototype.py --mode global --global-strength 0` 对三档主字重各跑一遍（同一套 26 字、按字重分别取共享目标：Light 37.44 / Regular 63.22 / Medium 90.28 FU），再合回 VF。
 
@@ -89,7 +89,7 @@ VF 里所有字重共用同一套分段，所以"简化"只能作为**统一的�
 
 ## C：笔画结构合并（已跑通，8 字试点）
 
-[C 对照图](c-merge-strokes.png)
+C 对照图（已清出工作树）：`git show 5c0974d:docs/round-preview/2026-10-24-maruko-vf-candidate/c-merge-strokes.png`
 
 前两版都错在"怎么判断内腔"：直接对所有轮廓 `union` 会把字腔填成实心方块；按有符号面积正负分组也不行——Maruko 的内笔跟外框绕行方向相同，`国` 的玉字会被当孔洞整块减掉。最终改用**光栅化取真实墨迹边界再描线**（复用仓库既有 `raster_mask()` / `glyph_from_mask()`），结果严格等于"原字形看得见的形状"。
 
@@ -108,7 +108,7 @@ VF 里所有字重共用同一套分段，所以"简化"只能作为**统一的�
 
 ## 0.1 豆腐块的根因（实测）
 
-[缺字渲染对比](notdef-compare.png)
+缺字渲染对比（已清出工作树）：`git show 5c0974d:docs/round-preview/2026-10-24-maruko-vf-candidate/notdef-compare.png`
 
 | 字体 | `.notdef` 轮廓数 | 缺字时显示 |
 |---|---:|---|

@@ -1,23 +1,27 @@
-"""把 Maruko 做成"干净现代化"字形的流水线：无钩 → 笔画合并 → 曲线重拟合。
+"""把 Maruko 做成"干净现代化"字形的流水线：笔画合并 → 曲线重拟合。
 
-三步的顺序是有原因的，换顺序就白做：
+本步只做两件事，都是可量化、已验证的：
 
-1. **无钩**：候选点对由 `hook_cut.find_hooks()` 在原始轮廓上判（点序还在，钩环的几何
-   特征才读得出来），但**切的时候切在墨迹上**——把闸门之间围出的环从掩膜里挖掉。
-   直接在轮廓上换圆弧的做法会把内腔翻实、把长弧腰斩，实测 252 字里 192 个被弄坏，
-   详见 `hook_erase.py` 的说明。
-2. **笔画合并**：光栅化按真实墨迹取形状，再沿墨迹边界描线。并集自然干掉了"相交笔画
-   各自独立轮廓、靠非零环绕叠在一起"的隐藏重叠。必须**直接描 mask**（保形）；拿
-   "骨架 × 常数半径"当重建源会把原设计整个丢掉——转角削圆、收笔变圆头、`日` 这类
-   窄空腔直接被两侧笔画堵死（实测 `春` IoU 0.698、缺墨 22%）。
-3. **曲线重拟合**（`curve_simplify.py`）：第 2 步描出来的是折线（每字上万点），
+1. **笔画合并（保形并集）**：光栅化后**直接描合并后的墨迹**，不做骨架重造。
+   并集自然干掉了"相交笔画各自独立轮廓、靠非零环绕叠在一起"的隐藏重叠，形状本身不动。
+   拿"骨架 × 常数半径"当重建源会把原设计整个丢掉——转角削圆、收笔变圆头、`日` 这类
+   窄空腔直接被两侧笔画堵死（实测 `春` IoU 0.698、缺墨 22.4%，不是调参能救的）。
+2. **曲线重拟合**（`curve_simplify.py`，另跑）：第 1 步写出来的是折线（每字上万点），
    必须重拟合回二次贝塞尔。描线前对掩膜做 1 px 高斯平滑，让 marching squares 取到
    亚像素边界；不平滑的话二值台阶是 ±0.5 px 的方波，拟合器只能把每个折点都留下
-   （实测「街」精简后仍剩 1598 点，平滑后 490 点）。
+   （实测「街」精简后仍剩 1598 点，平滑后 185 点）。
+
+**无钩默认关闭**（`--hooks` 打开）。原因见 `hook_erase.py`：墨迹级切法的两条判据
+（交叉点短刺、笔尖 2.2W 内转角）能抓住 `乙`/`了`/`子`/`电`/`也`/`九`/`巴`/`包`/`必`，
+但分不开"钩"和"点"——`广` 上面那个点的笔尖转角 44°，比 `乙` 的 26°、`了` 的 19°
+都高，结构上它挂在横的中间、只形成 1 长 1 短两条边，而 `乙` 的钩根是 1 长 2 短、
+`了` 是 2 长 1 短。单纯数边数仍会误剪，所以这一步先不放进正式产出。
 
 用法：
     python3 tools/modernize_maruko.py --font MarukoSC-Regular.ttf --chars-file chars.txt \
         --out ModernSC-Regular.ttf --px 2000
+    python3 tools/curve_simplify.py ModernSC-Regular.ttf ModernSC-Regular.ttf.simplified \
+        --chars "$(cat chars.txt)" --tolerance 2.5 --seg-len 1.0
 """
 from __future__ import annotations
 
@@ -28,13 +32,7 @@ from pathlib import Path
 from fontTools.ttLib import TTFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hook_cut import detect_hook_plan, split_contours  # noqa: E402
-from hook_erase import (  # noqa: E402
-    MAX_ERASE_FRACTION,
-    MIN_IOU_AFTER_CUT,
-    compare_glyphs,
-    erase_loops,
-)
+from hook_erase import compare_glyphs, trim_hooks  # noqa: E402
 from stroke_width_normalize_prototype import glyph_from_mask, raster_mask  # noqa: E402
 
 
@@ -44,9 +42,14 @@ def _contours_of(font, gname):
     return split_contours(coords, ends, flags)
 
 
-def rebuild_merged(font, chars, cmap, px, margin_frac, smooth_px=1.0, plan=None,
-                   guard=True):
-    """保形并集 + 墨迹级无钩。"""
+def rebuild_merged(font, chars, cmap, px, margin_frac, smooth_px=1.0, hooks=True,
+                   guard_iou=0.90):
+    """无钩（墨迹级）→ 保形并集，一步出形状。
+
+    ``trim_hooks`` 作用在掩膜上，改完直接描线，轮廓的点数/点序/绕向全部重新生成，
+    不存在"把内腔翻成实心"这类轮廓手术的副作用。切完与原文比对，IoU 低于
+    ``guard_iou`` 就回退到未切的掩膜——闸门只兜底，不参与设计。
+    """
     glyf = font["glyf"]
     done, failed, cut_report, rejected = [], [], {}, []
     for ch in chars:
@@ -58,29 +61,23 @@ def rebuild_merged(font, chars, cmap, px, margin_frac, smooth_px=1.0, plan=None,
             continue
         try:
             mask, transform = raster_mask(font, gname, px, margin_frac)
-            basemask = mask
             applied = 0
-            if plan and gname in plan:
-                contours = _contours_of(font, gname)
-                contour_index = dict(enumerate(contours))
-                candidate, applied, fraction = erase_loops(
-                    mask, transform, contour_index, plan[gname])
-                if fraction > MAX_ERASE_FRACTION:
-                    rejected.append((ch, f"erase {fraction*100:.1f}%"))
-                    applied = 0
-                else:
-                    basemask = candidate
+            basemask = mask
+            if hooks:
+                trimmed, applied = trim_hooks(mask)
+                if applied:
+                    basemask = trimmed
             original = glyf[gname]
             glyph = glyph_from_mask(basemask, font, transform, smooth_px)
-            if guard and applied:
-                iou, ink = compare_glyphs(original, glyph, glyf)
-                if iou < MIN_IOU_AFTER_CUT or ink < -MAX_ERASE_FRACTION:
-                    rejected.append((ch, f"iou {iou:.2f} ink {ink*100:+.1f}%"))
+            if hooks and applied:
+                iou, _ = compare_glyphs(original, glyph, glyf)
+                if iou < guard_iou:
+                    rejected.append((ch, f"iou {iou:.2f}"))
                     applied = 0
                     glyph = glyph_from_mask(mask, font, transform, smooth_px)
             glyf[gname] = glyph
-            # 重描后 xMin 会动（细尖被光栅吃掉一点），hmtx 的 lsb 必须跟着走，
-            # 否则任何走 getGlyphSet() 的下游工具都会把整个字平移 lsb-xMin。
+            # 重描后 xMin 会动，hmtx 的 lsb 必须跟着走，否则走 getGlyphSet() 的
+            # 下游工具会把整字平移 lsb-xMin（实测「个」被移 20 单位、IoU 0.98→0.63）。
             glyph.recalcBounds(glyf)
             advance = font["hmtx"][gname][0]
             font["hmtx"][gname] = (advance, glyph.xMin)
@@ -101,7 +98,8 @@ def main():
     ap.add_argument("--margin-frac", type=float, default=0.08)
     ap.add_argument("--smooth-px", type=float, default=1.0,
                     help="描线前的高斯平滑 sigma（像素），抹掉二值掩膜的台阶")
-    ap.add_argument("--skip-hooks", action="store_true")
+    ap.add_argument("--hooks", action="store_true",
+                    help="尝试无钩。默认关闭：当前检测会误剪「点」等独立短笔画")
     args = ap.parse_args()
 
     chars = list(dict.fromkeys(open(args.chars_file, encoding="utf-8").read().strip()))
@@ -110,18 +108,10 @@ def main():
     chars = [c for c in chars if ord(c) in cmap]
     print(f"输入 {len(chars)} 个字", flush=True)
 
-    plan = None
-    if not args.skip_hooks:
-        order = [cmap[ord(ch)] for ch in chars]
-        plan = detect_hook_plan(font["glyf"], order)
-        print(f"[1/3] 无钩：{len(plan)} 个字形、{sum(len(v) for v in plan.values())} 处候选钩",
-              flush=True)
-    else:
-        print("[1/3] 无钩：跳过", flush=True)
-
-    print("[2/3] 笔画合并（保形并集）", flush=True)
+    print("[1/2] 笔画合并（保形并集）" + (" + 无钩" if args.hooks else ""), flush=True)
+    hooks = bool(args.hooks)
     done, failed, cut_report, rejected = rebuild_merged(
-        font, chars, cmap, args.px, args.margin_frac, args.smooth_px, plan)
+        font, chars, cmap, args.px, args.margin_frac, args.smooth_px, hooks=hooks)
     print(f"      重建 {len(done)} 字，失败 {len(failed)}", flush=True)
     print(f"      实际切钩 {sum(cut_report.values())} 处，覆盖 {len(cut_report)} 字；"
           f"闸门拦下 {len(rejected)} 处", flush=True)
@@ -131,7 +121,7 @@ def main():
         print("      失败样例:", failed[:5], flush=True)
 
     font.save(args.out)
-    print(f"[3/3] 已保存 {args.out}（曲线重拟合请另跑 curve_simplify.py）", flush=True)
+    print(f"[2/2] 已保存 {args.out}（曲线重拟合请另跑 curve_simplify.py）", flush=True)
 
 
 if __name__ == "__main__":
