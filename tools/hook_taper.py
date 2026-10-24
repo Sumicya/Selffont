@@ -44,7 +44,6 @@ SAMPLE = 32
 TAPER = 2.1        # 收尖长度 / 半笔宽
 SIDE_K = 0.46      # 侧边起手控制点系数（× 弦长）
 AXIS_M = 0.34      # 收尖前轴向下压系数（× 弦长）
-STRAIGHT = 0.70     # 直段长度 / 半笔宽
 TIP_E = 0.20       # 尖端横向错开（× 半笔宽），保证是个楔形而不是对折
 FLAT_MAX = 20.0    # 切口处允许的"水平"偏差（度）
 FLAT_BACK = 2.6    # 沿骨架往回最多找多远（× 半笔宽）
@@ -389,36 +388,30 @@ def _despike(pts, thresh=2.0, passes=2):
     return pts
 
 
-def build_straight_cap(S, E, n, r, L, quads=4):
-    """直的等宽笔身 + 标准半圆：就是"一条直"的收笔。
+def build_round_cap(S, E, n, quads=4):
+    """切口上直接扣一个标准半圆：直径就是切口，半径 = 弦的一半。
 
-    S、E 是切口两端（弦可能比 2r 宽，因为笔身在那一段是弯的）。
-    先从切口沿横向上收到笔宽 2r（短线，长度 = 弦半 - r），
-    再沿**笔势 n** 走 L 的直侧边，末端接半径 r 的半圆。
-    侧边是直线、圆是真圆，宽度严格等于笔宽，不会鼓。
+    不做任何外伸、不收窄、不加直段——钩切掉多少，端头就停在哪儿。
+    半圆的两端正好落在切口两端，端头最宽处就是切口本身，所以它只可能等于
+    笔宽、不可能比笔身胖；切口垂直于笔势时，半圆在端点处的切线也正好顺着
+    笔身两侧走，接缝一阶连续。
     """
+    r = _dist(S, E) / 2
+    if r < 1e-6:
+        return []
     C = ((S[0] + E[0]) / 2, (S[1] + E[1]) / 2)
-    t = _norm((E[0] - S[0], E[1] - S[1]))
-    A1 = (C[0] - t[0] * r, C[1] - t[1] * r)
-    A2 = (C[0] + t[0] * r, C[1] + t[1] * r)
-    B1 = (A1[0] + n[0] * L, A1[1] + n[1] * L)
-    B2 = (A2[0] + n[0] * L, A2[1] + n[1] * L)
-    O = (C[0] + n[0] * L, C[1] + n[1] * L)
-    out = [(A1[0], A1[1], True), (B1[0], B1[1], True)]
-    # 半圆 B1 → B2，经 O + n*r（端头最远点）。u = B1-O = -t，w = n，二者正交。
-    u = (-t[0], -t[1])
+    u = _norm((S[0] - C[0], S[1] - C[1]))
     coef = math.cos(math.pi / (2 * quads))
+    out = []
     for q in range(quads):
         t0 = math.pi * q / quads
         t1 = math.pi * (q + 1) / quads
         tm = (t0 + t1) / 2
-        out.append((O[0] + r / coef * (u[0] * math.cos(tm) + n[0] * math.sin(tm)),
-                    O[1] + r / coef * (u[1] * math.cos(tm) + n[1] * math.sin(tm)), False))
+        out.append((C[0] + r / coef * (u[0] * math.cos(tm) + n[0] * math.sin(tm)),
+                    C[1] + r / coef * (u[1] * math.cos(tm) + n[1] * math.sin(tm)), False))
         if q < quads - 1:
-            out.append((O[0] + r * (u[0] * math.cos(t1) + n[0] * math.sin(t1)),
-                        O[1] + r * (u[1] * math.cos(t1) + n[1] * math.sin(t1)), True))
-    out.append((B2[0], B2[1], True))
-    out.append((A2[0], A2[1], True))
+            out.append((C[0] + r * (u[0] * math.cos(t1) + n[0] * math.sin(t1)),
+                        C[1] + r * (u[1] * math.cos(t1) + n[1] * math.sin(t1)), True))
     out.append((E[0], E[1], True))
     return out
 
@@ -797,8 +790,7 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
         # 端头半径**绝不能超过半笔宽**。取弦的一半时，弦比笔宽大多少，端头就比
         # 笔身宽多少——放大就是一个蘑菇头（主人说的脓包）。弦更窄时宁可按弦收，
         # 也不反过来撑宽。
-        r_cap = min(r, _dist(pS, pE) / 2)
-        cap = build_straight_cap(pS, pE, nrm, r_cap, STRAIGHT * r)
+        cap = build_round_cap(pS, pE, nrm)
         diag.append(("capchord", round(_dist(pS, pE), 1), "2r", round(2 * r, 1)))
 
         # 保留段：从 E 顺着段序走回 S。按段重建，不再往扁平点表里插点
