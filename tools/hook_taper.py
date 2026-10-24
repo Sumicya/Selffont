@@ -891,8 +891,20 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
         # 所以两端各插一段小喇叭——起点沿轮廓切向、终点沿圆的切向，全程 G1。
         # best_cut 已经保证弦长 ≈ 2×局部半笔宽，所以这里就是标准半圆：
         # 半径 = 半笔宽、两端与笔身切向一致，既不会胖，也不会留台阶。
-        # 半圆必须朝**钩尖**那一侧鼓（钩原来在的地方），不能按笔身点判方向。
-        cap = build_cap(pS, pE, P, d, r, body=B)
+        # 端头用半椭圆（见 build_ellipse_cap）：弦向半轴 = 半弦长、笔势向 = 半笔宽。
+        # 端头朝**背离笔身**（B 在笔身上）的一侧鼓。
+        C_ = ((pS[0] + pE[0]) / 2, (pS[1] + pE[1]) / 2)
+        nrm = (-(pE[1] - pS[1]), pE[0] - pS[0])
+        nrm = _norm(nrm)
+        if (C_[0] - B[0]) * nrm[0] + (C_[1] - B[1]) * nrm[1] < 0:
+            nrm = (-nrm[0], -nrm[1])
+        # 端头要顺着笔势**延伸**出去，不能平贴在切口上：不延伸就是被截断的笔。
+        # 延伸长度按被去掉的钩在笔势方向上的投影给，至少 0.5r。
+        ext = 0.0
+        if hook_pts:
+            ext = sum((q[0] - C_[0]) * nrm[0] + (q[1] - C_[1]) * nrm[1] for q in hook_pts) / len(hook_pts)
+            ext = max(0.5 * r, min(1.6 * r, ext - 0.6 * r))
+        cap = build_ellipse_cap(pS, pE, C_, nrm, r + ext)
 
         # 保留段：从 E 顺着段序走回 S。按段重建，不再往扁平点表里插点
         # （插点会留下孤立控制点，轮廓自交，端头就出缺口）。
@@ -973,3 +985,29 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def build_ellipse_cap(S, E, C, nrm, b, quads=4):
+    """半椭圆收笔：弦向半轴 = 半弦长，笔势向半轴 = b（半笔宽）。
+
+    为什么不能用半圆：切口的弦长由笔段弯曲决定，通常比真笔宽宽一点
+    （`九` 73–86 vs 69.6）。按弦做半圆 → 半径 38 > 34.8，端头比笔身胖一圈，
+    放大就是个鼓包。半椭圆把弦向半轴留在弦上（端点精确落在轮廓上，无台阶），
+    笔势向压回半笔宽（端头厚度与笔身一致），且两端切向恰为 ±法线，天然 G1。
+    """
+    a = _dist(S, E) / 2
+    u = _norm((S[0] - C[0], S[1] - C[1]))
+    out = []
+    for q in range(quads):
+        t0 = math.pi * q / quads
+        t1 = math.pi * (q + 1) / quads
+        tm = (t0 + t1) / 2
+        coef = math.cos((t1 - t0) / 2)
+        out.append((C[0] + a / coef * math.cos(tm) * u[0] + b / coef * math.sin(tm) * nrm[0],
+                    C[1] + a / coef * math.cos(tm) * u[1] + b / coef * math.sin(tm) * nrm[1],
+                    False))
+        if q < quads - 1:
+            out.append((C[0] + a * math.cos(t1) * u[0] + b * math.sin(t1) * nrm[0],
+                        C[1] + a * math.cos(t1) * u[1] + b * math.sin(t1) * nrm[1], True))
+    out.append((E[0], E[1], True))
+    return out
