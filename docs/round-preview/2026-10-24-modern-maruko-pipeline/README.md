@@ -11,6 +11,7 @@ Light 误伤核图：[`fair-check-light.png`](fair-check-light.png)（IoU 掉得
 直角回归：[`check-corners-pipeline.png`](check-corners-pipeline.png)（`一卜口丁` 逐阶段）
 多边形诊断：[`polygon-diagnosis.png`](polygon-diagnosis.png)（顶点叠加：旧输出全是长直线）
 重描 vs 不重描：[`retrace-vs-direct.png`](retrace-vs-direct.png)（`龍` 三处：原版 / 重描后精简 / 直接精简原版）
+**原生流水线：[`native-vs-retrace.png`](native-vs-retrace.png)（`龍` 四处：原版 / 重描版 / 原生版）**
 密字逐处放大：[`dense-glyph-zoom.png`](dense-glyph-zoom.png)（`龍` 四处：原版 / 当前交付 / 真弧原型）
 真弧原型：[`arc-merge-caps.png`](arc-merge-caps.png)（`入` 端头：原版 / 全直线 / 真弧）
 

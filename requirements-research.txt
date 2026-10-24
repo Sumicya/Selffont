@@ -7,3 +7,4 @@ Pillow==13.0.0
 scikit-image==0.26.0
 scipy==1.17.1
 shapely==2.2.0
+skia-pathops==0.9.2   # 保留曲线的布尔并集；native_modern.py 用它合并重叠轮廓
