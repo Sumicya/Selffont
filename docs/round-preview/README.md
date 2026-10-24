@@ -2,9 +2,16 @@
 
 ## 唯一当前新稿 · 2026-10-24 晚
 
-[打开当前审阅图：Maruko 可变字体候选 V1 现状总览（VF 实例 × 上游静态对照 × 中间档放大 × 实测数字）](2026-10-24-maruko-vf-candidate/maruko-vf-v1-state.png)
+[打开当前审阅图：现代版 Maruko 三档字重同文对照（上游 Regular 与 Light / Regular / Medium）](2026-10-24-modern-maruko-pipeline/modern-text.png)
 
-旧图（`current-maruko-review.png` 与两张自交候选对照图）已按主人指令全部清空，git 历史可追溯；现在仓库里只有这一张当前图。
+- [曾被旧路线弄坏的 8 个字：保形并集后内腔全部完好（IoU 0.982–0.987）](2026-10-24-modern-maruko-pipeline/merge-fidelity.png)
+- [现代版 Maruko：保形并集的做法、两个 bug 与无钩为何没做成](2026-10-24-modern-maruko-pipeline/README.md)
+
+上一张（Maruko 可变字体候选 V1 现状总览）：
+
+[maruko-vf-v1-state.png](2026-10-24-maruko-vf-candidate/maruko-vf-v1-state.png)
+
+更早的图（`current-maruko-review.png` 与两张自交候选对照图）已按主人指令全部清空，git 历史可追溯。
 
 - [插值扫视：300→500 五档连续](2026-10-24-maruko-vf-candidate/maruko-vf-candidate-v1-sweep.png)
 - [分段密度对照：seg-len 28 vs 60，同一批字三档字重并排](2026-10-24-maruko-vf-candidate/maruko-vf-v1-seg-compare.png)
