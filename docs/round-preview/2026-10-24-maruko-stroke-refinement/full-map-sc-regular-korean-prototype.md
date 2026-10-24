@@ -1,6 +1,6 @@
 # Maruko SC Regular：62 字实际笔宽原型 + 全映射曲线重拟合 + Hangul
 
-**当前唯一主图：[`../current-maruko-review.png`](../current-maruko-review.png)。** 这是研究候选，不是生产字体；没有视觉验收。
+**图片已按主人指令清空，本文件只保留可复核的数字与方法。** 这是研究候选，不是生产字体；没有视觉验收。
 
 ## 重要区分
 
@@ -45,10 +45,7 @@
 
 修复后同一批 8 个字形：源字体 8/8 通过（7 个 `degenerate` 如实打印），候选 8/8 通过，`FAIL` 0 个。
 
-- [8 个候选三态对照（同一基准、正常字号）](self-intersection-candidates-review.png)
-- [`嫛` 局部放大对照（源 / 修复前 / 修复后）](self-intersection-candidates-zoom-uni5ADB.png)
-
-对照图显示：`嫛` 修复后不再有尖刺外翻，与源字形一致；7 个带重音符的字形三态像素差完全不变（`before` 与 `after` 对源的差异逐像素相同），因为那条零面积轮廓在任何字号下都不产生墨迹。
+原对照图已按主人指令删除，判定依据保留在这里：`嫛` 在容差 2.0 下重拟合后尖刺消失；7 个带重音符的字形在 400 px/em 下修复前后对源字形的像素差逐项相同（例如 `ǽ` 均为 943 px），因为那条零面积轮廓在任何字号下都不产生墨迹。要重看可按下节命令重跑并用 `tools/render_grid.py` 出图。
 
 仍未做：其余 6 个共同保留的候选未逐项复核；筛查也不能证明多轮廓叠合、光栅尺寸与设备渲染正确；`嫛` 的收紧容差是"不引入缺陷"，不代表该字轮廓质量已达标。
 
@@ -75,7 +72,7 @@ CHARS_UNIQUE='一二三十口日回国了乙人入八木林森永心必水走建
   "$WIDTH" "$FINAL" --all-mapped --tolerance 4.0 --seg-len 1.5
 .venv/bin/python tools/render_maruko_refinement.py \
   --source-regular "$SRC" --width-stage "$WIDTH" --final-regular "$FINAL" \
-  --output docs/round-preview/current-maruko-review.png
+  --output /tmp/maruko-audit/review.png
 ```
 
 复合 glyph 的曲线拟合从独立打开的不可变源快照读取；相关回归测试验证字形处理顺序不会改变复合轮廓。
