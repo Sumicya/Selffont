@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -43,12 +44,15 @@ SAMPLE = 32
 TAPER = 2.1        # 收尖长度 / 半笔宽
 SIDE_K = 0.46      # 侧边起手控制点系数（× 弦长）
 AXIS_M = 0.34      # 收尖前轴向下压系数（× 弦长）
+STRAIGHT = 0.70     # 直段长度 / 半笔宽
 TIP_E = 0.20       # 尖端横向错开（× 半笔宽），保证是个楔形而不是对折
-BEND_TARGET = None  # 弯折压平（实验开关）。捺的收笔就是等宽 + 半圆，不弯。
 FLAT_MAX = 20.0    # 切口处允许的"水平"偏差（度）
 FLAT_BACK = 2.6    # 沿骨架往回最多找多远（× 半笔宽）
 FLAT_MIN = 0.30    # 最近也至少离开钩根这么远（× 半笔宽）
 FLAT_TURN = 25.0   # 与钩根笔势至少差这么多度，才认为钩后确实转了弯（度）
+
+
+_DEBUG = bool(os.environ.get("HOOK_TAPER_DEBUG"))
 
 
 def _dist(a, b):
@@ -219,73 +223,6 @@ def _nearest_on_path(path, pt):
     return s_, math.sqrt(dd), q, e
 
 
-def bend_tail(pts, path, delta, L, r):
-    """沿骨架中心线把笔尾**弯**过去：收笔方向从原笔势转到 delta 后的方向。
-
-    为什么用弯而不是切：切在弯曲笔段上时，弦宽 ≠ 笔宽（`九` 是 107%），
-    半圆就会鼓出来。沿中心线扭转是刚体旋转的逐点版本——
-    每个轮廓点绕**自己最近的**中心线点转 θ(s)，横向偏移被等距旋转，
-    所以笔宽严格不变、端头仍是正圆、中心线本身也保持光滑，接缝不出角。
-
-    权重 = 沿轴向的 smoothstep(1 - s/L) × 横向衰减（1.6r 内全额、2.6r 外为零）。
-    横向那项不能省：否则别的笔画只要"最近中心线点在根部"就会被整段甩走。
-    """
-    if len(path) < 4 or abs(delta) < 1e-3:
-        return pts
-    s_nodes = [0.0]
-    for i in range(len(path) - 1):
-        s_nodes.append(s_nodes[-1] + _dist(path[i], path[i + 1]))
-
-    def theta(s_):
-        if s_ >= L:
-            return 0.0
-        u = 1.0 - s_ / L
-        return delta * (u * u * (3 - 2 * u))
-
-    def radial(rho):
-        if rho <= 1.6 * r:
-            return 1.0
-        if rho >= 2.6 * r:
-            return 0.0
-        u = (rho - 1.6 * r) / (1.0 * r)
-        return 1 - u * u * (3 - 2 * u)
-
-    # 新中心线：沿原切向逐段旋转累加
-    new_cl = [path[0]]
-    for i in range(len(path) - 1):
-        a, b = path[i], path[i + 1]
-        ds = _dist(a, b)
-        if ds < 1e-9:
-            new_cl.append(new_cl[-1])
-            continue
-        th = theta(s_nodes[i] + ds / 2)
-        e = _norm((b[0] - a[0], b[1] - a[1]))
-        c, s_ = math.cos(th), math.sin(th)
-        e2 = (e[0] * c - e[1] * s_, e[0] * s_ + e[1] * c)
-        new_cl.append((new_cl[-1][0] + e2[0] * ds, new_cl[-1][1] + e2[1] * ds))
-
-    out = []
-    for x, y, on in pts:
-        s_, rho, q, _e = _nearest_on_path(path, (x, y))
-        w = radial(rho)
-        th = theta(s_) * w
-        if th == 0.0:
-            out.append((x, y, on))
-            continue
-        j = 0
-        while j + 2 < len(s_nodes) and s_nodes[j + 1] < s_:
-            j += 1
-        span = max(1e-9, s_nodes[j + 1] - s_nodes[j])
-        u = max(0.0, min(1.0, (s_ - s_nodes[j]) / span))
-        cq = (new_cl[j][0] + (new_cl[j + 1][0] - new_cl[j][0]) * u,
-              new_cl[j][1] + (new_cl[j + 1][1] - new_cl[j][1]) * u)
-        vx, vy = x - q[0], y - q[1]
-        c, sn = math.cos(th), math.sin(th)
-        out.append((cq[0] + vx * c - vy * sn, cq[1] + vx * sn + vy * c, on))
-    return out
-
-
-
 def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
     """沿骨架找切口：在所有交点里取**短边**为钩，且弦长最接近局部笔宽。
 
@@ -314,9 +251,13 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
     def sidx(pt):
         return min(range(nsm), key=lambda i: _dist(smp[i][2], pt))
 
-    best = None
+    # 候选切面：① 沿笔身在钩根附近（粗定位）；② 沿**钩骨架**靠近钩根处，
+    # 切平面垂直于钩的走向（正定位）。只靠 ① 时，切面是垂直于笔身而不是垂直于
+    # 钩，钩是斜着长出来的，弦就斜，半圆的轴跟着歪（`必` 的弦一度歪到 2.1 长）。
+    sites = []
     for i in range(2, n_ - 1, 3):
-        if not (0.15 * r <= arc[i] <= 1.9 * r):
+        # 只能贴着钩根找：跑远了就是切笔身，`也` 因此在弧长 31 处切出 65% 笔宽的弦。
+        if not (0.0 <= arc[i] <= 1.05 * r):
             continue
         # 切向必须按**弧长窗口**取中心差分，不能用相邻两点：
         # 骨架是 8 连通像素步进，相邻点差只有 (1,0)/(1,1)/(0,1) 几种，
@@ -325,12 +266,23 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
         win = max(3, int(round(0.35 * r / step_px)))
         ia_, ib_ = max(0, i - win), min(n_ - 1, i + win)
         d = _norm((path[ia_][0] - path[ib_][0], path[ia_][1] - path[ib_][1]))
-        P = path[i]
+        sites.append((path[i], d, widths[i] if widths else r, arc[i]))
+    if hook_pts and len(hook_pts) >= 8:
+        m = len(hook_pts)
+        for k in range(1, min(10, m - 3)):
+            a2 = hook_pts[m - 1 - min(k + 4, m - 1)]
+            b2 = hook_pts[m - 1 - max(0, k - 4)]
+            if _dist(a2, b2) < 1e-9:
+                continue
+            d2 = _norm((a2[0] - b2[0], a2[1] - b2[1]))
+            sites.append((hook_pts[m - 1 - k], d2, r, 0.0))
+
+    best = None
+    for P, d, rl, arc_d in sites:
         nv = (-d[1], d[0])
         hits = cut_points(contour, P, nv)
         if len(hits) < 2:
             continue
-        rl = widths[i] if widths else r
         for a in range(len(hits)):
             for b in range(a + 1, len(hits)):
                 h1, h2 = hits[a], hits[b]
@@ -341,21 +293,32 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
                 else:
                     hS, hE, ln = h2, h1, nsm - fwd
                 chord = _dist(hS[3], hE[3])
-                if not (0.62 * 2 * rl <= chord <= 1.55 * 2 * rl):
+                if not (0.80 * 2 * rl <= chord <= 1.18 * 2 * rl):
+                    if _DEBUG:
+                        print("   reject chord", round(chord, 1), "2rl", round(2 * rl, 1),
+                              "arc", round(arc_d, 1), "seg", round(ln * step, 1))
                     continue
-                seg_len = ln * step
+                # 删掉的那段弧必须**贴着钩骨架**：钩的骨架点集是已知的，
+                # 真正该删的那一小块轮廓离它不超过一个笔宽。只看弦长和弧长
+                # 会配到笔身上的另一瓣（`子` 把整条竖钩当短边删掉，只剩横撇）。
                 if hook_pts:
-                    # 被移除的那段得挨着钩的根线。上限放到 6r：钩的根线本来就只覆盖
-                    # 钩尖那一小截，而轮廓上属于这块"端头"的部分会比根线长得多。
-                    pts_arc = [smp[(i1 + k) % nsm][2] for k in range(ln + 1)] \
-                        if hS is h1 else [smp[(i2 + k) % nsm][2] for k in range(ln + 1)]
-                    far = max(min(_dist(q, h) for h in hook_pts) for q in pts_arc)
-                    if far > 12.0 * r:
+                    # 采样必须从**被删那段的起点**出发。配对交换过以后起点是 i2，
+                    # 还从 i1 走就会绕到另外半圈上，量出来的距离是整字的对角
+                    # （`了` 因此被判 10r 开外、真钩被跳过）。
+                    iS_ = sidx(hS[3])
+                    ds = [min(_dist(smp[(iS_ + ln * k // 6) % nsm][2], h) for h in hook_pts)
+                          for k in range(1, 6)]
+                    if max(ds) > 1.5 * r or sum(ds) / len(ds) > 1.2 * r:
+                        if _DEBUG:
+                            print("   reject far", round(max(ds), 1), "mean", round(sum(ds) / 5, 1),
+                                  "arc", round(arc_d, 1), "chord", round(chord, 1),
+                                  "seg", round(ln * step, 1))
                         continue
+                seg_len = ln * step
                 score = abs(chord - 2 * rl) / (2 * rl) + 0.45 * seg_len / (2 * rl)
                 if best is None or score < best[0]:
                     best = (score, P, d, (hS[1], hS[2], hS[3]), (hE[1], hE[2], hE[3]),
-                            chord, arc[i], rl)
+                            chord, arc_d, rl)
     return None if best is None else best[1:]
 
 
@@ -391,106 +354,71 @@ def _bisect_zero(contour, seg, t_in, t_out, P, d):
     return t, pt_at(t)
 
 
-def hook_run(contour, P, d, tip, reach):
-    """返回被移除那一段的两个端点 (segS,tS,ptS),(segE,tE,ptE)；失败返回 None。
+def _despike(pts, thresh=2.0, passes=2):
+    """掐掉针状顶点与重合点。
 
-    做法：稠密采样 → 从离钩尖最近的采样点起，向两侧扩展
-    「在切平面之外（s>0）且离切点不远（<reach）」的连续采样段。
-    这样两端的边界就是唯一的一对，不必再猜"哪两个交点配对"。
+    半圆端头落好以后，接缝处偶尔会留下一个离邻居 40 多个单位、夹角 180° 的
+    针尖（`也` 端头右下一根发丝）。它离前后两点连线不到 2 个单位，删掉形状
+    不变；不删放大就是瑕疵。
     """
-    smp = _samples(contour)
-    n = len(smp)
-    def s_of(pt):
-        return (pt[0] - P[0]) * d[0] + (pt[1] - P[1]) * d[1]
-    def near(pt):
-        return _dist(pt, P) < reach
-    inside = [s_of(p) > 0 and near(p) for _, _, p in smp]
-    i0 = min(range(n), key=lambda i: _dist(smp[i][2], tip))
-    if not inside[i0]:
-        return None
-    iF = i0
-    while inside[(iF + 1) % n] and (iF + 1) % n != i0:
-        iF = (iF + 1) % n
-    iB = i0
-    while inside[(iB - 1) % n] and (iB - 1) % n != i0:
-        iB = (iB - 1) % n
-    a0 = smp[(iB + 1) % n]          # 段起点在外，段终点在内 → 前向交点
-    a1 = smp[iB % n]
-    b0 = smp[(iF - 1) % n]
-    b1 = smp[iF % n]
-    if a0[0] != a1[0] or b0[0] != b1[0]:
-        return None                  # 恰好跨段边界，放弃（极少）
-    tS, pS = _bisect_zero(contour, a0[0], a0[1], a1[1], P, d)
-    tE, pE = _bisect_zero(contour, b0[0], b0[1], b1[1], P, d)
-    return (a0[0], tS, pS), (b1[0], tE, pE)
+    for _ in range(passes):
+        if len(pts) <= 8:
+            break
+        out, removed = [], False
+        n = len(pts)
+        for i in range(n):
+            x, y, on = pts[i]
+            px, py = pts[i - 1][0], pts[i - 1][1]
+            nx, ny = pts[(i + 1) % n][0], pts[(i + 1) % n][1]
+            if (math.hypot(x - px, y - py) < 0.5 and math.hypot(x - nx, y - ny) < 0.5):
+                removed = True
+                continue
+            if on:
+                ax, ay = x - px, y - py
+                bx, by = nx - x, ny - y
+                area2 = abs(ax * by - ay * bx)
+                longest = max(math.hypot(ax, ay), math.hypot(bx, by),
+                              math.hypot(nx - px, ny - py))
+                if 1e-9 < longest < 60 and area2 / longest < thresh:
+                    removed = True
+                    continue
+            out.append(pts[i])
+        pts = out
+        if not removed:
+            break
+    return pts
 
 
+def build_straight_cap(S, E, n, r, L, quads=4):
+    """直的等宽笔身 + 标准半圆：就是"一条直"的收笔。
 
-
-def build_ellipse_cap(S, E, C, d, b, quads=4):
-    """半椭圆收笔：弦向半轴 = |S-E|/2，笔势向半轴 = b（取半笔宽）。
-
-    为什么不能是半圆：切口的弦长由笔段弯曲程度决定（`九` 75.2），比真笔宽
-    （69.6）宽；按弦长做半圆，端头两侧各多出 2.8 单位，交界处就是一道台阶
-    （放大看是端头"顶个球"）。半椭圆把弦向半轴留在弦上、笔势向半轴压回半笔宽，
-    端点仍精确落在轮廓上（无台阶），顶点高度也正好是笔宽的一半（不鼓）。
+    S、E 是切口两端（弦可能比 2r 宽，因为笔身在那一段是弯的）。
+    先从切口沿横向上收到笔宽 2r（短线，长度 = 弦半 - r），
+    再沿**笔势 n** 走 L 的直侧边，末端接半径 r 的半圆。
+    侧边是直线、圆是真圆，宽度严格等于笔宽，不会鼓。
     """
-    a = _dist(S, E) / 2
-    n = _norm((S[0] - C[0], S[1] - C[1]))
-    out = []
+    C = ((S[0] + E[0]) / 2, (S[1] + E[1]) / 2)
+    t = _norm((E[0] - S[0], E[1] - S[1]))
+    A1 = (C[0] - t[0] * r, C[1] - t[1] * r)
+    A2 = (C[0] + t[0] * r, C[1] + t[1] * r)
+    B1 = (A1[0] + n[0] * L, A1[1] + n[1] * L)
+    B2 = (A2[0] + n[0] * L, A2[1] + n[1] * L)
+    O = (C[0] + n[0] * L, C[1] + n[1] * L)
+    out = [(A1[0], A1[1], True), (B1[0], B1[1], True)]
+    # 半圆 B1 → B2，经 O + n*r（端头最远点）。u = B1-O = -t，w = n，二者正交。
+    u = (-t[0], -t[1])
+    coef = math.cos(math.pi / (2 * quads))
     for q in range(quads):
         t0 = math.pi * q / quads
         t1 = math.pi * (q + 1) / quads
         tm = (t0 + t1) / 2
-        coef = math.cos((t1 - t0) / 2)
-        out.append((C[0] + a / coef * math.cos(tm) * n[0] + b / coef * math.sin(tm) * d[0],
-                    C[1] + a / coef * math.cos(tm) * n[1] + b / coef * math.sin(tm) * d[1],
-                    False))
+        out.append((O[0] + r / coef * (u[0] * math.cos(tm) + n[0] * math.sin(tm)),
+                    O[1] + r / coef * (u[1] * math.cos(tm) + n[1] * math.sin(tm)), False))
         if q < quads - 1:
-            out.append((C[0] + a * math.cos(t1) * n[0] + b * math.sin(t1) * d[0],
-                        C[1] + a * math.cos(t1) * n[1] + b * math.sin(t1) * d[1], True))
-    out.append((E[0], E[1], True))
-    return out
-
-
-
-
-def build_flare_cap(S, E, tS, tE, C, d, r, quads=4):
-    """捺端：半径 = 真半笔宽的半圆 + 两端各一段 G1 小喇叭。
-
-    切口的弦由笔段弯曲程度决定，会比真笔宽宽一点（`九` 76.9 vs 69.6）。
-    按弦长做半圆 → 端头比笔身胖一圈、交界留台阶；按真笔宽做 → 两端缩进 3.6 单位，
-    直接接又是台阶。所以两端各插一段小喇叭：起点沿轮廓切向、终点沿圆的切向，
-    全程 G1 连续——笔身顺势张开一点再收成半圆，正是捺的收笔。
-    """
-    u = _norm((E[0] - C[0], E[1] - C[1]))
-    S2 = (C[0] - u[0] * r, C[1] - u[1] * r)
-    E2 = (C[0] + u[0] * r, C[1] + u[1] * r)
-    out = []
-    k1 = max(1.9, 0.8 * _dist(S, S2))
-    out.append((S[0] + tS[0] * k1, S[1] + tS[1] * k1, False))
-    out.append((S2[0] - d[0] * k1, S2[1] - d[1] * k1, False))
-    out.append((S2[0], S2[1], True))
-    a0 = math.atan2(S2[1] - C[1], S2[0] - C[0])
-    a1 = math.atan2(E2[1] - C[1], E2[0] - C[0])
-    aD = math.atan2(d[1], d[0])
-    sweep = (a1 - a0) % (2 * math.pi)
-    through = (aD - a0) % (2 * math.pi)
-    if through > sweep:                      # 正向不过 d，说明该走反向
-        sweep -= 2 * math.pi
-    step = sweep / quads
-    coef = math.cos(abs(step) / 2)
-    for q in range(quads):
-        t0 = a0 + step * q
-        t1 = t0 + step
-        tm = (t0 + t1) / 2
-        out.append((C[0] + r / coef * math.cos(tm), C[1] + r / coef * math.sin(tm), False))
-        if q < quads - 1:
-            out.append((C[0] + r * math.cos(t1), C[1] + r * math.sin(t1), True))
-    out.append((E2[0], E2[1], True))
-    k2 = max(1.9, 0.8 * _dist(E, E2))
-    out.append((E2[0] + d[0] * k2, E2[1] + d[1] * k2, False))
-    out.append((E[0] - tE[0] * k2, E[1] - tE[1] * k2, False))
+            out.append((O[0] + r * (u[0] * math.cos(t1) + n[0] * math.sin(t1)),
+                        O[1] + r * (u[1] * math.cos(t1) + n[1] * math.sin(t1)), True))
+    out.append((B2[0], B2[1], True))
+    out.append((A2[0], A2[1], True))
     out.append((E[0], E[1], True))
     return out
 
@@ -520,34 +448,6 @@ def _dir_at(contour, idx):
             break
         b = (b + 1) % n
     return _norm((contour[b][0] - contour[a][0], contour[b][1] - contour[a][1]))
-
-
-def build_blunt(S, E, tS, tE, d, r, k=0.30):
-    """平宽收笔（捺）：两段三次贝塞尔，两端与轮廓**切向一致**，顶点切线垂直于 d。
-
-    为什么不用半圆：切口是直线，而笔身是弯的，弦宽 ≠ 笔宽（`九` 107%），
-    按弦长做半圆，端头就比笔身粗；而且圆弧在 S 处的切向与轮廓切向不平行，
-    于是留下一道角（缺口）。用两段三次贝塞尔，两端都从轮廓切向出发，
-    顶点处切线水平，G1 连续——既没有鼓包也没有缺口，端头读起来就是"捺"。
-    """
-    C = ((S[0] + E[0]) / 2, (S[1] + E[1]) / 2)
-    w = _dist(S, E)
-    h = w / 2                                   # 顶点高度 = 弦长一半（与切口同宽）
-    M = (C[0] + d[0] * h, C[1] + d[1] * h)
-    v = (-d[1], d[0])
-    out = []
-    # 左段：S → M
-    l1 = min(_dist(S, M) * k, 0.5 * w * k)
-    out.append((S[0] + tS[0] * l1, S[1] + tS[1] * l1, False))
-    l2 = h * 0.55
-    out.append((M[0] - v[0] * l2, M[1] - v[1] * l2, False))
-    out.append((M[0], M[1], True))
-    # 右段：M → E
-    out.append((M[0] + v[0] * l2, M[1] + v[1] * l2, False))
-    l3 = min(_dist(M, E) * k, 0.5 * w * k)
-    out.append((E[0] - tE[0] * l3, E[1] - tE[1] * l3, False))
-    out.append((E[0], E[1], True))
-    return out
 
 
 def _nearest_param(contour, T):
@@ -624,39 +524,6 @@ def build_arc(S, E, C, r, d):
         out.append((ctrl[0], ctrl[1], False))
         if q < n - 1:
             out.append((C[0] + r * math.cos(t1), C[1] + r * math.sin(t1), True))
-    out.append((E[0], E[1], True))
-    return out
-
-
-def build_cap(S, E, P, d, r, quads=4, body=None):
-    """真半圆端头：S、E 为直径两端，向背离笔身的一侧扫 180°。
-
-    不再用角度增量推导（那段逻辑反复出错，切出来的弧会绕到笔身另一侧）。
-    直接构造正交基：
-      u = 从圆心指向 S 的单位向量
-      k = u × (S→E 方向的旋转) …… 用"笔身在哪侧"确定 k 的符号
-    半圆参数化为 C + rad*(u*cosθ + k*sinθ)，θ∈[0,π]，显式从 S 扫到 E。
-    """
-    C = ((S[0] + E[0]) / 2, (S[1] + E[1]) / 2)
-    rad = _dist(S, E) / 2
-    u = _norm((S[0] - C[0], S[1] - C[1]))
-    k = (-u[1], u[0])
-    # 让 k 指向背离笔身的一侧
-    ref = body if body is not None else (P[0] + d[0] * rad, P[1] + d[1] * rad)
-    if (ref[0] - C[0]) * k[0] + (ref[1] - C[1]) * k[1] > 0:
-        k = (-k[0], -k[1])
-    out = []
-    coef = math.cos(math.pi / (2 * quads))
-    for q in range(quads):
-        t0 = math.pi * q / quads
-        t1 = math.pi * (q + 1) / quads
-        tm = (t0 + t1) / 2
-        ctrl = (C[0] + rad / coef * (u[0] * math.cos(tm) + k[0] * math.sin(tm)),
-                C[1] + rad / coef * (u[1] * math.cos(tm) + k[1] * math.sin(tm)))
-        out.append((ctrl[0], ctrl[1], False))
-        if q < quads - 1:
-            out.append((C[0] + rad * (u[0] * math.cos(t1) + k[0] * math.sin(t1)),
-                        C[1] + rad * (u[1] * math.cos(t1) + k[1] * math.sin(t1)), True))
     out.append((E[0], E[1], True))
     return out
 
@@ -859,11 +726,11 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
         fd = (best_cut(contour, [to_font(y, x) for y, x in bp], tip, r, hook_pts, bw)
               if len(bp) > 8 else None)
         if fd is None:
-            run = hook_run(contour, P, d, tip, reach=6.0 * r)
-            if run is None:
-                report.append(("no-run",))
-                continue
-            (siS, tS_, pS), (siE, tE_, pE) = run
+            # 没有合格切口就**原样保留**。以前这里走 hook_run 兜底，兜底量出的
+            # 弦可以长达 3 倍笔宽（`子` 242.4 vs 71.9），收笔只能在拐角上糊一个
+            # 球。退路本身就会毁字，删掉比修好更实在。
+            report.append(("skip",))
+            continue
         else:
             P, d, (siS, tS_, pS), (siE, tE_, pE), chord, arc_d, r = fd
             diag.append(("pick", round(arc_d, 1), "chord", round(chord, 1), "r", round(r, 1)))
@@ -885,26 +752,50 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
             _, right = _split_quad(left[0], left[1], left[2], t0 / t1)
             return [(right[1][0], right[1][1], False), (right[2][0], right[2][1], True)]
 
-        # 收笔：捺端（半圆半径 = 真半笔宽 + 两端 G1 小喇叭）。
-        # 切口的弦由笔段弯曲程度决定，比真笔宽宽一点（`九` 76.9 vs 69.6）：
-        # 按弦长做半圆端头就胖一圈；按真笔宽做，两端差 3.6 单位直接接会成台阶。
-        # 所以两端各插一段小喇叭——起点沿轮廓切向、终点沿圆的切向，全程 G1。
-        # best_cut 已经保证弦长 ≈ 2×局部半笔宽，所以这里就是标准半圆：
-        # 半径 = 半笔宽、两端与笔身切向一致，既不会胖，也不会留台阶。
-        # 端头用半椭圆（见 build_ellipse_cap）：弦向半轴 = 半弦长、笔势向 = 半笔宽。
-        # 端头朝**背离笔身**（B 在笔身上）的一侧鼓。
+        # 收笔 = **直的等宽笔身 + 标准半圆**（就是"一条直"）。
+        # 切口两侧的轮廓在弯笔身上是斜的，直接贴一个半圆，圆半径就跟着弦长跑，
+        # 必然比笔宽大一圈（`九` 38.2 vs 34.8），放大就是脓包。
+        # 所以从切口收窄到笔宽 2r，走一段直侧边，再接半径 = 半笔宽的真半圆。
         C_ = ((pS[0] + pE[0]) / 2, (pS[1] + pE[1]) / 2)
         nrm = (-(pE[1] - pS[1]), pE[0] - pS[0])
         nrm = _norm(nrm)
-        if (C_[0] - B[0]) * nrm[0] + (C_[1] - B[1]) * nrm[1] < 0:
-            nrm = (-nrm[0], -nrm[1])
-        # 端头要顺着笔势**延伸**出去，不能平贴在切口上：不延伸就是被截断的笔。
-        # 延伸长度按被去掉的钩在笔势方向上的投影给，至少 0.5r。
-        ext = 0.0
-        if hook_pts:
-            ext = sum((q[0] - C_[0]) * nrm[0] + (q[1] - C_[1]) * nrm[1] for q in hook_pts) / len(hook_pts)
-            ext = max(0.5 * r, min(1.6 * r, ext - 0.6 * r))
-        cap = build_ellipse_cap(pS, pE, C_, nrm, r + ext)
+        # 鼓向：朝**被删掉的那段轮廓弧的重心**。这段就是钩本身，它必然在端头
+        # 该鼓的一侧。笔身点 B 和钩尖都会在弯处判反（`必` 鼓进笔身自交成洞、
+        # `也` 鼓错边切出缺口），只有被删弧的重心不会错。
+        arc_sum = [0.0, 0.0]
+        n_arc = 0
+        idx2, first2 = siS, True
+        while True:
+            t0 = tS_ if first2 else 0.0
+            t1 = tE_ if idx2 == siE else 1.0
+            kind2, q0, ctrls2, q1, _at2 = segs[idx2]
+            for kk in range(1, 5):
+                tt = t0 + (t1 - t0) * kk / 4
+                if kind2 == "quad" and ctrls2:
+                    qq = _quad_at(q0, ctrls2[0], q1, tt)
+                else:
+                    qq = (q0[0] + (q1[0] - q0[0]) * tt, q0[1] + (q1[1] - q0[1]) * tt)
+                arc_sum[0] += qq[0]
+                arc_sum[1] += qq[1]
+                n_arc += 1
+            if idx2 == siE:
+                break
+            idx2 = (idx2 + 1) % len(segs)
+            first2 = False
+        if n_arc:
+            gx, gy = arc_sum[0] / n_arc, arc_sum[1] / n_arc
+            if (gx - C_[0]) * nrm[0] + (gy - C_[1]) * nrm[1] < 0:
+                nrm = (-nrm[0], -nrm[1])
+        def tangent(seg, t):
+            kind3, q0, ctrls3, q1, _a3 = seg
+            if kind3 == "quad" and ctrls3:
+                c3 = ctrls3[0]
+                return (2 * (1 - t) * (c3[0] - q0[0]) + 2 * t * (q1[0] - c3[0]),
+                        2 * (1 - t) * (c3[1] - q0[1]) + 2 * t * (q1[1] - c3[1]))
+            return (q1[0] - q0[0], q1[1] - q0[1])
+
+        cap = build_straight_cap(pS, pE, nrm, _dist(pS, pE) / 2, STRAIGHT * r)
+        diag.append(("capchord", round(_dist(pS, pE), 1), "2r", round(2 * r, 1)))
 
         # 保留段：从 E 顺着段序走回 S。按段重建，不再往扁平点表里插点
         # （插点会留下孤立控制点，轮廓自交，端头就出缺口）。
@@ -920,19 +811,10 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
             first = False
         while kept and _dist((kept[-1][0], kept[-1][1]), pS) < 1e-6:
             kept.pop()
-        new = [(pS[0], pS[1], True)] + cap + kept
+        new = _despike([(pS[0], pS[1], True)] + cap + kept)
         diag.append(("cut", round(pS[0]), round(pS[1]), "E", round(pE[0]), round(pE[1]),
                      "chord", round(_dist(pS, pE), 1), "2r", round(2 * r, 1),
                      "kept", len(kept)))
-        if BEND_TARGET is not None:
-            # 弯的是**整条轮廓**（含刚落好的半圆端头）：端头必须跟着笔身一起转，
-            # 只转 cap 会让它绕钩根甩出去，变成"棍子上顶个球"。
-            bp = _body_path((ry, rx), banned, sk, 4.0 * r / upp)
-            if len(bp) > 5:
-                path_f = [to_font(y, x) for y, x in bp]
-                delta = math.radians(BEND_TARGET - math.degrees(math.atan2(d[1], d[0])))
-                new = bend_tail(new, path_f, delta, 3.2 * r, r)
-                diag.append(("bend", round(math.degrees(delta), 1)))
         contour = new
         report.append(("ok", round(r, 1), len(kept)))
         if verbose:
@@ -987,27 +869,3 @@ if __name__ == "__main__":
     main()
 
 
-def build_ellipse_cap(S, E, C, nrm, b, quads=4):
-    """半椭圆收笔：弦向半轴 = 半弦长，笔势向半轴 = b（半笔宽）。
-
-    为什么不能用半圆：切口的弦长由笔段弯曲决定，通常比真笔宽宽一点
-    （`九` 73–86 vs 69.6）。按弦做半圆 → 半径 38 > 34.8，端头比笔身胖一圈，
-    放大就是个鼓包。半椭圆把弦向半轴留在弦上（端点精确落在轮廓上，无台阶），
-    笔势向压回半笔宽（端头厚度与笔身一致），且两端切向恰为 ±法线，天然 G1。
-    """
-    a = _dist(S, E) / 2
-    u = _norm((S[0] - C[0], S[1] - C[1]))
-    out = []
-    for q in range(quads):
-        t0 = math.pi * q / quads
-        t1 = math.pi * (q + 1) / quads
-        tm = (t0 + t1) / 2
-        coef = math.cos((t1 - t0) / 2)
-        out.append((C[0] + a / coef * math.cos(tm) * u[0] + b / coef * math.sin(tm) * nrm[0],
-                    C[1] + a / coef * math.cos(tm) * u[1] + b / coef * math.sin(tm) * nrm[1],
-                    False))
-        if q < quads - 1:
-            out.append((C[0] + a * math.cos(t1) * u[0] + b * math.sin(t1) * nrm[0],
-                        C[1] + a * math.cos(t1) * u[1] + b * math.sin(t1) * nrm[1], True))
-    out.append((E[0], E[1], True))
-    return out
