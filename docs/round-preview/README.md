@@ -1,10 +1,14 @@
 # 当前字体审阅
 
-## 当前状态 · 2026-10-24
+## 唯一当前新稿 · 2026-10-24 晚
 
-**图片已按主人指令全部清空**（`current-maruko-review.png` 与两张自交候选对照图已删除，git 历史可追溯）。当前没有任何"主图"；下一版候选出图后再在这里挂唯一一张。
+[打开当前审阅图：Maruko 三档静态字重重拓扑成 `wght 300–500` 可变字体的插值扫视](2026-10-24-maruko-vf-candidate/maruko-vf-candidate-v1-sweep.png)
 
-现在能读的是上一轮的复核数据与结论，不是新稿：
+旧图（`current-maruko-review.png` 与两张自交候选对照图）已按主人指令全部清空，git 历史可追溯；现在仓库里只有这一张当前图。
+
+- [可变字体候选 V1：做法、实测限制与图上真实问题](2026-10-24-maruko-vf-candidate/README.md)
+
+上一轮的复核数据与结论（无图，纯文字）：
 
 - [SC Regular 62 字笔宽原型 + 全映射曲线重拟合 + Hangul：复核数字、方法与限制](2026-10-24-maruko-stroke-refinement/full-map-sc-regular-korean-prototype.md)
 - [8 个自交候选复核结论](2026-10-24-maruko-stroke-refinement/full-map-sc-regular-korean-prototype.md#8-个新候选的复核结果2026-10-24已逐项复现)

@@ -1,0 +1,51 @@
+# Maruko 可变字体候选 V1：三档静态字重重拓扑后的插值原型
+
+**这是研究候选，不是生产字体，没有审美验收，没有真机验证。** 图只此一张：[`maruko-vf-candidate-v1-sweep.png`](maruko-vf-candidate-v1-sweep.png)。
+
+## 做了什么
+
+Maruko Gothic 上游只发**静态字重**（SC 有 Light 300 / Regular 400 / Medium 500，另有 JP Bold/Black 但 SC/TC 无对应文件），没有任何设计源文件（glyphs / designspace / UFO 全没有，仓库只有 TTF 与 woff2）。要让它在 Android 上走本仓库既定的「可变字体 + `supportedAxes`」路线，只能自己把三档静态字重合成一份 VF。
+
+`tools/maruko_vf_build.py` 的做法：把每个字形在三个字重里分别画成稠密折线 → 轮廓一一配对 → 每条轮廓取统一弧长分段数、统一起点、统一绕行方向 → 每段用一段二次贝塞尔表达 → `fontTools.varLib.build` 合成 `wght 300–500` 的 VF。
+
+## 限制：为什么必须先重拓扑
+
+上游三档字重不是同一套轮廓的插值结果，而是各自描摹/生成的独立字形。实测：
+
+| 指标 | 数值 | 范围 |
+|---|---|---|
+| 三档共有码位 | 31,943 | Light/Regular/Medium cmap 交集 |
+| 三档点数/轮廓数**不一致**的字形 | 31,551 | 98.77%，即**只有 392 个字形**结构天然一致 |
+| 175 字样本里轮廓数不一致 | 67 | 38.3%（`暖` 8/8/6、`文` 3/3/2、`日` 3/4/3） |
+
+`varLib` 要求同名字形点数、轮廓数、点序一一对应，直接喂静态字重会报 `different number of points`。所以 VF 路线的**唯一**实现方式是几何重拓扑，代价就是下面这些实测数字。
+
+## 实测结果（175 字样本，Regular 作基准）
+
+| 指标 | 数值 | 说明 |
+|---|---|---|
+| 重拓扑成功 | 105 / 175 | 175 = 175 字样本里去重后的可用字符；失败 65、跳过 5 |
+| 失败原因 | 轮廓数在字重间不对等 | 缺一条轮廓就得补退化轮廓，细节会被压没再长出来，故丢弃 |
+| 主字重保真 IoU（300 px/em 渲染） | Light 0.916 / Regular 0.936 / Medium 0.956（最低 0.72） | 与上游同名静态字重逐像素比 |
+| 插值面积单调 | 105 / 105 | wght 300→350→400→450→500 墨迹面积单调递增（容差 2%） |
+| 对齐残差 RMS | 平均 23.1 FU，p95 36.3 FU，最大 79.0 FU | 同一条轮廓在不同字重间的等弧长采样偏差 |
+
+`wght 400` 的 VF 实例并不等于上游 Regular：基准字重也经过了重参数化，IoU 0.936 就是它的偏离量（Regular 与 Medium 保真度高于 Light，因为 Light 是结构差异最大的一档）。
+
+## 图上能看到的真实问题（不掩饰）
+
+扫视图里 `国/回/电/了/乙/也/田/永` 在 300 与 500 两端基本干净，中间档位仍有肉眼可见的插值瑕疵：`永` 右上笔画在 350/450 有折线感，`田` 中间的横在 350 有轻微起伏，`了` 顶部钩角在 350 略糊。这些是重拓扑把"每个字各自的最优曲线"换成"三档共用一套分段"带来的，不是渲染噪声。**不能据此说 VF 已经可用**。
+
+## 许可
+
+上游 `max32002/maruko-gothic` 在固定提交 `97e9dd4a2fdde58084dde8d022de253f8d8415e9` 附有 SIL OFL 1.1 全文；font 的 name 表写 `Copyright 2025 The Maruko Gothic Authors`，许可描述为标准 OFL 1.1 文本，**没有声明保留字体名**（RFN）。该上游 README 同时自述「基于思源黑体改造」。派生发布必须沿用 OFL 1.1 并保留版权与许可文本；本原型至今只在 `/tmp`，没有入库字体二进制。
+
+## 复现
+
+```sh
+python3 tools/maruko_vf_build.py \
+  --light Light.ttf --regular Regular.ttf --medium Medium.ttf \
+  --chars "$(cat sample-chars.txt)" --out /tmp/maruko-vf/proto.ttf --seg-len 28
+```
+
+`--out` 旁边会写 `<out>.report.tsv`（逐字 ok / padded / missing 状态）和三份重拓扑后的主字重 TTF。字体二进制不入库。

@@ -2,7 +2,7 @@
 
 ## 当前审阅
 
-1. [`round-preview/README.md`](round-preview/README.md) — 当前状态入口；图片已按主人指令清空，现无可看主图。
+1. [`round-preview/README.md`](round-preview/README.md) — 当前唯一新稿入口：Maruko 可变字体候选 V1 扫视图。
 2. [`design-principles.md`](design-principles.md) — 当前有效的主人审美与审阅原则。
 3. [`decisions-笔画简化.md`](decisions-笔画简化.md) — 笔画简化方向、历史取舍与边界；旧轮次仅作历史，不可当作当前结果。
 4. [`round-preview/2026-10-24-maruko-stroke-refinement/full-map-sc-regular-korean-prototype.md`](round-preview/2026-10-24-maruko-stroke-refinement/full-map-sc-regular-korean-prototype.md) — 最新全 cmap + Hangul 原型的可复核报告。
@@ -14,4 +14,4 @@
 - `round-preview/history-2026-10-13.md` — 早期自制圆体流水线的文字记录。
 - `evidence/` 与旧版 `round-preview/` Markdown/TXT — 历史验证方法与结论；如与当前方向冲突，以本轮明确的 Maruko-only 指令及当前审阅页为准。
 
-当前视觉审阅只从 [`round-preview/README.md`](round-preview/README.md) 进入；仓库内图片已全部清空，新图产出后再挂入口。
+当前视觉审阅只从 [`round-preview/README.md`](round-preview/README.md) 进入；旧图已全部清空，现只有可变字体候选 V1 一张。
