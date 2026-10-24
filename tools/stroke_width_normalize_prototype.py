@@ -280,12 +280,25 @@ def transform_skeleton_x_profiled(
     return transformed
 
 
-def glyph_from_mask(mask: np.ndarray, font: TTFont, transform):
-    """Trace a mask into a TrueType glyph and repair any raster self-touches."""
+MIN_DEGENERATE_RING_AREA = 1.0  # 字体单位²：小于这个的环一律视为取整碎屑
+
+
+def glyph_from_mask(mask: np.ndarray, font: TTFont, transform, smooth_px: float = 0.0):
+    """Trace a mask into a TrueType glyph and repair any raster self-touches.
+
+    ``smooth_px`` 大于 0 时先对掩膜做同 sigma 的高斯平滑，再取 0.5 等值线。
+    二值掩膜的边界是 ±0.5 px 的阶梯，marching squares 只能落在整格上；直接拿去
+    拟合贝塞尔，拟合器为了不越过台阶只能每个折点都保留（实测「街」精简后仍剩
+    1598 点）。平滑后等值线走亚像素位置，台阶被抹平，长直段和长弧才能各用一条
+    曲线收掉。sigma 只有 1 px（≈0.5 fu），对 61 fu 的笔宽没有可见影响。
+    """
     xmin, ymin, scale, margin_px, _, outer_sign = transform
     px = mask.shape[0]
+    field = mask.astype(float)
+    if smooth_px > 0:
+        field = ndimage.gaussian_filter(field, smooth_px, mode="constant", cval=0.0)
     contours = find_contours(
-        mask.astype(float), 0.5, fully_connected="high", positive_orientation="low"
+        field, 0.5, fully_connected="high", positive_orientation="low"
     )
     pen = TTGlyphPen(font.getGlyphSet())
 
@@ -342,6 +355,11 @@ def glyph_from_mask(mask: np.ndarray, font: TTFont, transform):
         polygon = Polygon(points)
         if polygon.is_valid:
             append_ring(points, desired_sign)
+            continue
+
+        # 取整后退化的亚像素碎屑：一像素级别的针尖在 1000 upem 下本来落不了墨，
+        # 直接丢掉。不丢的话 buffer(0) 返回空几何，整字会失败（都/济/育 就是这样挂的）。
+        if polygon.area < MIN_DEGENERATE_RING_AREA:
             continue
 
         # shortcut: buffer(0) repairs this raster ring only; use component-aware tracing if it alters a counter or overlapping contour.

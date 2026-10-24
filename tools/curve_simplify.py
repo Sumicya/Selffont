@@ -297,10 +297,17 @@ def process_font(font, chars, tolerance=3.0, seg_len=4.0, source_font=None):
         if gname in processed:
             continue
         processed.add(gname)
-        flat = FlattenPen(source_glyph_set, seg_len=seg_len)
-        source_glyph_set[gname].draw(flat)
-
         g = source_glyf[gname]
+        # 简单字形必须直接读 glyf 坐标：`getGlyphSet()` 会按 `lsb - xMin` 平移。
+        # 上游重描过的字形 xMin 变了而 hmtx 的 lsb 还是旧值，走 glyphSet 就会把整个
+        # 字平移 lsb-xMin 个单位（实测「个」被移了 20 单位，IoU 0.98 → 0.63）。
+        if g.isComposite():
+            flat = FlattenPen(source_glyph_set, seg_len=seg_len)
+            source_glyph_set[gname].draw(flat)
+        else:
+            flat = FlattenPen(None, seg_len=seg_len)
+            g.draw(flat, source_glyf)
+
         coords, ends, flags = g.getCoordinates(source_glyf)
         before_real = len(coords)
 
