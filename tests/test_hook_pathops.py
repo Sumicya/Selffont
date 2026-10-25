@@ -66,3 +66,43 @@ def test_longest_branch_prefers_far_branch():
     assert len(branch) > 1
     assert branch[-1][1] >= 6
     assert branch[-1] != branch[0]
+
+
+def test_hook_axis_points_to_tip():
+    """钩轴向必须指向钩尖：符号错了整个半平面就装反。"""
+    # (y,x) 序列，末位是钩根。采样取离散的 45° 点，避免共线退化。
+    pts = [(10, 10), (14, 13), (18, 17), (22, 22), (30, 30)]
+    axis = hp._hook_axis(pts, 10.0)
+    assert axis is not None
+    dy, dx = axis
+    assert dy < 0 and dx < 0   # 从钩根(30,30)指向钩尖(10,10)
+
+
+def test_count_pieces_counts_outer_contours():
+    import pathops
+    a = hp._ball(0, 0, 10)
+    b = hp._ball(100, 0, 10)
+    two = pathops.op(a, b, pathops.PathOp.UNION)
+    assert hp._count_pieces(a) == 1
+    assert hp._count_pieces(two) == 2
+
+
+def test_halves_do_not_leak_across_cut():
+    """半平面 + 半圆盘的组合：切口一侧必须干净，另一侧必须完整。"""
+    import pathops
+    body = pathops.Path()
+    body.moveTo(-100, -20); body.lineTo(100, -20)
+    body.lineTo(100, 20); body.lineTo(-100, 20); body.close()
+    c = (0.0, 0.0)
+    half = pathops.Path()
+    big = 400.0
+    half.moveTo(c[0], c[1] - big)
+    half.lineTo(c[0] + big, c[1] - big)
+    half.lineTo(c[0] + big, c[1] + big)
+    half.lineTo(c[0], c[1] + big)
+    half.close()
+    flat = pathops.op(body, half, pathops.PathOp.DIFFERENCE)
+    cap = pathops.op(hp._ball(*c, 20.0), half, pathops.PathOp.INTERSECTION)
+    out = pathops.op(flat, cap, pathops.PathOp.UNION)
+    assert out.area > body.area * 0.5
+    assert hp._count_pieces(out) == 1
