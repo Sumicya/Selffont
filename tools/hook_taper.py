@@ -292,109 +292,121 @@ def find_tip_curls(mask, skeleton=None, distance=None, trim=TIP_TRIM_RATIO,
 
 
 def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
-    """沿骨架找切口：在所有交点里取**短边**为钩，且弦长最接近局部笔宽。
+    """沿骨架找切口：取**真正的横截面**——过骨架点、两端等距、弦长正好 2×局部半笔宽。
 
-    两个关键点（前几版都栽在这）：
-      · 不能按"钩尖的参数夹在两个交点之间"来配对——参数是环形的，夹出来的
-        往往是绕整条轮廓的那一边（`了` 因此被切掉整条竖）。
-        正解：交点两两配对，取两侧中的**短边**，钩本来就是最小的一块轮廓。
-      · 半笔宽要用**切点处**的局部值：钩根被钩的弯撑大（`了` 36.5 vs 实际 30），
-        拿它当基准，弦永远"偏窄"，候选全被拒。
+    为什么不直接用骨架切向的垂线：骨架切向是**局部**的，在弯段上不等于横截面法向。
+    实测 `九` 差约 25°，弦被拉长到 1.11×2r。半圆半径取「弦的一半」，端头就比笔身
+    宽 11%（脓包）；正圆还有一半悬在笔画外（缺口），`也` 的圆内墨迹只剩 22.5%。
+
+    所以判据改成一条几何事实：**横截面 = 过中心、两端距离都等于半笔宽的那条线**。
+    对等宽笔画（实测字内笔宽离散 IQR/r = 0.073）这样的线一定存在，而且唯一。
+    逐度搜法向，取「弦 − 2r」最小、两端最对称的那条。
+
+    `path` 是从钩根往笔身里走的一串骨架点，`widths` 是各点的局部半笔宽（字体单位）。
     """
     n_ = len(path)
-    if n_ < 8:
+    if n_ < 4:
         return None
     arc = [0.0]
     for i in range(n_ - 1):
         arc.append(arc[-1] + _dist(path[i], path[i + 1]))
-    step_px = arc[-1] / max(1, n_ - 1)
     smp = _samples(contour)
     nsm = len(smp)
-    # 采样是「每段固定 12 个点」，长段和短段的点距能差上百倍，所以不能按点的
-    # 个数判长短——那样常把跨过整字的长弧当成"短边"（`子`/`包` 的被删弧离钩
-    # 骨架 257 单位，上限才 80）。改成按**几何弧长**累加。
     cum = [0.0]
     for i in range(nsm):
         cum.append(cum[-1] + _dist(smp[i][2], smp[(i + 1) % nsm][2]))
     per = cum[-1]
-    step = per / nsm
-    hook_pts = hook_pts or []
 
     def sidx(pt):
         return min(range(nsm), key=lambda i: _dist(smp[i][2], pt))
 
-    # 候选切面：① 沿笔身在钩根附近（粗定位）；② 沿**钩骨架**靠近钩根处，
-    # 切平面垂直于钩的走向（正定位）。只靠 ① 时，切面是垂直于笔身而不是垂直于
-    # 钩，钩是斜着长出来的，弦就斜，半圆的轴跟着歪（`必` 的弦一度歪到 2.1 长）。
-    sites = []
-    for i in range(2, n_ - 1, 3):
-        # 只能贴着钩根找：跑远了就是切笔身，`也` 因此在弧长 31 处切出 65% 笔宽的弦。
-        if not (1.2 * r <= arc[i] <= 2.8 * r):
-            continue
-        # 切向必须按**弧长窗口**取中心差分，不能用相邻两点：
-        # 骨架是 8 连通像素步进，相邻点差只有 (1,0)/(1,1)/(0,1) 几种，
-        # 单步差分会把笔势量化成 45° 的倍数——切平面方向只有 8 种，
-        # 斜切弯笔时弦宽就忽大忽小（`九` 76.4 vs 笔宽 69.6），端头永远对不齐。
-        win = max(3, int(round(0.35 * r / step_px)))
-        ia_, ib_ = max(0, i - win), min(n_ - 1, i + win)
-        d = _norm((path[ia_][0] - path[ib_][0], path[ia_][1] - path[ib_][1]))
-        sites.append((path[i], d, widths[i] if widths else r, arc[i]))
-    if hook_pts and len(hook_pts) >= 8:
-        m = len(hook_pts)
-        for k in range(1, min(10, m - 3)):
-            a2 = hook_pts[m - 1 - min(k + 4, m - 1)]
-            b2 = hook_pts[m - 1 - max(0, k - 4)]
-            if _dist(a2, b2) < 1e-9:
-                continue
-            d2 = _norm((a2[0] - b2[0], a2[1] - b2[1]))
-            sites.append((hook_pts[m - 1 - k], d2, r, 0.0))
+    def arc_has(hs, he, target, tol):
+        """轮廓上 hs→he 这段采样弧里，有没有离 target 不到 tol 的点。"""
+        i1, i2 = sidx(hs), sidx(he)
+        k = i1
+        while True:
+            if _dist(smp[k][2], target) < tol:
+                return True
+            if k == i2:
+                return False
+            k = (k + 1) % nsm
 
-    # 两档：先按严格窗口找（弦≈笔宽、被删弧贴着钩骨架）；一个都没有时退到
-    # 宽松窗口，**任何检测到的钩都要切掉**。主人要的是「去钩彻底」——
-    # 端头不外伸了，弦略宽只会让半圆略大一点，不会再鼓出脓包。
-    best = None
-    for lo, hi, arc_max in (
-            (0.85, 1.15, 2.8),
-            (0.55, 1.65, 2.8)):
-        for P, d, rl, arc_d in sites:
-            if arc_d > arc_max * r:
-                continue
-            nv = (-d[1], d[0])
+    strict, relaxed = [], []
+    for i in range(n_):
+        # 切点必须在**钩之外**：从钩根往笔身里走 0.2–2.2 倍半宽。钩根内侧切是
+        # 只去掉一半；走太远就切进下一个转折。
+        if not (0.2 * r <= arc[i] <= 2.2 * r):
+            continue
+        rl = widths[i] if widths else r
+        if rl < 0.45 * r or rl > 1.5 * r:
+            continue
+        P = path[i]
+        def probe(deg):
+            th = math.radians(deg)
+            nv = (math.cos(th), math.sin(th))
             hits = cut_points(contour, P, nv)
             if len(hits) < 2:
-                continue
-            for a in range(len(hits)):
-                for b in range(a + 1, len(hits)):
-                    h1, h2 = hits[a], hits[b]
-                    i1, i2 = sidx(h1[3]), sidx(h2[3])
-                    fwd = (i2 - i1) % nsm
-                    arc_fwd = (cum[i2] - cum[i1]) % per
-                    if arc_fwd <= per - arc_fwd:
-                        hS, hE, ln, seg_len = h1, h2, fwd, arc_fwd
-                    else:
-                        hS, hE, ln, seg_len = h2, h1, nsm - fwd, per - arc_fwd
-                    chord = _dist(hS[3], hE[3])
-                    if not (lo * 2 * rl <= chord <= hi * 2 * rl):
-                        if _DEBUG:
-                            print("   chord", round(chord, 1), "window", round(lo*2*rl,1), round(hi*2*rl,1),
-                                  "arc", round(arc_d, 1), "seg", round(seg_len, 1))
-                        continue
-                    # 被删的那段必须是**短的那一侧**（长度是几何弧长，不是点的个数）。
-                    # 只要它明显短于半圈就说明配的是钩那小块；配到笔身上的另一瓣
-                    # （`子` 曾把整条竖钩删掉）时长边会接近半圈。
-                    if seg_len > 0.45 * per:
-                        continue
-                    score = abs(chord - 2 * rl) / (2 * rl) + 0.45 * seg_len / (2 * rl)
-                    if best is None or score < best[0]:
-                        # 顺序很重要：hS→hE 在**轮廓参数方向**上就是短边（要删掉的那
-                        # 一小块）。以前这里按「段序短边」另算一次，方向反了就会把
-                        # 整条笔画当钩剪掉（`了` 的保留侧弧长一度是 5301，钩只有 468）。
-                        best = (score, P, d, (hS[1], hS[2], hS[3]), (hE[1], hE[2], hE[3]),
-                                chord, arc_d, rl)
-        if best is not None:
-            break
-    return None if best is None else best[1:]
+                return None
+            along = [(h[3][0] - P[0]) * nv[0] + (h[3][1] - P[1]) * nv[1] for h in hits]
+            neg = [k for k in range(len(hits)) if along[k] < -1e-9]
+            pos = [k for k in range(len(hits)) if along[k] > 1e-9]
+            if not neg or not pos:
+                return None
+            # 只取分列 P 两侧、各自最近的那一对。不这么配会把射穿 4 次的第 1、3 个
+            # 交点配成弦（`包` 曾拼出 73 的弦，切面斜跨整个轮廓）。
+            k1 = max(neg, key=lambda k: along[k])
+            k2 = min(pos, key=lambda k: along[k])
+            chord = along[k2] - along[k1]
+            if chord <= 1e-6:
+                return None
+            err = abs(chord - 2 * rl) / (2 * rl)
+            sym = abs(abs(along[k1]) - abs(along[k2])) / rl
+            return (err + 0.5 * sym, err, sym, chord, hits[k1], hits[k2], deg)
 
+        cand = None
+        # 粗搜 10° 再在最优附近逐度细化：弦长随角度在真截面处取极小，
+        # 粗搜足以定位，细化把误差压到 1% 以内。全 180 度逐度太慢（一个字要一分钟）。
+        coarse = [r_ for r_ in (probe(d_) for d_ in range(0, 180, 10)) if r_]
+        if coarse:
+            c0 = min(coarse, key=lambda t: t[0])[6]
+            fine = [r_ for r_ in (probe(d_) for d_ in range(c0 - 10, c0 + 11)) if r_]
+            cand = min(coarse + fine, key=lambda t: t[0])
+        if cand is None:
+            continue
+        score, err, sym, chord, h1, h2, _deg = cand
+        # 弦长必须对上笔宽、切点必须基本在正中，否则这不是横截面。
+        # 两档：严格 6%（半圆半径与半笔宽差 <6%，肉眼不可见）；一个字里一个都没有时
+        # 放宽到 12%——旧版差 11–12% 就是脓包，12% 是上限，不能再松。
+        tier = 0 if (err <= 0.06 and sym <= 0.20) else (1 if (err <= 0.12 and sym <= 0.25) else None)
+        if tier is None:
+            continue
+        pA, pB = h1[3], h2[3]
+        # 被删的那段取**短弧**。横截面把轮廓切成两段：一段是绕过钩尖的小块，
+        # 另一段绕整个字走一大圈。短的那个必然是钩。
+        # 以前用「弧里含笔尖」判定，但 `乙` 的 removed 两端在骨架上都是交叉点
+        # （度数 2/3），笔尖根本取不到，判据必然失败。
+        iA, iB = sidx(pA), sidx(pB)
+        len_ab = (cum[iB] - cum[iA]) % per
+        if len_ab <= per - len_ab:
+            hS, hE, del_len = h1, h2, len_ab
+        else:
+            hS, hE, del_len = h2, h1, per - len_ab
+        # 短弧也不能太长：不超过轮廓的四分之一、不超过 12 倍半宽。钩的弧长是
+        # 6–10 倍半宽（`九` 348.6 = 9.8r），按 6r 卡会把真钩挡掉；完全不卡时
+        # `乙` 一度删掉整条轮廓，包围盒跳 721.8。
+        if del_len > min(0.25 * per, 12.0 * rl):
+            continue
+        # 深度奖励：同样合身的横截面，取离钩根更远的那个，钩去得更干净。
+        full = score - 0.12 * arc[i] / r
+        C = ((pA[0] + pB[0]) / 2, (pA[1] + pB[1]) / 2)
+        u = _norm((pB[0] - pA[0], pB[1] - pA[1]))
+        rec = (full, C, u, (hS[1], hS[2], hS[3]), (hE[1], hE[2], hE[3]),
+               chord, arc[i], chord / 2)
+        (strict if tier == 0 else relaxed).append(rec)
+    pool = strict or relaxed
+    if not pool:
+        return None
+    return min(pool, key=lambda t: t[0])[1:]
 
 def _samples(contour, per=12):
     """把轮廓稠密采样成 [(seg, t, pt)]，段序即轮廓序。"""
@@ -902,7 +914,9 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
         while kept and _dist((kept[-1][0], kept[-1][1]), pS) < 1e-6:
             kept.pop()
         new = _despike([(pS[0], pS[1], True)] + cap + kept)
-        # 安全网：切完包围盒任何一边缩进超过 1.5r，说明切掉的是笔身而不是钩。
+        # 安全网：切完包围盒任何一边缩进超过 2.6r，说明切掉的是笔身而不是钩。
+        # 切点挪到钩之外以后，去钩本身就会让包围盒合法收缩 1.5–2r（`九` 64.6），
+        # 阈值仍按 1.5r 会把正常去钩全挡掉。
         # 正常去钩只让包围盒变化 10–31（钩长）；`了` 的假钩一度让 xmin 从 94
         # 跳到 266（+172），整条横撇被吃掉。宁可这次不切，也不能毁字。
         def _bbox(pts):
@@ -911,7 +925,7 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
             return min(xs), max(xs), min(ys), max(ys)
         _b0, _b1 = _bbox(contour), _bbox(new)
         _grow = max(abs(_b1[k] - _b0[k]) for k in range(4))
-        if _grow > 1.5 * r:
+        if _grow > 2.6 * r:
             report.append(("revert-bbox", round(_grow, 1)))
             diag.append(("revert", round(_grow, 1), "limit", round(1.5 * r, 1)))
             continue
