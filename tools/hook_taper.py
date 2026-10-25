@@ -99,17 +99,21 @@ def segments_of(contour):
         elif len(offs) == 1:
             segs.append(("quad", p0, [offs[0][0]], p1, j))
         else:
-            # 连续 off-curve：按 TT 隐含中点拆段，每段插入点 = 下一个 off 点的索引
-            pts = [(p0, None)] + offs + [(p1, j)]
-            for t in range(len(pts) - 2):
-                a, ai = pts[t]
-                c, ci = pts[t + 1]
-                b, bi = pts[t + 2]
-                if t + 2 < len(pts) - 1:
-                    mid = ((c[0] + b[0]) / 2, (c[1] + b[1]) / 2)
-                    segs.append(("quad", a, [c], mid, bi))
+            # 连续 off-curve：按 TT 隐含中点拆段，每段插入点 = 下一个 off 点的索引。
+            # 起点必须是**上一段的终点**（隐式中点），不能拿下一个 off 点当起点——
+            # 那样曲线整条被搬走，`乙` 左下角因此多出一个突起。
+            cur = p0
+            for t in range(len(offs)):
+                c = offs[t][0]
+                if t + 1 < len(offs):
+                    nxt = offs[t + 1][0]
+                    end = ((c[0] + nxt[0]) / 2, (c[1] + nxt[1]) / 2)
+                    at = offs[t + 1][1]
                 else:
-                    segs.append(("quad", a, [c], b, bi))
+                    end = p1
+                    at = j
+                segs.append(("quad", cur, [c], end, at))
+                cur = end
     return segs
 
 
@@ -325,7 +329,7 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
     sites = []
     for i in range(2, n_ - 1, 3):
         # 只能贴着钩根找：跑远了就是切笔身，`也` 因此在弧长 31 处切出 65% 笔宽的弦。
-        if not (0.0 <= arc[i] <= 1.05 * r):
+        if not (1.2 * r <= arc[i] <= 2.8 * r):
             continue
         # 切向必须按**弧长窗口**取中心差分，不能用相邻两点：
         # 骨架是 8 连通像素步进，相邻点差只有 (1,0)/(1,1)/(0,1) 几种，
@@ -350,8 +354,8 @@ def best_cut(contour, path, tip, r, hook_pts=None, widths=None):
     # 端头不外伸了，弦略宽只会让半圆略大一点，不会再鼓出脓包。
     best = None
     for lo, hi, arc_max in (
-            (0.92, 1.10, 1.05),
-            (0.60, 1.60, 1.60)):
+            (0.85, 1.15, 2.8),
+            (0.55, 1.65, 2.8)):
         for P, d, rl, arc_d in sites:
             if arc_d > arc_max * r:
                 continue
@@ -788,7 +792,14 @@ def process(font, gname, px=2000, margin_frac=0.08, verbose=True):
         n = (-d[1], d[0])
         # n 的朝向不固定（d 随钩的形状变号），会让 S/E 的左右关系随机翻转，
         # 进而把保留侧和丢弃侧搞反。统一成"指向钩尖那一侧"。
-        tip = to_font(int(removed[0][0]), int(removed[0][1]))
+        # 笔尖端 = `removed` 两端里骨架度数为 1 的那端。规则 A 的 removed[0]
+        # 是切除点，不翻过来会让「被删弧必须含笔尖」这条判据永远不成立。
+        _e0 = (int(removed[0][0]), int(removed[0][1]))
+        _e1 = (int(removed[-1][0]), int(removed[-1][1]))
+        _d0 = len(_adjacency(_e0, sk))
+        _d1 = len(_adjacency(_e1, sk))
+        _tip_px = _e0 if (_d0 == 1 and _d1 != 1) else (_e1 if (_d1 == 1 and _d0 != 1) else _e1)
+        tip = to_font(_tip_px[0], _tip_px[1])
         if (tip[0] - P[0]) * n[0] + (tip[1] - P[1]) * n[1] < 0:
             n = (-n[0], -n[1])
 
