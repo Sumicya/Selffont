@@ -1,150 +1,104 @@
+# 出包工作流：push（不限分支）与手动触发，出 Selffont-<版本> 模块包并清理超限产物与运行记录。
 name: Build
-# 出包工作流：只接 push（不限定分支）与 workflow_dispatch，不得接 pull_request、不得为
-# 「只在默认分支出包」加 branches 限定或 github.ref 守卫。
-#
-# 2026-10-14 教训（GLOBAL.md a8787a8）：此前这里写过「push 限默认分支 main」，理由是「调试 CI
-# 的推送不该吃号」——但会话分支本来就推不了默认分支、workflow_dispatch 又没有 actions: write，
-# 这条限定把会话侧唯一能拿到「真构建 + 真产物」的验证路径堵死了，还继续声称有验证；pr-check.yml
-# 只跑自检不出包，产出不了可装可跑的包，说它能替代验证是空话。规范新口径：写「不许做某事」之前
-# 先问这是不是唯一的验证/交付手段，是就不许禁，只能给它加口径——这里改成会话分支推送同样触发
-# 出包，会话分支与默认分支共用同一套命名与同一号源（见下），不另立号段、不给会话分支产物开
-# 豁免、不回溯删既存产物，当轮验证会话分支改动时就看这次运行产出的真实 artifact。
-#
-# 2026-10-14 号源从 run_number 改成 git 提交数（GLOBAL.md 240a214/c5ac12d，三仓统一）：总序号
-# = head 提交在本仓历史里的位次 git rev-list --count HEAD；当日序号 = head 提交在当日（UTC+8）
-# 提交序列里的位次 git rev-list --count --since=<当日0点> HEAD，取不到就是重出旧提交的包记 0，
-# 不写 1 冒充首包。号源不再挂 CI 运行，PR 运行天然不吃号，改工作流文件名也不会让号回头。硬
-# 前提：actions/checkout 必须 fetch-depth: 0（见下方 build job），浅克隆下提交数恒为 1。
-# pull_request 固定走独立的 pr-check.yml：号源改提交数后 PR 运行虽不再吃号，但同一提交被
-# push 与 pull_request 各出一次包会产出两个同名 artifact、互相覆盖，所以依然不接 pull_request
-# （真实根因见 pr-check.yml 顶部注释）。pr-check.yml 的 cleanup job 也真删(同仓 pull_request
-# 事件里 GITHUB_TOKEN 能拿到声明的写权限,会话推送到同仓开的 PR 即可触发,与这里共用同一份
-# .github/scripts/cleanup.py、同一个 concurrency group 串行),这个工作流不是唯一的真删入口。
+
 on:
   push:
   workflow_dispatch:
+
 env:
-  SEGMENTS: "5"   # 当前版本号段数(正常五段);号源改提交数后当日序号恒可算出(可能是 0),不会再退化四段
-  CLEANUP_APPLY: "true"   # 与 pr-check.yml 同值;清理 job 默认真删,权限缺口按 403 warning 单独降级
-permissions:
-  contents: read   # fetch-depth: 0 的 checkout 与 git rev-list 取数都只读本地克隆,不需要写
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  SEGMENTS: '5'
+  CLEANUP_APPLY: 'true'
+
 jobs:
   build:
-    name: Selfcheck / build / upload artifact
-    runs-on: ubuntu-24.04   # 钉住版本,不用 ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0   # 号源是提交数:浅克隆下 git rev-list --count HEAD 恒为 1,所有产物都会叫 .1.1
-      - uses: actions/setup-python@v7
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 准备 Python
+        uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-      - name: Install fonttools
+      - name: 安装字体工具
         run: python -m pip install -r requirements.txt
-      - name: Selfcheck (packager, metric normalization, module scripts)
+      - name: 内建自检
         run: python build.py --check
-      # 版本号在这一处算定:build.py --query-git 现场跑 git rev-list --count 取本仓提交数,
-      # 不查 CI 运行历史、不用 gh、不需要 GH_TOKEN。取不到数就停,不出包不上传。
-      # 本工作流不接 pull_request 事件(见上方 on:),到这一步时一定是 push(不限分支,含会话分支)
-      # 或 workflow_dispatch,不需要再用步骤级 if 挡——PR 校验在独立的 pr-check.yml 里跑。
-      - name: Build (version stamped)
-        run: python build.py --query-git
-      # 出包前核对命名一致性:产物名与 artifact 名统一 Selffont-<版本>,不合规范就不上传。
-      # 号源改提交数后当日序号恒可算出(可能是 0),CI 这条路径正常只出五段;四段只是 build.py
-      # 留给本地手工省略 --day 的退化格式,这里的正则兼容两种,跟 VERSION_RE / VERSION_RE4 一致。
-      - name: Stage artifact name (Selffont-<版本>)
+      - name: 取号并出包
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: python build.py --query-ci
+      - name: 确认产物名
         run: |
-          zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont*.zip' -print -quit)")
+          zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont-*.zip' -print -quit)")
           test -n "$zip_file"
-          ls -l "build/$zip_file"
           name="${zip_file%.zip}"
-          echo "$name" | grep -Eq '^Selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+(\.[0-9]+)?$' || {
-            echo "产物名不符合规范的版本格式(五段或退化四段):$name" >&2
+          echo "$name" | grep -Eq '^Selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+\.[0-9]+$' || {
+            echo "产物名不是五段规范版本：$name" >&2
             exit 1
           }
           echo "ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
-      # 包直出:artifact 本身就是可刷的模块包,不再 zip 套 zip——网页下载下来直接给管理器刷,
-      # 不用先解一层。upload-artifact 会把搜索路径的最近公共祖先当作包内根目录(官方 README),
-      # 所以上传目录内容 = 包内根就是 module.prop。代价:gh run download 会把内容摊进目标目录,
-      # 用 -D 指定一个空目录。
-      - name: Unpack for direct-flash artifact
+      - name: 解包为可直刷目录
         run: |
           rm -rf build/root
           unzip -q "build/${ARTIFACT_NAME}.zip" -d build/root
           test -f build/root/module.prop
           test -f build/root/customize.sh
-          find build/root -maxdepth 1 | sort
-      # 这一步只上传 Actions artifact，不创建 Release、tag 或正式 asset；Release/tag 的留存
-      # 清理由下方独立的 cleanup-releases job 执行，且只在默认分支运行、只拿 contents: write。
-      # Build 工作流只接 push(不限分支)与 workflow_dispatch；PR 校验在独立 pr-check.yml 里跑。
-      # 上传用 runner 自带令牌，不需要写权限。
-      - name: Upload module (Actions artifact)
+      - name: 上传产物
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: build/root
           retention-days: 5
           if-no-files-found: error
-  cleanup:
-    name: Clean up (naming / source / duplicate day-index / source-count / quantity)
+          overwrite: true
+
+  cleanup-artifacts:
     needs: build
-    # 每次出包成功（push 不限分支，或 workflow_dispatch）都跑清理，不按 github.ref 再做分支
-    # 限定——会话分支产出的 artifact 跟默认分支的同一套口径，没有豁免，也不该让它们的清理单独
-    # 晚一步。写权限来自工作流声明（push 事件里 GITHUB_TOKEN 对同仓同样拿得到），不经会话令牌、
-    # 不经人工去手动点。这不是唯一的真删入口——pr-check.yml 的 cleanup job 同样真删，会话推送到
-    # 同仓 PR 即可触发；两处共用同一份 .github/scripts/cleanup.py、同一个 concurrency group
-    # （selffont-artifacts）串行，不会同时跑互相打架。
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      actions: write        # 只删 Actions artifact 与 run;contents 保持只读,不碰 Release / tag
-      contents: read         # GLOBAL.md「保留」节明定:清理 job 必须 actions:write 加 contents:read 同时声明
+      actions: write
+      contents: read
     concurrency:
-      group: selffont-artifacts
+      group: selffont-cleanup
       cancel-in-progress: false
     steps:
-      # 2026-10-15 补 fetch-depth: 0（GLOBAL.md 129a292）：第五条判据「号源口径」要在本地跑
-      # git rev-list --count <head sha> 核对每个产物名里的总序号,浅克隆下目标 sha 可能根本不在
-      # 本地历史里,核验会误判成「不可核验」而放过旧口径产物——这正是 Selffont 4 个旧口径产物
-      # （.5.120/.4.119/.6.115/.5.114）之前一轮判据全过、一个都删不掉的根因之一。
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      # 真删:脚本与 pr-check.yml 的 cleanup job 共用同一份 .github/scripts/cleanup.py,
-      # 两处都是 CLEANUP_APPLY=true,判定即执行删除;脚本内部判据顺序与说明见该文件。
-      - name: Delete by criteria (命名口径 / 来源 / 重复当日序号 / 号源口径 / 数量)
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 清理超限产物与运行记录
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          KEEP: "5"
-          SEGMENTS: ${{ env.SEGMENTS }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
-          CLEANUP_SCOPE: artifacts
+          RUN_ID: ${{ github.run_id }}
+          CLEANUP_SCOPE: actions
         run: python3 .github/scripts/cleanup.py
+
   cleanup-releases:
-    name: Clean up (Release / tag)
     needs: build
-    if: github.ref_type == 'branch' && github.ref_name == github.event.repository.default_branch
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: write   # Release 与 tag 独立清理权限；不与 actions: write 同 job
+      contents: write
     concurrency:
-      group: selffont-artifacts   # 与所有 artifact/run 清理 job 共用同一锁
+      group: selffont-cleanup
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - name: 检出仓库
+        uses: actions/checkout@v7
         with:
-          fetch-depth: 0
-          persist-credentials: false   # contents:write 令牌不留在 git 配置中
-      - name: Delete excess releases and orphan tags
+          persist-credentials: false
+      - name: 清理多余 Release 与孤立 tag
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          KEEP: "1"
+          RUN_ID: ${{ github.run_id }}
           CLEANUP_SCOPE: releases
         run: python3 .github/scripts/cleanup.py

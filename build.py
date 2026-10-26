@@ -4,19 +4,17 @@
   pip install -r requirements.txt
   python3 build.py --check                       # 自检：无框架，assert 直跑，不下载不打包
   python3 build.py [--font X.ttf] [--base Y.zip] [--output O.zip]
-                   [--build 总序号] [--day 当日序号] [--date YY.M.D] [--query-git]
+                   [--build 总序号] [--day 当日序号] [--date YY.M.D] [--query-ci]
 
-版本号按全局规范：yy.m.d.当日序号.总序号（五段，展示不含 v），versionCode = 总序号。号源是
-本仓 git 提交数，与 CI 运行、工作流文件名、事件类型都无关（2026-10-14 由 run_number 改成
-提交数，依据 `selfs` `GLOBAL.md` `240a214`/`c5ac12d`：号源挂在 run 上时 PR 运行吃号、改工作流
-文件名号回头、并发运行竞态出重复当日序号，这些问题挂在提交上后天然消失，同一提交重跑得到
-同一个号）。总序号 = head 提交在本仓历史里的位次 `git rev-list --count HEAD`；当日序号 = head
-提交在当日（UTC+8，取号发生的这一刻）提交序列里的位次 `git rev-list --count --since=<今天
-0 点 UTC+8> HEAD`，head 提交不是今天推的就是 0（重出旧提交的包，不写 1 冒充当日首包），
-五段恒定、不退化四段。`--query-git` 现场跑这两条 git 命令取数（CI 里 `actions/checkout`
-必须 `fetch-depth: 0`，否则浅克隆下提交数恒为 1）；取不到数直接抛错，不编数、不留降级。
-本地打包也可以手工传 --date/--day/--build（本地不传 --day 按四段处理，这是手工覆盖专用的
-简化路径，跟 CI 的自动取数退化是两回事）。
+版本号按全局规范：yy.m.d.当日序号.总序号（五段，展示不含 v），versionCode = 总序号。号源只有
+一处：CI 运行数。总序号 = `build.yml` 本次运行的 `run_number` 原值，不做基线相减；当日序号
+（当日 = `run_started_at` 转 UTC+8）用差值锚定法算：取当日现存 `build.yml` 运行的最小
+`run_number`，与当日现存产物 `Selffont-yy.m.d.d0.r0` 反推出的 `r0 - d0 + 1`，两者取小作当日
+首条运行号 `R_first`（都没有就取当前 `run_number`），当日序号 = 当前 `run_number - R_first + 1`。
+失败运行同样占号，`pull_request` 运行永不计入。`--query-ci` 用 `gh api` 现场读数并打印 head
+SHA、run_id、run_number、R_first、当日序号与最终版本；取不到数直接抛错，不编数、不留降级。
+本地手工打包仍可传 --date/--day/--build（不传 --day 按四段处理，这是手工覆盖专用的简化
+路径，跟 CI 的自动取数退化是两回事）。
 
 自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
 全部现场从字体里读。主字体必须是含 wght 轴的可变字体——配置只出新语法（supportedAxes），
@@ -48,7 +46,7 @@ import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -641,7 +639,7 @@ def default_output(prop: str) -> Path:
     core = stamped.group(1) if stamped else ""
     if not (VERSION_RE.fullmatch(core) or VERSION_RE4.fullmatch(core)):
         raise ValueError(f"产物名需要规范版本号（五段，本地手工省略 --day 时退化四段），实际 version={core!r}："
-                         "先 --query-git 取数，或显式传 --date/--day/--build")
+                         "先 --query-ci 取数，或显式传 --date/--day/--build")
     return ROOT / "build" / f"{PROJECT}-{core}.zip"
 
 
@@ -666,12 +664,12 @@ def stamp_version(prop: str, build: str | None, day: str | None = None, date: st
     """盖戳：version = yy.m.d.[当日序号.]总序号（展示不含 v），versionCode = 总序号（KSU 靠它比新旧）。
 
     总序号、日期必填，缺一就抛错停在这里，调用方（build / CI）不出包、不上传——不编数，也不
-    静默产半成品。`--query-git` 现场取数时当日序号恒定可算出（可能是 0，表示重出旧提交的包），
-    不会是 None；四段退化只在本地手工省略 `--day` 时才会发生。
+    静默产半成品。`--query-ci` 现场取数时当日序号恒 ≥1（当日第几条 `build.yml` 运行），不会是 None；
+    四段退化只在本地手工省略 `--day` 时才会发生。
     """
     missing = [label for label, value in (("总序号", build), ("日期", date)) if not value]
     if missing:
-        raise ValueError(f"版本号缺少{'、'.join(missing)}：用 --query-git 现场取数，"
+        raise ValueError(f"版本号缺少{'、'.join(missing)}：用 --query-ci 现场取数，"
                          "或显式传 --build/--date（这两段不可豁免，不出非发行包）")
     check_number(build, "总序号", 1)
     if day is not None:
@@ -681,57 +679,104 @@ def stamp_version(prop: str, build: str | None, day: str | None = None, date: st
     return re.sub(r"^versionCode=.*$", f"versionCode={build}", prop, flags=re.M)
 
 
-def day_start(moment: datetime) -> datetime:
-    """当天（UTC+8）零点，换算成 UTC。"""
-    return moment.astimezone(CLOCK).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+def gh_json(endpoint: str, key: str) -> list[dict]:
+    """`gh api --paginate` 读一个分页端点，按 id 去重后返回列表。
 
-
-def git_command(args: list[str]) -> str:
-    """跑一条本地 git 命令（仓内），失败直接抛原始 stderr，不静默编数、不留降级。"""
-    command = ["git", *args]
-    result = subprocess.run(command, capture_output=True, text=True, cwd=ROOT)
-    if result.returncode != 0:
-        raise RuntimeError(f"{' '.join(command)} 退出码 {result.returncode}：{result.stderr.strip()}")
-    return result.stdout.strip()
-
-
-def git_rev_list_count(args: list[str]) -> int:
-    """`git rev-list --count <args>`，输出必须是十进制整数；不是就抛错，不编数。"""
-    value = git_command(["rev-list", "--count", *args])
-    if not value.isdigit():
-        raise RuntimeError(f"git rev-list --count {' '.join(args)} 输出不是整数：{value!r}")
-    return int(value)
-
-
-def git_head_sha() -> str:
-    """`git rev-parse HEAD`。"""
-    return git_command(["rev-parse", "HEAD"])
-
-
-def git_version_numbers() -> tuple[str, str, str]:
-    """号源：git 提交数（依据 `selfs` `GLOBAL.md` 2026-10-14 `240a214`/`c5ac12d`，三仓统一，
-
-    2026-10-14 之前用 `run_number`，已废弃——PR 运行吃号、改工作流文件名号回头、并发运行
-    竞态出重复当日序号，这些问题全部来自号源挂在 CI 运行而不是提交上）：
-
-    总序号 = head 提交在本仓历史里的位次：`git rev-list --count HEAD`。
-    当日序号 = head 提交在当日（UTC+8，「当日」= 本次构建发生的这一刻）提交序列里的位次：
-        `git rev-list --count --since=<今天 0 点 UTC+8> HEAD`。
-    head 提交不是今天推的（重出旧提交的包）时这个数天然是 0——不写 1 冒充当日首包，也不退化
-    成四段：号源挂在提交上后当日序号永远算得出来，不存在「查询没同步到」这类异常，五段恒定。
-    硬前提：CI 里 `actions/checkout` 必须 `fetch-depth: 0`，浅克隆下 `git rev-list --count HEAD`
-    恒为 1；两条 git 命令失败就直接抛，不留降级，调用方不出包、不上传。
+    翻页期间若有新对象插队，同一对象会在两页里各出现一次；按 id 去重避免它被当成两条。
+    取不到（无令牌、端点错、网络失败）直接抛，不用空列表冒充「没有历史」。
     """
-    head = git_head_sha()
+    result = subprocess.run(["gh", "api", "--paginate", endpoint], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh api {endpoint} 退出码 {result.returncode}：{result.stderr.strip()}")
+    rows, seen, index, raw = [], set(), 0, result.stdout
+    decoder = json.JSONDecoder()
+    while True:
+        while index < len(raw) and raw[index] in " \r\n\t":
+            index += 1
+        if index >= len(raw):
+            return rows
+        page, index = decoder.raw_decode(raw, index)
+        for row in page.get(key, []):
+            if row.get("id") not in seen:
+                seen.add(row.get("id"))
+                rows.append(row)
+
+
+def run_day(row: dict) -> date:
+    """运行开始时刻转 UTC+8 的日期；`run_started_at` 缺失（一直排队没真正开始）退回 `created_at`。"""
+    stamp = row.get("run_started_at") or row.get("created_at") or ""
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(CLOCK).date()
+
+
+def artifact_anchor(name: str, date: str) -> int | None:
+    """产物名 `Selffont-yy.m.d.d0.r0` 反推当日首条运行号 `r0 - d0 + 1`；口径不合返回 None。"""
+    version = name.split("-", 1)[1] if "-" in name else ""
+    parts = version.split(".")
+    if len(parts) != 5 or ".".join(parts[:3]) != date:
+        return None
+    try:
+        day, total = int(parts[3]), int(parts[4])
+    except ValueError:
+        return None
+    return total - day + 1 if day >= 1 and total >= day else None
+
+
+def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
+                       now: datetime) -> tuple[str, int, int, int]:
+    """差值锚定法取号：返回 (日期, 当日序号, 总序号, 当日首条运行号 R_first)。
+
+    总序号取 `run_number` 原值（同一 run 重试时 GitHub 不换 run_number，版本号自然不变）。
+    当日序号按差值锚定：当日现存 `build.yml` 运行的最小 `run_number`，与当日现存产物
+    `Selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，两者取小作 `R_first`（都没有就取当前
+    `run_number`），当日序号 = 当前 `run_number - R_first + 1`。失败运行同样占号，
+    `pull_request` 运行永不计入。锚点比当前号还大（旧运行已删）时钳到当前号，序号不小于 1。
+
+    纯函数：只吃 API 读到的数据，不碰网络也不碰 git，自检用合成数据覆盖各分支。
+    """
+    total = int(check_number(str(run_number), "总序号", 1))
+    moment = now.astimezone(CLOCK)
+    date = f"{moment.year % 100}.{moment.month}.{moment.day}"
+    today = moment.date()
+    anchors = []
+    for row in runs:
+        if row.get("event") == "pull_request" or not row.get("run_number"):
+            continue
+        try:
+            started = run_day(row)
+        except (TypeError, ValueError):
+            continue
+        if started == today:
+            anchors.append(int(row["run_number"]))
+    for row in artifacts:
+        anchor = artifact_anchor(row.get("name", ""), date)
+        if anchor is not None:
+            anchors.append(anchor)
+    first = min(min(anchors), total) if anchors else total
+    day = total - first + 1
+    check_number(str(day), "当日序号", 1)
+    return date, day, total, first
+
+
+def query_ci_version() -> tuple[str, str, str]:
+    """CI 现场取号：读 `build.yml` 运行列表与全仓产物列表，按差值锚定法算出三段版本。
+
+    取不到即抛：不降级、不编数。启动行打印 head SHA、run_id、run_number、R_first、当日序号
+    与最终版本，和产物名逐字可对。
+    """
+    repo = (os.environ.get("REPO") or os.environ.get("GITHUB_REPOSITORY") or "").strip()
+    run_number = (os.environ.get("RUN_NUMBER") or os.environ.get("GITHUB_RUN_NUMBER") or "").strip()
+    if not repo or not run_number.isdigit() or int(run_number) < 1:
+        sys.exit("--query-ci 只在 CI 里成立：REPO/GITHUB_REPOSITORY 与 "
+                           f"RUN_NUMBER/GITHUB_RUN_NUMBER 都要取到，实际 REPO={repo!r} "
+                           f"RUN_NUMBER={run_number!r}")
     now = datetime.now(timezone.utc).astimezone(CLOCK)
-    since = day_start(now).isoformat()
-    total_cmd, total = ["rev-list", "--count", "HEAD"], git_rev_list_count(["HEAD"])
-    day_cmd, day = ["rev-list", "--count", f"--since={since}", "HEAD"], git_rev_list_count([f"--since={since}", "HEAD"])
-    print(f"[取号] head={head} 总序号={total}（git {' '.join(total_cmd)}） "
-          f"当日序号={day}（git {' '.join(day_cmd)}） 取值时间={now.isoformat()}", file=sys.stderr)
-    return (f"{now.year % 100}.{now.month}.{now.day}",
-            check_number(str(day), "当日序号", 0),
-            check_number(str(total), "总序号", 1))
+    runs = gh_json(f"repos/{repo}/actions/workflows/build.yml/runs?per_page=100", "workflow_runs")
+    artifacts = gh_json(f"repos/{repo}/actions/artifacts?per_page=100", "artifacts")
+    date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now)
+    print(f"[取号] head={os.environ.get('GITHUB_SHA', '未提供')} "
+          f"run_id={os.environ.get('GITHUB_RUN_ID', '未提供')} run_number={total} R_first={first} "
+          f"当日序号={day} 版本={date}.{day}.{total}（UTC+8 {now:%Y-%m-%d %H:%M:%S}）", file=sys.stderr)
+    return date, str(day), str(total)
 
 
 # ---------------------------------------------------------------- 基础包（只取字体资源）
@@ -770,8 +815,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     warnings: list[str] = []
     if query:
         if build_num or day or date:
-            raise ValueError("版本号只认一个来源：--query-git 与 --build/--day/--date 不能混用")
-        date, day, build_num = git_version_numbers()  # 取数失败直接抛：不编数、不出非发行包；day 恒为数字串（可能是 "0"）
+            raise ValueError("版本号只认一个来源：--query-ci 与 --build/--day/--date 不能混用")
+        date, day, build_num = query_ci_version()  # 取数失败直接抛：不编数、不出非发行包；day 恒为数字串
     prop = stamp_version((ROOT / "module/module.prop").read_text(encoding="utf-8"),
                          build_num, day=day, date=date)
     output = Path(output) if output else default_output(prop)
@@ -1369,7 +1414,7 @@ def version_stamp():
     zero_day = stamp_version(prop, "42", day="0", date="26.9.30")
     assert "version=26.9.30.0.42" in zero_day, zero_day
     assert VERSION_RE.fullmatch("26.9.30.0.42")
-    # 四段只在本地手工省略 --day 时退化；CI 的 --query-git 自动取数恒有当日序号，不走这条路径。
+    # 四段只在本地手工省略 --day 时退化；CI 的 --query-ci 自动取数恒有当日序号，不走这条路径。
     degraded = stamp_version(prop, "42", day=None, date="26.9.30")
     assert "version=26.9.30.42" in degraded and "versionCode=42" in degraded, degraded
     assert VERSION_RE4.fullmatch("26.9.30.42")
@@ -1408,32 +1453,51 @@ def version_stamp():
 
 
 @check
-def version_numbers():
-    """取数口径：总序号与当日序号都来自本仓 git 提交数（`git rev-list --count`），不查 CI 运行历史。"""
-    assert day_start(datetime(2026, 10, 5, 0, 30, tzinfo=CLOCK)) == datetime(2026, 10, 4, 16, 0, tzinfo=timezone.utc)
-    head = git_head_sha()
-    assert re.fullmatch(r"[0-9a-f]{40}", head), f"HEAD 不是合法的 40 位 sha：{head!r}"
-    expect_head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip()
-    assert head == expect_head, (head, expect_head)
-    total = git_rev_list_count(["HEAD"])
-    assert total >= 1, "本仓库至少有一个提交（这次 checkout 本身）"
-    now = datetime.now(timezone.utc).astimezone(CLOCK)
-    since = day_start(now).isoformat()
-    day = git_rev_list_count([f"--since={since}", "HEAD"])
-    assert 0 <= day <= total, (day, total)
-    expect_day = subprocess.run(["git", "rev-list", "--count", f"--since={since}", "HEAD"],
-                                capture_output=True, text=True, cwd=ROOT).stdout.strip()
-    assert str(day) == expect_day, (day, expect_day)
-    # 非法 git 参数直接报错，不把报错信息当数字编出一个版本号。
-    try:
-        git_rev_list_count(["--bogus-flag-that-does-not-exist"])
-        raise AssertionError("非法 git 参数没有报错")
-    except RuntimeError:
-        pass
-    date, day_str, build_str = git_version_numbers()
-    assert re.fullmatch(r"\d{1,2}\.\d{1,2}\.\d{1,2}", date), date
-    assert day_str.isdigit(), day_str
-    assert build_str.isdigit() and int(build_str) == total, (build_str, total)
+def ci_version_numbering():
+    """取号口径：总序号取 `run_number` 原值，当日序号按差值锚定法算；PR 运行永不计入。"""
+    def run(number, started, event="push"):
+        return {"id": number, "run_number": number, "event": event, "run_started_at": started}
+
+    def art(name, ident):
+        return {"id": ident, "name": name}
+
+    now = datetime(2026, 10, 27, 9, 30, tzinfo=CLOCK)   # UTC+8 当天上午
+    today, yesterday = "26.10.27", "26.10.26"
+    # 1) 今天第一次运行：无历史运行、无产物，R_first 就是当前号，当日序号 1。
+    assert ci_version_numbers([], [], 210, now) == (today, 1, 210, 210)
+    # 2) 今天已有两条运行（含一次失败）：按最小 run_number 锚定，失败运行同样占号。
+    runs = [run(207, "2026-10-27T00:10:00Z"), run(209, "2026-10-27T00:30:00Z")]
+    assert ci_version_numbers(runs, [], 210, now) == (today, 4, 210, 207)
+    # 3) 昨天的运行不算今天：仍按今天首条起算。
+    assert ci_version_numbers([run(200, "2026-10-26T12:00:00Z")], [], 210, now) == (today, 1, 210, 210)
+    # 4) pull_request 运行永不计入。
+    assert ci_version_numbers([run(205, "2026-10-27T00:05:00Z", "pull_request")], [], 210, now) \
+        == (today, 1, 210, 210)
+    # 5) 产物反推锚点：26.10.27.3.500 → R_first=498，当前 503 就是当日第 6 条。
+    assert ci_version_numbers([], [art(f"Selffont-{today}.3.500", 1)], 503, now) \
+        == (today, 6, 503, 498)
+    # 6) 两个锚点取小：运行最小号 496 比产物反推的 498 更早。
+    assert ci_version_numbers([run(496, "2026-10-27T00:01:00Z")],
+                              [art(f"Selffont-{today}.3.500", 1)], 503, now) == (today, 8, 503, 496)
+    # 7) 段数不是五段、或日期不是今天的产物不参与锚定。
+    assert ci_version_numbers([], [art(f"Selffont-{today}.3", 1),
+                                   art(f"Selffont-{yesterday}.3.500", 2)], 210, now) \
+        == (today, 1, 210, 210)
+    # 8) 当日序号 0、总序号小于当日序号的畸形名忽略，不当锚点。
+    assert ci_version_numbers([], [art(f"Selffont-{today}.0.500", 1),
+                                   art(f"Selffont-{today}.5.3", 2)], 210, now) == (today, 1, 210, 210)
+    # 9) 锚点比当前号还大（旧运行已删）时钳到当前号，当日序号不小于 1。
+    assert ci_version_numbers([], [art(f"Selffont-{today}.3.600", 1)], 210, now) == (today, 1, 210, 210)
+    # 10) 日界按 UTC+8：UTC 10-27 16:30 = UTC+8 10-28 00:30，日期跨到 28 号，前一条 23:00 的运行不算。
+    late = datetime(2026, 10, 27, 16, 30, tzinfo=timezone.utc)
+    assert ci_version_numbers([run(300, "2026-10-27T15:00:00Z")], [], 301, late) \
+        == ("26.10.28", 1, 301, 301)
+    # 日期段格式：yy.m.d，月日不补零。
+    assert re.fullmatch(r"\d{2}\.\d{1,2}\.\d{1,2}", ci_version_numbers([], [], 1, now)[0])
+    # 产物名反推的边界：day=1 时 R_first 就是总序号本身。
+    assert artifact_anchor(f"Selffont-{today}.1.700", today) == 700
+    assert artifact_anchor(f"Selffont-{today}.2.700", today) == 699
+    assert artifact_anchor("Selffont-26.10.27", today) is None
 
 
 # ---------------------------------------------------------------- 火狐（Gecko）接入
@@ -1681,9 +1745,9 @@ def main() -> None:
     parser.add_argument("--build", help="总序号：版本号倒数第一段，同时写进 versionCode（默认读 $SELFFONT_BUILD）")
     parser.add_argument("--day", help="当日序号：不传就是四段版本 yy.m.d.总序号（默认读 $SELFFONT_DAY）")
     parser.add_argument("--date", help="版本日期 YY.M.D（默认读 $SELFFONT_DATE）")
-    parser.add_argument("--query-git", action="store_true",
-                        help="现场跑 git rev-list --count 取齐三段版本数据（总序号/当日序号=本仓提交数，"
-                             "不查 CI 运行历史、不用 gh）；取不到就报错停止（不出包、不上传），"
+    parser.add_argument("--query-ci", action="store_true",
+                        help="用 gh api 现场取号：总序号=本次 run_number，当日序号按差值锚定法算；"
+                             "不查 git 提交数；取不到就报错停止（不出包、不上传），"
                              "不与 --build/--day/--date 混用")
     parser.add_argument("--keep-web-fonts", action="store_true",
                         help="放行网页自带字体（图标字体等）；默认压成文渊")
@@ -1692,7 +1756,7 @@ def main() -> None:
         run_checks()
     else:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,
-              day=args.day, date=args.date, query=args.query_git,
+              day=args.day, date=args.date, query=args.query_ci,
               keep_web_fonts=args.keep_web_fonts)
 
 

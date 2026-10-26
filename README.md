@@ -95,7 +95,6 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py --check                  # 自检:无框架、无夹具,不下载不打包
-.venv/bin/python build.py --query-git               # 正式打包:现场跑 git rev-list --count 取数并盖戳
 .venv/bin/python build.py --build 47 --day 3 --date 26.10.6   # 或手工传三段(离线;缺一段就报错不出包)
 .venv/bin/python build.py --font 文件或URL --base 本地ZIP或URL
 .venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成文渊）
@@ -105,20 +104,20 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 **版本号（展示不含 `v`）**：五段 `yy.m.d.当日序号.总序号`；`versionCode` = 最后一段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
-- **号源 2026-10-14 由 `run_number` 改成 git 提交数**（依据 `selfs` `GLOBAL.md` `240a214`/`c5ac12d`，Qself/Gself/Selffont 三仓统一）：总序号 = head 提交在本仓历史里的位次 `git rev-list --count HEAD`；当日序号 = head 提交在当日（UTC+8，取号发生的这一刻）提交序列里的位次 `git rev-list --count --since=<当日0点 UTC+8> HEAD`。号源不挂 CI 运行、不挂工作流文件名、不挂事件类型，只挂本仓提交历史——`build.yml` 只接 `push`（不限分支，会话分支推送同样出包）与 `workflow_dispatch`；PR 校验是独立的 `pr-check.yml`（只接 `pull_request`），从不触碰取号。
-- **总序号**：本仓全部提交数，同一提交重跑（重试、再 dispatch、PR 再触发、改工作流文件名）得到同一个号，天然幂等——旧口径（`run_number`）挂在 CI 运行上时，PR 运行吃号、改工作流文件名号回头、并发运行竞态出重复当日序号，这些问题挂在提交上后全部消失。
-- **当日序号**：head 提交不是今天推的（重出旧提交的包）这个数天然是 0，不写 1 冒充当日首包，也不退化四段——号源挂在提交上后当日序号永远算得出来，五段恒定；四段只在本地手工省略 `--day` 时才会出现。
-- **硬前提**：CI 里 `actions/checkout` 必须 `fetch-depth: 0`，浅克隆下 `git rev-list --count HEAD` 恒为 1，所有产物都会叫 `.1.1`。
-- **本地不算号**：`--query-git` 现场跑本地 `git rev-list --count`，不查 CI 运行历史、不用 `gh`、不需要任何令牌；本地出包必须显式传齐 `--date/--build`（不传 `--day` 就是四段，`--day` 可以传 `0`），数的可追溯性由打包的人负责。
+- **号源只有一处：CI 运行数**。总序号 = `build.yml` 本次运行的 `run_number` 原值，不做基线相减；改工作流文件名或换号源后数值变小照常使用（设备端模块覆盖安装即可）。不读 git 提交数、不读时间戳、不读本地计数。
+- **当日序号用差值锚定法**：当日（`run_started_at` 转 UTC+8）现存 `build.yml` 运行的最小 `run_number`，与当日现存产物 `Selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，两者取小作当日首条运行号 `R_first`（都没有就取当前 `run_number`），当日序号 = 当前 `run_number - R_first + 1`。失败运行同样占号，PR 运行永不计入；同一 `run_id` 重试保持同一版本号。
+- **取号留痕**：`build.py --query-ci` 打印 head SHA、run_id、run_number、R_first、当日序号与最终版本，取不到即退出，不降级、不编数。
+- **五段恒定**：CI 一定有当日序号；四段只在本地手工省略 `--day` 时出现。
+- **本地不出 CI 号**：`--query-ci` 只在 CI 里成立，本地打包必须显式传齐 `--date/--day/--build`，数的可追溯性由打包的人负责。
 - `module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI 拆成两个工作流：`.github/workflows/build.yml`（出包，只接 `push`[不限分支，会话分支推送同样出包，这是会话侧唯一能拿到真实可装产物的验证路径] / `workflow_dispatch`）跑自检 + 一次构建并取号出包上传模块包本身为 Actions artifact；`.github/workflows/pr-check.yml`（PR 校验，只接 `pull_request`）的 `selfcheck` job 只跑自检，不取号、不出包、不上传，但它的 `cleanup` job 会真删超量/违规的 artifact 与 run（见下）——两者是不同工作流文件，号源不挂工作流文件，PR 运行再多也不影响版本号（同一提交若共用一个工作流文件会被 push 与 pull_request 各出一次包，产出两个同名 artifact 互相覆盖，这是拆文件的现行理由，不再是旧口径下的「吃号」）；artifact 名 = `Selffont-<版本>`，**artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷，不再 zip 套 zip**——构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容；上传前先核对产物名符合版本格式，`retention-days: 5` 只是时间兜底）。
+CI 固定两个工作流：`build.yml`（`Build`，只接 `push`[不限分支] / `workflow_dispatch`）三个 job——`build` 只读（`contents: read` + `actions: read`），取号出包上传；`cleanup-artifacts`（`needs: build` + `if: always()`）清产物与运行记录；`cleanup-releases`（`if: always()` 且限默认分支，只授 `contents: write`）清 Release 与孤立 tag。`pr-check.yml`（`PR check`，只接 `pull_request`）的 `check` job 只跑自检、不取号不出包，`cleanup-artifacts` job 不带 `needs`、始终运行。artifact 名 = `Selffont-<版本>`，**包内根目录就是 `module.prop`，网页下载下来可直接刷**（构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容），`retention-days: 5` 只是时间兜底，`overwrite: true` 让重试不撞名。
 
 清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；两个工作流顶层的 `SEGMENTS: "5"` 与 `CLEANUP_APPLY: "true"` 保持一致。
 
-- **artifact/run**：`build.yml` 每次成功出包后运行（不限分支）；`pr-check.yml` 的 PR 校验也运行。两处均声明 `actions: write` + `contents: read`，共用 `selffont-artifacts` concurrency 锁。artifact 按固定顺序检查版本段数、PR 来源、重复当日序号、`git rev-list --count <head_sha>` 号源和全仓数量；artifact 全仓最多保留 5 个，每个工作流的 run 最多保留最新 5 条，运行记录上限优先。超限的未完成 run 先取消，待完成后由下一轮删除；当前运行永不取消/删除。
+- **artifact/run**：两个工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py` 与同一个 `selffont-cleanup` concurrency 锁（`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`，只动 `Selffont-` 前缀的对象。artifact 五条判据按序执行：① 版本段数 = `SEGMENTS`；② 来源运行是 `pull_request` 一律删；③ 同日同当日序号按来源运行的 `run_started_at` 删旧留新；④ 号源口径——末段总序号必须等于来源运行的 `run_number`，切换过渡期全仓还没有新口径产物时暂留最新 1 个旧产物；⑤ 数量——全仓按 `created_at` 保留最新 5 个，且来源运行必须仍在所属工作流保留的最新 5 条内。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
 - **Release/tag**：`build.yml` 的独立 `cleanup-releases` job 只在默认分支运行，只声明 `contents: write`；保留最新一个 Release，删除不再关联保留 Release 的 `Selffont-` 前缀 tag。CI 不创建 Release、tag 或正式 asset。
-- **安全与失败处理**：所有待执行对象和端点先完整打印，再开始删除；所有 checkout 均 `fetch-depth: 0`。403 明确打印对象、端点和状态，标为未执行并继续；复核会注明清理未完成，不将权限缺口说成成功。403 以外的失败使 job 标红。Release/tag 清理删除 tag 前还会重新核对 Release 仍否引用该 tag，避免 Release 删除失败后误删其 tag。
+- **安全与失败处理**：所有待执行对象和端点先完整打印，再开始删除；checkout 一律默认浅克隆（取号与清理都只读 API，不再读 git 历史）。403 明确打印对象、端点和状态，标为未执行并继续；复核会注明清理未完成，不将权限缺口说成成功。403 以外的失败使 job 标红。Release/tag 清理删除 tag 前还会重新核对 Release 仍否引用该 tag，避免 Release 删除失败后误删其 tag。
 
 ```sh
 # 下载最近一次 build.yml 运行的 artifact；artifact 包内根目录直接是 module.prop，可直接刷
