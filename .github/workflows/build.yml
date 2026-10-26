@@ -46,7 +46,7 @@ jobs:
       - name: 解包为可直刷目录
         run: |
           rm -rf build/root
-          unzip -q "build/${ARTIFACT_NAME}.zip" -d build/root
+          unzip -oq "build/${ARTIFACT_NAME}.zip" -d build/root
           test -f build/root/module.prop
           test -f build/root/customize.sh
       - name: 上传产物

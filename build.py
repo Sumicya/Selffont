@@ -927,10 +927,18 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         for member in bundled:
             destination.writestr(member.filename, archive.read(member))
         # 同名字件只有一份，且固定用补充字体这一份（bundled 已在调用侧排掉同名的基础包副本）。
+        # 许可文本同样只写一次：多个补充字体共用同一份 OFL（实测三个来源都叫 NewUnicode-OFL.txt），
+        # 重复写会让 zip 里出现同名条目，解包时要人确认覆盖，CI 直接卡死。同名但内容不同就报错。
+        written_licenses: dict[str, bytes] = {}
         for supplemental in supplementals:
             destination.writestr(f"system/fonts/{supplemental['filename']}", supplemental["data"])
-            destination.writestr(f"licenses/{supplemental['license_filename']}",
-                                 supplemental["license_data"])
+            license_name = supplemental["license_filename"]
+            if license_name in written_licenses:
+                if written_licenses[license_name] != supplemental["license_data"]:
+                    raise ValueError(f"同名许可文本内容不同：{license_name}")
+                continue
+            written_licenses[license_name] = supplemental["license_data"]
+            destination.writestr(f"licenses/{license_name}", supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("module.prop", prop)
