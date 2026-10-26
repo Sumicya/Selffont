@@ -174,16 +174,66 @@ def D(a, b):
     return pathops.op(a, b, pathops.PathOp.DIFFERENCE)
 
 
-def _reversed_into(contour, pen):
-    """把一条轮廓反向画进 pen。
+def _mid(a, b):
+    return ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
 
-    不能用 `pathops.Path.reverse()`：实测它不改变绕向（反向前后 area 完全一样）。
-    用 fontTools 的 `ReverseContourPen`，它按 TrueType 的 qCurveTo 语义正确处理
-    隐含点（`qCurveTo(..., None)`），手写展开必错。
+
+def _ops_to_path(ops):
+    """TrueType 画法的事件流 → 显式 moveTo/quadTo 的 pathops.Path。
+
+    必须自己展开：`qCurveTo(..., None)` 是「闭合回起点」，而**以 qCurveTo 开头**的
+    轮廓没有显式起点，起点是首末两个控制点的中点（TrueType 的隐含 on-curve 点）。
+    直接把这些事件喂给 pathops 的笔，None 会被当成 (0,0)，每个反转过绕向的字形
+    都多出一条贯穿画面的斜线（实测圆被斜线切开，填充后只剩半个黑饼）。
+    """
+    out = pathops.Path()
+    cur = None
+    for op, args in ops:
+        if op == "moveTo":
+            out.moveTo(args[0][0], args[0][1])
+            cur = args[0]
+        elif op == "lineTo":
+            out.lineTo(args[0][0], args[0][1])
+            cur = args[0]
+        elif op == "qCurveTo":
+            pts = list(args)
+            closed = bool(pts) and pts[-1] is None
+            if closed:
+                pts = pts[:-1]
+                start = _mid(pts[0], pts[-1]) if cur is None else cur
+                out.moveTo(start[0], start[1])
+                cur = start
+            n = len(pts)
+            for k in range(n):
+                ctrl = pts[k]
+                end = cur if (closed and k == n - 1) else (
+                    _mid(pts[k], pts[k + 1]) if k + 1 < n else pts[k])
+                out.quadTo(ctrl[0], ctrl[1], end[0], end[1])
+                cur = end
+        elif op == "curveTo":
+            pts = list(args)
+            if cur is None:
+                out.moveTo(pts[0][0], pts[0][1])
+                cur = pts[0]
+            for k in range(0, len(pts) - 1, 2):
+                out.quadTo(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1])
+                cur = pts[k + 1]
+        elif op in ("closePath", "endPath"):
+            out.close()
+            cur = None
+    return out
+
+
+def _reversed(contour):
+    """把一条轮廓反向，返回新的 pathops.Path（绕向翻转，形状不变）。
+
+    不能用 `pathops.Path.reverse()`：实测它不改变绕向（反向前后面积完全一样）。
+    用 fontTools 的 `ReverseContourPen` 按 TrueType 语义反向，再经 `_ops_to_path`
+    展开成显式曲线。
     """
     rec = RecordingPen()
     _single(contour).draw(ReverseContourPen(rec))
-    rec.replay(pen)
+    return _ops_to_path(rec.value)
 
 
 def _orient(contour):
@@ -241,7 +291,6 @@ def canon(path):
         return path
 
     out = pathops.Path()
-    pen = out.getPen()
     for it in items:
         if it["absa"] < 1e-9:
             continue
@@ -252,10 +301,8 @@ def canon(path):
             if _contained(it["contour"], other["contour"]):
                 depth += 1
         want_negative = (depth % 2 == 0)
-        if want_negative == (it["orient"] < 0):
-            out.addPath(it["contour"])
-        else:
-            _reversed_into(it["contour"], pen)
+        out.addPath(it["contour"] if want_negative == (it["orient"] < 0)
+                    else _reversed(it["contour"]))
     return out
 
 
