@@ -85,7 +85,95 @@ NOTO_MUSIC_SOURCE = {
     "coverage_range": (0x1D100, 0x1D1FF),
     "minimum_outline_mappings": 200,
 }
-SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE,)
+# 覆盖补齐走上游（MakeFontsGreatAgain）的路子：不自己画字，把公开字库按 Unicode 版本
+# 分件投放，由 fonts.xml 补字区按顺序兜底。主字体是文渊，基底停在 Unicode 14 之前，
+# 下面这些码位在文渊里 0 覆盖（2026-10-26 实测），必须靠这一支。
+#
+# 许可证一律沿用各自的 OFL：New Unicode Replenish 与 Unicodia 用 MFGA 的 fonts/LICENSE-OFL
+# （同一份文本同时注明 Noto 作者与 Mercury13），Noto 系用 Google Fonts 的 OFL。
+NEW_UNICODE_LICENSE = {
+    "license_url": "https://api.github.com/repos/Numbersf/MakeFontsGreatAgain/git/blobs/2db76e6951b37fca03fbb33815e2076611b3ffe0",
+    "license_filename": "NewUnicode-OFL.txt",
+    "license_sha256": "0e54191f2800d4c915f27d693dcbeaff085523c07c5115809c85a743b8b0d459",
+    "license_accept": "application/vnd.github.raw",
+    "license_marker": "SIL OPEN FONT LICENSE",
+}
+
+NEW_UNICODE_18 = {
+    "filename": "Unicode18-new.ttf",
+    "url": "https://api.github.com/repos/Numbersf/MakeFontsGreatAgain/git/blobs/4314ad3d17e7f4f4e8f242c3ca31521c24c0ec13",
+    "sha256": "2d7e87acf5acd2dcff66ae12f6febc904b82f4c2ed3bab1ba7373a93904ccd81",
+    "accept": "application/vnd.github.raw",
+    "family": "New Unicode Replenish",
+    "coverage_range": (0xA7E2, 0x1FAFA),
+    "minimum_outline_mappings": 150,
+    **NEW_UNICODE_LICENSE,
+}
+NEW_UNICODE_17 = {
+    "filename": "Unicode17-new.ttf",
+    "url": "https://api.github.com/repos/Numbersf/MakeFontsGreatAgain/git/blobs/e8779062e40dd911eee2998495164a4caaf29171",
+    "sha256": "1b36637b45107d2cf550e36b58572d646b5ec0f35972a36e5f8077dc2dbf3cff",
+    "accept": "application/vnd.github.raw",
+    "family": "New Unicode Replenish",
+    "coverage_range": (0x1095A, 0x1CEF0),
+    "minimum_outline_mappings": 25,
+    **NEW_UNICODE_LICENSE,
+}
+# 楔形文字标点（U+12470..U+12474）：MFGA 的补字区用 NotoSansPro.otf 提供。
+NOTO_SANS_PRO_SOURCE = {
+    "filename": "NotoSansPro.otf",
+    "url": "https://api.github.com/repos/Numbersf/MakeFontsGreatAgain/git/blobs/a37c8e3bac787be941f7577127e3e6dbea1e19ef",
+    "sha256": "729c16402587bf8f565230d3676d8508340f7e1ad0ecf7848a3fbdbb151b1e62",
+    "accept": "application/vnd.github.raw",
+    "family": "Noto Sans Pro",
+    "coverage_range": (0x12470, 0x12474),
+    "minimum_outline_mappings": 5,
+    **NEW_UNICODE_LICENSE,
+}
+# 拉丁扩展与修饰符号的小缺口（U+208F、U+2E60..U+2E63、U+A7DD）：MFGA 补字区用 UnicodiaFunky。
+UNICODIA_FUNKY_SOURCE = {
+    "filename": "UnicodiaFunky.ttf",
+    "url": "https://api.github.com/repos/Mercury13/unicodia/git/blobs/8b63b24c77cd4a0a1531b5c71d00ba2289da69bc",
+    "sha256": "6ae19735dee1a7e64616de44a35e27e8329f80dff14171296173057e77bea18c",
+    "accept": "application/vnd.github.raw",
+    "family": "UnicodiaFunky",
+    "coverage_range": (0x208F, 0xA7DD),
+    "minimum_outline_mappings": 6,
+    **NEW_UNICODE_LICENSE,
+}
+# 单色轮廓 emoji：文本风格，兼容面最广，先落它。
+NOTO_EMOJI_SOURCE = {
+    "filename": "NotoEmoji.ttf",
+    "url": "https://api.github.com/repos/google/fonts/git/blobs/c2c26ab612a88a8610ff9cfbb89299bf2aea6c7a",
+    "sha256": "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551",
+    "accept": "application/vnd.github.raw",
+    "family": "Noto Emoji",
+    "license_filename": "NotoEmoji-OFL.txt",
+    "license_url": "https://api.github.com/repos/google/fonts/git/blobs/d09d3d0e09169f6747754e6b25faf5ba5ef6402d",
+    "license_sha256": "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b",
+    "license_accept": "application/vnd.github.raw",
+    "license_marker": "SIL OPEN FONT LICENSE Version 1.1",
+    "coverage_range": (0x1FA90, 0x1FAF8),
+    "minimum_outline_mappings": 80,
+}
+# 彩色 emoji（COLRv1）：补单色版没有的 U+1FA8E 起那批；老系统不支持 COLRv1 时自动落上一支。
+NOTO_COLR_EMOJI_SOURCE = {
+    "filename": "Noto-COLRv1.ttf",
+    "url": "https://api.github.com/repos/googlefonts/noto-emoji/git/blobs/d1c82373d26e6949d81bbaefa4323f1e19f77262",
+    "sha256": "b8e25ea68db82f9e4d0aee921f4420be2be39887bd5c893a2ad98710531f9d0c",
+    "accept": "application/vnd.github.raw",
+    "family": "Noto Color Emoji",
+    "license_filename": "NotoColorEmoji-OFL.txt",
+    "license_url": "https://api.github.com/repos/google/fonts/git/blobs/d09d3d0e09169f6747754e6b25faf5ba5ef6402d",
+    "license_sha256": "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b",
+    "license_accept": "application/vnd.github.raw",
+    "license_marker": "SIL OPEN FONT LICENSE Version 1.1",
+    "coverage_range": (0x1FA8E, 0x1FAF8),
+    "minimum_outline_mappings": 10,
+}
+SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE, NEW_UNICODE_18, NEW_UNICODE_17,
+                             NOTO_SANS_PRO_SOURCE, UNICODIA_FUNKY_SOURCE,
+                             NOTO_EMOJI_SOURCE, NOTO_COLR_EMOJI_SOURCE)
 
 # ---------------------------------------------------------------- 配置数据
 CARRIER = "Roboto-Regular.ttf"  # 输入 fonts.xml 的默认家族必须保留的度量空壳
@@ -246,13 +334,20 @@ def load_supplemental_fonts(sources: tuple[dict, ...], cache: Path) -> list[dict
                 cmap = font.getBestCmap() or {}
                 glyphs = font.getGlyphSet()
                 start, end = spec["coverage_range"]
+                # 彩色字体（COLR/COLRv1/CBDT/sbix）的基字形通常没有轮廓，墨在图层或位图里，
+                # 用 BoundsPen 数会把整支判成空。这类字件按「cmap 里有这个码位」计数。
+                color = any(tag in font for tag in ("COLR", "CBDT", "sbix"))
                 visible = set()
                 for codepoint, glyph_name in cmap.items():
-                    if start <= codepoint <= end:
-                        pen = BoundsPen(glyphs)
-                        glyphs[glyph_name].draw(pen)
-                        if pen.bounds is not None:
-                            visible.add(codepoint)
+                    if not start <= codepoint <= end:
+                        continue
+                    if color:
+                        visible.add(codepoint)
+                        continue
+                    pen = BoundsPen(glyphs)
+                    glyphs[glyph_name].draw(pen)
+                    if pen.bounds is not None:
+                        visible.add(codepoint)
         except Exception as error:
             raise ValueError(f"补充字体无法解析：{filename}: {error}") from error
         if family != spec["family"]:

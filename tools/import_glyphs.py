@@ -14,28 +14,40 @@ import argparse
 import sys
 
 from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.pens.recordingPen import DecomposingRecordingPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import Glyph
+from fontTools.ttLib.tables._g_l_y_f import GlyphCoordinates
 
 
 def _simple(glyph, glyf, glyph_set):
-    """composite 展开成简单字形。"""
+    """composite 展开成简单字形。
+
+    不能把 `TTGlyphPen` 直接喂给 `glyph.draw`：TTGlyphPen 有 addComponent，
+    复合字形会被原样写成新的复合字形，缩放时仍然报「composite 不能直接缩放」。
+    必须用 DecomposingRecordingPen 把部件真正展开成轮廓。
+    """
     if not glyph.isComposite():
         return glyph
+    rec = DecomposingRecordingPen(glyph_set)
+    glyph.draw(rec, glyf)
     pen = TTGlyphPen(glyph_set)
-    glyf[glyph.name] if False else None
-    glyph.draw(pen, glyf)
+    rec.replay(pen)
     return pen.glyph()
 
 
 def _scaled(glyph, factor):
+    """按 upm 比例缩放。composite 必须先经 `_simple` 展开再进来。
+
+    `glyph.coordinates` 是 GlyphCoordinates，不是可变点列表；逐点赋值会报
+    `'tuple' object does not support item assignment`。
+    """
     if factor == 1.0:
         return glyph
-    for point in glyph.coordinates:
-        point[0] = int(round(point[0] * factor))
-        point[1] = int(round(point[1] * factor))
-        if glyph.numberOfContours < 0:
-            raise ValueError("composite 不能直接缩放坐标")
+    if glyph.numberOfContours < 0:
+        raise ValueError("composite 不能直接缩放坐标")
+    glyph.coordinates = GlyphCoordinates(
+        [(x * factor, y * factor) for x, y in glyph.coordinates])
     return glyph
 
 
@@ -49,7 +61,12 @@ def import_chars(target_path, donor_path, out_path, chars):
     factor = tupm / dupm
     advance = target["hmtx"][target.getGlyphOrder()[1]][0]
 
+    # 可变表必须在改 glyphOrder 之前反序列化：gvar.decompile 会断言
+    # `len(glyphOrder) == glyphCount`，改完顺序再读必炸。
+    gvar = target["gvar"] if "gvar" in target else None
+
     done, skipped = [], []
+    order = list(target.getGlyphOrder())
     for ch in chars:
         cp = ord(ch)
         if cp in tcmap:
@@ -62,17 +79,28 @@ def import_chars(target_path, donor_path, out_path, chars):
         glyph = _simple(src, dglyf, dset)
         glyph = _scaled(glyph, factor)
         name = f"uni{cp:04X}"
-        while name in target.getGlyphOrder():
+        while name in order:
             name += "."
-        target.setGlyphOrder(target.getGlyphOrder() + [name])
+        order.append(name)
         tglyf[name] = glyph
-        tglyf.glyphOrder = target.getGlyphOrder()
         glyph.recalcBounds(tglyf)
-        target["hmtx"][name] = (advance, glyph.xMin)
+        # hmtx / vmtx 的存储都是 .metrics；CJK 目标字体带 vmtx，漏了保存就是 KeyError
+        for tag in ("hmtx", "vmtx"):
+            if tag in target:
+                target[tag].metrics[name] = (advance, glyph.xMin)
         for table in target["cmap"].tables:
-            if table.isUnicode():
-                table.cmap[cp] = name
+            # format 4 只能放 16 位码位，塞辅助平面会 OverflowError
+            if not table.isUnicode() or table.format not in (4, 12):
+                continue
+            if table.format == 4 and cp > 0xFFFF:
+                continue
+            table.cmap[cp] = name
         done.append((ch, name, glyph.numberOfContours))
+    if gvar is not None:
+        for _ch, new_name, _n in done:
+            gvar.variations.setdefault(new_name, [])
+    target.glyphOrder = order
+    tglyf.glyphOrder = order
     target.save(out_path)
     return done, skipped
 
