@@ -1,16 +1,22 @@
 # 当前字体审阅
 
-## 唯一当前新稿 · 2026-10-24 晚
+## 唯一当前轮 · 2026-10-26 覆盖补齐与二创四字
 
-[打开当前主图：Maruko 字根稿 · 214 部首 · 上=原 Maruko SC Regular，下=现代版](2026-10-24-modern-maruko-pipeline/roots-214.png)
+目录：[`2026-10-26-cjk-redraw/`](2026-10-26-cjk-redraw/README.md)
 
-- [字根稿放大 ×3：笔画最密的 12 个部首，查毛刺与圆头收笔](2026-10-24-modern-maruko-pipeline/roots-zoom.png)
-- [`入` 折角修复：整字 + 捺上边缘放大 ×5，原版 / 未磨平 / 磨平](2026-10-24-modern-maruko-pipeline/ru-kink.png)
-- [磨平有没有把直角磨圆：`丁卜刀力弓乙乃匚山小` 前后对比](2026-10-24-modern-maruko-pipeline/fair-check-corners.png)
-- [现代版 Maruko：做法、实测数字、三档字重、无钩为何默认关闭](2026-10-24-modern-maruko-pipeline/README.md)
+| 图 | 内容 |
+|---|---|
+| [`真字体渲染-24字形.png`](2026-10-26-cjk-redraw/真字体渲染-24字形.png) | 20 个未分配码位占位 + 4 个二创汉字，真字体渲染 |
+| [`20个未分配码位-自绘占位.png`](2026-10-26-cjk-redraw/20个未分配码位-自绘占位.png) | 占位字形放大 |
+| [`乙了子九-对Maruko.png`](2026-10-26-cjk-redraw/乙了子九-对Maruko.png) | 二创四字 vs Maruko 原版，同一窗口 |
 
-中间过程与已被取代的图（VF 候选 V1 总览、插值扫视、分段密度对照、笔宽规整、覆盖审计、
-豆腐块对照、上一版并集对照与同文对照）已按规范删除，git 历史可追溯。
+覆盖账：文渊底 20 + 补充字件并集 298 = **315 / 315**，缺失 0。
+
+## 已清出的历史轮
+
+2026-10-24 的 40 张过程图（`2026-10-24-modern-maruko-pipeline/`）已于 2026-10-27 全部清出工作树，
+那一轮的结论仍在同目录 `README.md` 里（纯文字），图用
+`git show 3b8c8bd:docs/round-preview/2026-10-24-modern-maruko-pipeline/<文件名>.png` 取回。
 
 上一轮的复核数据与结论（无图，纯文字）：
 

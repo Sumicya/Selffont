@@ -1,19 +1,13 @@
 # Maruko 字根稿 + 现代版流水线（2026-10-24）
 
-当前主图：[字根稿 · 214 部首 · `roots-214.png`](roots-214.png)（每组上 = 原 Maruko SC Regular，下 = 现代版）
-放大核图：[`roots-zoom.png`](roots-zoom.png)（笔画最密的 12 个部首放大 ×3）
-折角修复：[`ru-kink.png`](ru-kink.png)（`入` 整字 + 捺上边缘放大 ×5：原版 / 未磨平 / 磨平）
-直角误伤核图：[`fair-check-corners.png`](fair-check-corners.png)（`丁卜刀力弓乙乃匚山小` 磨平前后）
-Light 误伤核图：[`fair-check-light.png`](fair-check-light.png)（IoU 掉得最多的 6 字）
-端头放大核图：[`terminal-macro.png`](terminal-macro.png)（6000 px/em，端头/转角三版对照）
-端头圆度对照：[`ru-cap-g1.png`](ru-cap-g1.png)（`入` 端头：原版 / 旧拟合 / G1 原型）
-边缘细节对照：[`edge-detail-compare.png`](edge-detail-compare.png)（8 个简单字放大 3 倍）
-直角回归：[`check-corners-pipeline.png`](check-corners-pipeline.png)（`一卜口丁` 逐阶段）
-多边形诊断：[`polygon-diagnosis.png`](polygon-diagnosis.png)（顶点叠加：旧输出全是长直线）
-重描 vs 不重描：[`retrace-vs-direct.png`](retrace-vs-direct.png)（`龍` 三处：原版 / 重描后精简 / 直接精简原版）
-**FreeType 实测：[`freetype-native-vs-retrace.png`](freetype-native-vs-retrace.png)（`龍` 四处 + `龜` 两处：原生 / 重描）**
-密字逐处放大：[`dense-glyph-zoom.png`](dense-glyph-zoom.png)（`龍` 四处：原版 / 当前交付 / 真弧原型）
-真弧原型：[`arc-merge-caps.png`](arc-merge-caps.png)（`入` 端头：原版 / 全直线 / 真弧）
+> **本目录 40 张过程图已于 2026-10-27 全部清出工作树**，此文件只留文字结论。
+> 需要追溯某张图：`git show 3b8c8bd:docs/round-preview/2026-10-24-modern-maruko-pipeline/<文件名>.png > /tmp/<文件名>.png`。
+> 下文出现的 `xxx.png` 是当时的图名索引，不再内嵌，也不随仓库分发。
+
+当时的图名：`roots-214.png`（214 部首，上原版下现代版）、`roots-zoom.png`、`ru-kink.png`、
+`fair-check-corners.png`、`fair-check-light.png`、`terminal-macro.png`、`ru-cap-g1.png`、
+`edge-detail-compare.png`、`check-corners-pipeline.png`、`polygon-diagnosis.png`、
+`retrace-vs-direct.png`、`freetype-native-vs-retrace.png`、`dense-glyph-zoom.png`、`arc-merge-caps.png`。
 
 字体二进制不入库，只在 `/tmp/maruko-audit/`。
 
@@ -64,9 +58,9 @@ curve_simplify.py     曲线精简
 （IoU 对原 Maruko 同字重、700 px/em；磨平前点数 126–131。）
 
 直角、锐角没有被磨圆：`丁`/`卜`/`刀`/`力`/`弓`/`乙`/`乃`/`匚`/`山`/`小` 放大 1200 px
-逐字对比，上下两格看不出差别（[`fair-check-corners.png`](fair-check-corners.png)）。
+逐字对比，上下两格看不出差别（fair-check-corners.png（`fair-check-corners.png`））。
 Light 是掉得最多的一档，挑掉得最狠的 `隹`/`攴`/`弋`/`戈`/`毛`/`斗` 放到 1400 px，
-差异只在亚像素边缘（[`fair-check-light.png`](fair-check-light.png)）。
+差异只在亚像素边缘（fair-check-light.png（`fair-check-light.png`））。
 
 ### 1.3 无钩：默认关闭
 
@@ -215,7 +209,7 @@ G1 赢，`一` 的右端头被鼓成圆球、下边缘还被咬掉一块——�
 也就是说我们交付的"曲线精简"字体，实际上是一个**多边形字体**。放大后看到的一波一波、
 端头呈多边形，根因就在这里——不是容差不够小，是这条路根本不会产生曲线。
 
-![轮廓顶点叠加](polygon-diagnosis.png)
+（图 `polygon-diagnosis.png`，已清出工作树）
 
 左：旧 RDP 的 76 个顶点之间是长直线，明显离开白色墨迹；右：顶点间距短且落在边缘上。
 
@@ -230,7 +224,7 @@ G1 赢，`一` 的右端头被鼓成圆球、下边缘还被咬掉一块——�
 
 `入` 单字：76 段直线 → 23 段真弧、单段转角最大 88.3°，IoU 0.9796（旧版 0.9848）。
 
-端头确实变圆了（[`arc-merge-caps.png`](arc-merge-caps.png)），但**点数涨到 5.6 倍**、
+端头确实变圆了（arc-merge-caps.png（`arc-merge-caps.png`）），但**点数涨到 5.6 倍**、
 曲线占比只有 13.3%，还不够可用。原因查清了：合并是逐段贪心的，一旦遇到超差点就
 提前收手，所以绝大多数段退化成短直线；要真正提高曲线占比，得改成
 "以整条轮廓为对象、按累计转角分配分段"的拟合，而不是在 RDP 断点之间做局部合并。
@@ -282,8 +276,8 @@ G1 赢，`一` 的右端头被鼓成圆球、下边缘还被咬掉一块——�
 | 弧段合并（真弧）+ 容差 2.5 | 171 段 / 130 弧，边缘峰峰 3 px，端头变圆但边缘仍有波浪 |
 | 直接精简原版（不重描）+ 容差 2.5 | 245 段 / 0 弧，IoU 0.9854，比当前交付略好但仍全是直线 |
 
-图：[`retrace-vs-direct.png`](retrace-vs-direct.png)（原版 / 重描后精简 / 直接精简原版，三处放大）
-[`dense-glyph-zoom.png`](dense-glyph-zoom.png)（`龍` 四处 × 当前交付 / 真弧原型）
+图：retrace-vs-direct.png（`retrace-vs-direct.png`）（原版 / 重描后精简 / 直接精简原版，三处放大）
+dense-glyph-zoom.png（`dense-glyph-zoom.png`）（`龍` 四处 × 当前交付 / 真弧原型）
 
 ### 7.4 结论：道路方向要换
 
@@ -331,7 +325,7 @@ G1 赢，`一` 的右端头被鼓成圆球、下边缘还被咬掉一块——�
 新增 `tools/freetype_iou.py`（渲染 + IoU，30 行）锁住这个口径：测试里造一个同向重叠的
 `十`，断言重叠中心必须有墨迹。
 
-![FreeType 实测：原生 vs 重描](freetype-native-vs-retrace.png)
+（图 `freetype-native-vs-retrace.png`，已清出工作树）
 
 左列是删掉重描后的交付（原生轮廓），右列是此前的重描版。A 的下横下缘、B 的横画下缘、
 E/F 的弧边，右列都能看出一波一波的起伏，左列没有。
@@ -358,7 +352,7 @@ E/F 的弧边，右列都能看出一波一波的起伏，左列没有。
 **结论：端头改半圆不需要存在。** `round.py` 是为 Noto Sans SC 那种**平切**端头写的，
 用在 Maruko 上等于把已经圆的端头拆掉重画成折线——这正是此前「端头被咬块」的来路。
 
-![端头与真圆](cap-is-a-circle.png)
+（图 `cap-is-a-circle.png`，已清出工作树）
 
 红线是按上面参数画的拟合圆，四个字的墨迹边缘都贴着它走：`川` 顶端略微鼓出一点、
 `丰` 顶点有一处约 1 单位的平点，其余完全重合。
@@ -422,7 +416,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 - 有钩组 8 个全部命中（`乙`/`了`/`子`/`也`/`九`/`包`/`電`/`必`），
 - 对照组 8 个（`心`/`十`/`口`/`大`/`川`/`三`/`王`）**一个都没动**。
 
-![去钩前后](hook-cut-hybrid.png)
+（图 `hook-cut-hybrid.png`，已清出工作树）
 
 上排原版、下排切完。`包`、`乙` 的端头变成了干净的圆收笔；`也`、`九` 的钩只收掉
 卷回去那一小段，笔身长度没变。
@@ -455,7 +449,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 
 改完内腔保住了，但**切口两端还留着小毛刺**（`乙` 右下、`包`、`也`、`九` 都有）：
 
-![收笔重写现状](hook-cap-rewrite.png)
+（图 `hook-cap-rewrite.png`，已清出工作树）
 
 三行分别是原版 / 旧凸包收笔 / 新半圆收笔。根因是闸门连线不垂直于笔身方向——半圆在端点
 处的切线垂直于弦，笔身边缘却不一定跟弦垂直，两头就差出一个小三角。下一步要把切口的
@@ -480,7 +474,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 宽度加了一条硬门槛：两个交点必须落在 0.82–1.22 倍笔宽之间。配对代价的次优解
 （`乙` 第一处钩 31 对 64、`包` 第二处钩 381 对 63）在这里被挡掉，`包` 的多余尖刺因此消失。
 
-![根线收尖](hook-taper-root.png)
+（图 `hook-taper-root.png`，已清出工作树）
 
 上一排原版、下一排处理结果。钩全部去掉，切口没有断口，`九` 的收尖方向也是对的。
 
@@ -507,7 +501,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 不出钩根，它是整条笔画末端的连续外扬——切多深都只能靠轮廓弦长猜，切深了弦会变宽
 （`九` 3.0r 处 1.31×、`包` 1.25r 处 1.51×），端头跟着变粗成脓包。
 
-![切点位置与被切掉的部分](hook8-depth.png)
+（图 `hook8-depth.png`，已清出工作树）
 
 灰 = 原版、白 = 现版、红点 = 现切点两端、蓝点 = 另一侧。八个字都是**斜着横切**一刀，
 切掉的是外扬弧的一段，笔身剩下的部分仍带着原来的走势。
@@ -525,11 +519,11 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
   off-curve 点本身，正确应该是两点连线的中点（TrueType 隐含点）。`乙` 的轮廓因此被
   整条搬走，左下角凭空多出一个凸起。
 
-![整字对比](hook8-grid-v2.png)
+（图 `hook8-grid-v2.png`，已清出工作树）
 
 上排原版、下排处理结果。
 
-![端头对比](hook8-tip-v2.png)
+（图 `hook8-tip-v2.png`，已清出工作树）
 
 300 px IoU：`九` .9861、`乙` .9922、`子` .9830、`也` .9831、`包` .9748、`必` .9689、
 `電` .9853、`了` 1.0（安全网拦下，整字不动）。
@@ -540,7 +534,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 丢掉原轮廓，只留骨架，用半径 = 整字骨架半宽中位数的圆盘膨胀骨架，再把边界简化成
 直线段轮廓。端点是膨胀出来的自然半圆，没有钩尖。
 
-![骨架重建第一版](skeleton-rebuild-v1.png)
+（图 `skeleton-rebuild-v1.png`，已清出工作树）
 
 上排原版、下排按骨架重画。`九`/`乙`/`了`/`也` 形状接近、确实没有钩；但这一版是
 **全局等宽**，细笔画被中位数笔宽吃掉：`包` 的内框糊成一团、`必` 的「心」和 `電` 的
@@ -559,7 +553,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
   半径 = 半笔宽的标准半圆。
 - 顺手补了 `hmtx` lsb 同步（不补的话整字偏移，IoU 从 0.87 掉到 0.22）。
 
-![三方对比](three-way.png)
+（图 `three-way.png`，已清出工作树）
 
 上：原版。中：`hook_taper` 在原轮廓上切一刀（IoU 0.969–0.992）。下：骨架重建 v2
 （IoU 0.790–0.932）。骨架重建这一版真的把钩整条去掉了、端头也标准，但整体被
@@ -582,7 +576,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 | 子 | 78.6° / 81.6° | 0.97 | 53.0% | 缺口 |
 | 也 | 14.9° / 62.9° | 0.89 | **22.5%** | 缺口 |
 
-![缺口与脓包](hook-cut-gap-blister.png)
+（图 `hook-cut-gap-blister.png`，已清出工作树）
 
 绿线 = 弦（切口），蓝圈 = 扣上去的半圆，红点 = 两个切点。
 
@@ -631,9 +625,9 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 对照 12.5 那张表：弦/2r 从 0.89–1.12 收到全部 **1.000**，接缝角从 30–82° 收到 **0.3–17.5°**，
 半圆盘内墨迹从 22.5–53% 升到 **99.8–100%**。脓包与缺口在几何上都不成立了。
 
-![横截面切口](hook8-crosssection.png)
+（图 `hook8-crosssection.png`，已清出工作树）
 
-![端头特写](hook8-crosssection-zoom.png)
+（图 `hook8-crosssection-zoom.png`，已清出工作树）
 
 **`了`、`子` 两字仍未切。** 它们的钩根落在转角上，2.2r 窗口内找不到弦长对上笔宽、两端又对称
 的横截面（实测 `了` 1.88–2.01×、`子` 1.41–1.46×）。把窗口放到 4.5r 反而让 `乙` 从 .989 掉到 .924，
@@ -663,9 +657,9 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 | 切前 | .9274 | .9269 | 1.0000 | 1.0000 | .9503 | .9524 | .9491 | .9714 |
 | 切后 | **.9950** | **.9935** | **.9776** | **.9914** | **.9932** | **.9970** | **.9974** | **.9969** |
 
-![笔尖切](hook8-tipcut.png)
+（图 `hook8-tipcut.png`，已清出工作树）
 
-![端头特写](hook8-tipcut-zoom.png)
+（图 `hook8-tipcut-zoom.png`，已清出工作树）
 
 八个字的钩全部去掉，端头是半径等于半笔宽的标准半圆。轮廓最大转折角没有一处变差
 （`了` 85.2°→84.6°、`也` 80.5°→77.5°，其余持平）。
@@ -685,7 +679,7 @@ Maruko 6,582 + Plangothic 10 = 6,592，一个不少。
 拓扑一致，但**同一字在三字重下点数差到 2 倍**。所以切口不能只在 Regular 上算完直接套到
 Light/Medium：笔宽、钩长、横截面位置都随字重变。这一版只处理了 Regular，Light/Medium
 要各自跑一遍 `process`，否则 VF 插值时同一钩的切点对不上，会出现扭曲。
-![宽度硬门槛之后](hook-taper-v2.png)
+（图 `hook-taper-v2.png`，已清出工作树）
 
 **收笔：切口上直接扣一个标准半圆**
 
@@ -733,11 +727,11 @@ Light/Medium：笔宽、钩长、横截面位置都随字重变。这一版只�
 | 必 | ok 33.1 / 110 | 0.9684 |
 | 電 | ok 31.5 / 51 | 0.9853 |
 
-![8 字对照](hook8-grid.png)
+（图 `hook8-grid.png`，已清出工作树）
 
-![端头放大](hook8-terminal.png)
+（图 `hook8-terminal.png`，已清出工作树）
 
-![切掉的部分](hook8-removed.png)
+（图 `hook8-removed.png`，已清出工作树）
 
 **如实记，`了` 还没做**：
 
@@ -749,7 +743,7 @@ Light/Medium：笔宽、钩长、横截面位置都随字重变。这一版只�
 
 ### 12.4 数字
 
-![Maruko 的数字](maruko-digits.png)
+（图 `maruko-digits.png`，已清出工作树）
 
 Maruko 自带的 0–9 已经是圆头、粗细与汉字一致的软几何形，风格上跟正文同源；缺点是
 描线留下的轻微抖动（`2` 的肩、`3` 的上下弧、`5` 的平横都能看出一点点）。
@@ -765,7 +759,7 @@ Maruko 自带的 0–9 已经是圆头、粗细与汉字一致的软几何形，
 把原版和 12.7 的输出做固定框差分（同一坐标系、同一缩放），八个字的变化只有端头
 一千来个像素——钩一个都没少：
 
-![12.7 的真实差分](hook8-taper-actual-diff.png)
+（图 `hook8-taper-actual-diff.png`，已清出工作树）
 
 用 `hook_erase.find_hooks` 重新检测也证实：原版 10 处钩，12.7 的输出 **10 处**。
 IoU 从 .9274 涨到 .9950 不是因为钩没了，是因为刀口在端头削掉的那点像素碰巧让
@@ -822,9 +816,9 @@ S/E 的定位、方向、短弧选择、跨轮廓、配对闸……二十个阈�
   `了` −8.0%、`子` −5.4%（说明又切多了）。
 - 所以：**钩的墨是去掉了，端头还不行**。这一版不能算修好。
 
-![布尔切法的刀口](hook8-pathops-diff.png)
+（图 `hook8-pathops-diff.png`，已清出工作树）
 
-![端头特写：鼓包和细线](hook8-pathops-zoom.png)
+（图 `hook8-pathops-zoom.png`，已清出工作树）
 
 速度：栅格化 + 细化 0.7 s/字，每处钩 3 次布尔运算约 0.1 s；命令行跑 8 个字 21 s，
 其中约 12 s 是整字体存盘（4 万字），不是算法。
@@ -883,7 +877,7 @@ S/E 的定位、方向、短弧选择、跨轮廓、配对闸……二十个阈�
 半宽变化 ≤0.4 px（阈值 1.5），墨量全部在 0 ～ −12% 之间，八字全过。细线比持平
 （0.285→0.287），没有新增针状物。速度 8 字 22 s，其中约 12 s 是整字体存盘。
 
-![去钩后的端头](hook8-clean-tips.png)
+（图 `hook8-clean-tips.png`，已清出工作树）
 
 #### 还没覆盖的形态
 
