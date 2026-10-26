@@ -26,7 +26,10 @@ from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.reverseContourPen import ReverseContourPen
 from fontTools.pens.pointInsidePen import PointInsidePen
 
-HW = 31                    # 半笔宽
+HW = 31                    # 符号用半笔宽（62 笔宽）
+HW_CJK = 41                # 汉字半笔宽：从文渊实测「一」竖切 82 得出
+Y_TOP, Y_BOT = 960, 30     # 汉字字面上/下沿（文渊实测 y 162..999，扣掉一点留白）
+X_L, X_R = 60, 940         # 汉字字面左右沿（文渊实测 x 44..960）
 CX, CY = 500.0, 400.0      # 符号中心
 R_MAX = 300.0              # 外接半径上限
 
@@ -493,3 +496,128 @@ def glyphs():
 
 
 GLYPHS = glyphs()
+
+
+# ------------------------------------------------------------------ 汉字笔画基元
+# 二创汉字的规则（从 Maruko 里量出来的三条，见 docs/design-principles.md 2026-10-25）：
+#   ① 等宽笔画：半笔宽 31；
+#   ② 端头 = 半径等于半笔宽的标准半圆（stroke 的 ROUND_CAP 天然满足）；
+#   ③ 骨架定形，笔画沿骨架等宽展开。
+# 折角的圆要**内外都圆**，所以不能只靠 stroke 的圆角连接（那样内角仍是尖的）：
+# 在中线里先插入二次贝塞尔做圆角，再描边。这样中线本身 G1 连续，内外两侧都圆。
+
+def _unit(a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    n = math.hypot(dx, dy) or 1.0
+    return dx / n, dy / n
+
+
+def fillet(pts, r=55.0, max_turn_deg=170.0):
+    """中线圆角：折点处插入一段**真圆弧**，与两条直段相切。
+
+    早先的写法用「三段点 + 一个二次贝塞尔、控制点取折点」近似，两个致命问题：
+      1. 切线长直接取 t = r·tan(θ/2)·1.17，135° 的折角在 r=115 时算出 t≈256，
+         把横画右侧整段吃掉（`了` 的包围盒右边界从 731 掉到 634）；
+      2. 单段二次贝塞尔画 90° 以上的弧误差极大，弧顶会塌。
+    改成「求圆心 → 用 _arc_quads 分 ≤45° 段贴弧」，切线连续且半径就是 r。
+    """
+    pts = [tuple(map(float, q)) for q in pts]
+    if len(pts) < 3:
+        return poly(pts)
+    out = pathops.Path()
+    out.moveTo(*pts[0])
+    cur = pts[0]
+    for k in range(1, len(pts) - 1):
+        v, nxt = pts[k], pts[k + 1]
+        ux, uy = _unit(cur, v)
+        vx, vy = _unit(v, nxt)
+        cosang = max(-1.0, min(1.0, ux * vx + uy * vy))
+        turn = math.degrees(math.acos(cosang))
+        la = math.hypot(v[0] - cur[0], v[1] - cur[1])
+        lb = math.hypot(nxt[0] - v[0], nxt[1] - v[1])
+        if turn < 3.0 or turn > max_turn_deg or la < 2 or lb < 2:
+            out.lineTo(*v)
+            cur = v
+            continue
+        t = r * math.tan(math.radians(turn) / 2)
+        t = min(t, la * 0.45, lb * 0.45)
+        a_pt = (v[0] - ux * t, v[1] - uy * t)
+        b_pt = (v[0] + vx * t, v[1] + vy * t)
+        # 圆心：从折点沿两条边方向的角平分线，距离 r / cos(turn/2)
+        d1x, d1y = -ux, -uy
+        d2x, d2y = vx, vy
+        bx, by = d1x + d2x, d1y + d2y
+        bn = math.hypot(bx, by) or 1.0
+        bis = (bx / bn, by / bn)
+        dist = r / math.cos(math.radians(turn) / 2)
+        cx, cy = v[0] + bis[0] * dist, v[1] + bis[1] * dist
+        a0 = math.atan2(a_pt[1] - cy, a_pt[0] - cx)
+        a1 = math.atan2(b_pt[1] - cy, b_pt[0] - cx)
+        while a1 - a0 > math.pi:
+            a1 -= 2 * math.pi
+        while a0 - a1 > math.pi:
+            a1 += 2 * math.pi
+        segs = max(1, int(abs(math.degrees(a1 - a0)) / 45) + 1)
+        out.lineTo(*a_pt)
+        for _p0, c, b in _arc_quads(cx, cy, r, a0, a1, segs):
+            out.quadTo(c[0], c[1], b[0], b[1])
+        cur = b_pt
+    out.lineTo(*pts[-1])
+    return out
+
+
+def stroke_fillet(pts, r=90.0, width=2 * HW):
+    """按圆角中线描一条等宽笔画。"""
+    return thick(fillet(pts, r), width)
+
+
+# ------------------------------------------------------------------ 二创汉字
+# 字面：x 110..890，y -120..820；基线 0；与 CJK 全角一致，advance 1000。
+
+def _vline_top(y, x=560.0, top=705.0, cut=95.0):
+    """竖画的顶端：从横画中线往上一段就停，避免圆头鼓出横画上沿。"""
+    return (x, top)
+
+
+def g_4E59():
+    """乙 —— 横 → 斜撇 → 横，一笔连续中线，无钩。
+
+    文渊原版末横末端回卷成钩。这里骨架只有横、斜、横，等宽 82，
+    折角是半径 48 的切线圆弧，端头是半径 41 的标准半圆。
+    """
+    return stroke_fillet([(X_L, 790), (720, 790), (300, 290), (820, 290)],
+                         r=48, width=2 * HW_CJK)
+
+
+def g_4E86():
+    """了 —— 横撇与竖是**一条**连续中线：横 → 斜撇 → 转竖，竖末无钩。
+
+    文渊原版的骨架就是这样（放大核对过）：横从左上走到右上，斜撇向左下，
+    到字面中部转成竖，一直到底，末端带一个回卷的钩。这里只去掉钩，
+    竖以半径 41 的标准半圆收头，其余按同一骨架重画。
+    """
+    return stroke_fillet([(X_L, 790), (720, 790), (390, 430), (390, Y_BOT + 40)],
+                         r=48, width=2 * HW_CJK)
+
+
+def g_5B50():
+    """子 —— 横撇 + 竖（无钩）+ 长横。"""
+    # 与「了」同一条骨架：横 → 斜撇 → 转竖；另加一长横穿过竖。
+    return U(stroke_fillet([(100, 800), (720, 800), (390, 440), (390, Y_BOT + 40)],
+                           r=48, width=2 * HW_CJK),
+             stroke_fillet([(150, 300), (X_R, 300)], r=0, width=2 * HW_CJK))
+
+
+def g_4E5D():
+    """九 —— 撇 + 横折弯，无钩。
+
+    撇从横画的左端**下方**起笔（y=640 是横的中线，减掉半笔宽才是它的下沿），
+    早先取 760 高出横太多，撇在横上探出一截还带出小尖。
+    """
+    # 撇要真正穿出横画、明确伸到横画上方，才读成「丿」。
+    # 起点压在横画末端附近（x 720~770、y 600 上下）时，两个圆头并集会鼓成一坨，
+    # 放大后就是一个圆疙瘩——这正是主人说的「突起」。抬高到 830 并右移到 800，
+    # 撇与横画是干净交叉，端头是独立的标准半圆。
+    return U(stroke_fillet([(800, 830), (250, 110)], r=0, width=2 * HW_CJK),
+             stroke_fillet([(230, 640), (720, 640), (720, 200), (X_R, 130)],
+                           r=48, width=2 * HW_CJK))
