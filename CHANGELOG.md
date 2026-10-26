@@ -5,6 +5,7 @@
 - **号源**：版本号回到 CI 运行数——总序号 = `build.yml` 本次运行的 `run_number` 原值，当日序号按差值锚定法（当日现存运行的最小 `run_number` 与当日产物 `Selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，取小作 `R_first`）。`build.py` 删掉全部 `git rev-list`/`rev-parse` 取数函数，`--query-git` 换成 `--query-ci`，自检改为 10 组合成数据的纯函数用例。
 - **工作流**：`build.yml` 拆成 `build`（只读取号出包）/`cleanup-artifacts`（`needs: build` + `if: always()`）/`cleanup-releases`（`if: always()` 且限默认分支，仅 `contents: write`）三个 job；`pr-check.yml` 改为 `check` + `cleanup-artifacts`。顶部注释压到 5 行内，步骤名改中文短语，去掉 `fetch-depth: 0`。
 - **清理脚本**：`.github/scripts/cleanup.py` 重写为全仓统一接口（`GH_TOKEN/REPO/RUN_ID/SEGMENTS/CLEANUP_APPLY/CLEANUP_SCOPE`），artifact 第四判据改为「末段总序号 == 来源运行的 `run_number`」，删掉全部 git 命令调用，两处清理共用 `selffont-cleanup` 锁，403 打 warning、非 403 当轮红。
+- **构建**：基础包自带同名但内容不同的补充字体（实测 `NotoSansPro.otf`）不再中止构建，改为按本仓固定、带许可与覆盖区间声明的那份打包并记警告；同名字件只进包一份。
 - **字体配置**：`fonts.xml` 把 `NotoEmoji.ttf` 从 `NotoUnicode.otf` 与 `NotoMusic-Regular.ttf` 之间挪到 Noto Music 之后，修掉连红四轮的 `supplemental_font_reference`。
 
 ## 2026-10-25 · 去钩只留横/竖/斜，端头不留残余

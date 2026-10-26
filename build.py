@@ -856,14 +856,19 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         referenced = set(references)
         member_by_file = {PurePosixPath(member.filename).name: member for member in members}
         extra_by_file = {extra["filename"]: extra for extra in supplementals}
+        extra_names = {extra["filename"] for extra in supplementals}
         for extra in supplementals:
             filename = extra["filename"]
             if references.count(filename) != 1:
                 raise ValueError(f"补充字体必须在 fonts.xml 中恰好引用一次：{filename}")
             member = member_by_file.get(filename)
             if member and hashlib.sha256(archive.read(member)).hexdigest() != extra["sha256"]:
-                raise ValueError(f"基础包已有同名但内容不同的补充字体：{filename}")
-        bundled = [member for member in members if PurePosixPath(member.filename).name in referenced]
+                # 基础包自带同名文件但版本不同（实测 MFGA 基础包里的 NotoSansPro.otf 与本仓固定的
+                # 那份不是同一版）。以本仓固定、带许可与覆盖区间声明的那份为准：同名字件一律只用
+                # 补充字体这一份，基础包里的旧副本不打包——记警告，不静默二选一。
+                warnings.append(f"基础包自带同名但内容不同的 {filename}，改打包本仓固定的那份。")
+        bundled = [member for member in members if PurePosixPath(member.filename).name in referenced
+                   and PurePosixPath(member.filename).name not in extra_names]
 
         # 火狐 pref 尾链：火狐的逐字回退不读 fonts.xml，逐字兜底时全清单乱序扫描，选中的字体和系统
         # 不同（花体/生僻字符两副面孔）。把补充字库的内部家族名按 fonts.xml 顺序追加到每条名单末尾，
@@ -875,14 +880,15 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                 continue
             done.add(fname)
             member = member_by_file.get(fname)
-            if member:
+            if fname in extra_by_file:
+                # 同名字件以补充字体为准（上面已把基础包里的旧副本排除在打包之外），家族名也取它的。
+                family = extra_by_file[fname]["family"]
+            elif member:
                 try:
                     with TTFont(io.BytesIO(archive.read(member)), lazy=True) as font:
                         family = font["name"].getDebugName(16) or font["name"].getDebugName(1)
                 except Exception:  # 坏字件跳过，不影响构建
                     continue
-            elif fname in extra_by_file:
-                family = extra_by_file[fname]["family"]
             else:
                 continue  # 设备自带（读不到内部名），交给系统
             if family and family not in families:
@@ -920,10 +926,9 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as destination:
         for member in bundled:
             destination.writestr(member.filename, archive.read(member))
-        bundled_names = {PurePosixPath(member.filename).name for member in bundled}
+        # 同名字件只有一份，且固定用补充字体这一份（bundled 已在调用侧排掉同名的基础包副本）。
         for supplemental in supplementals:
-            if supplemental["filename"] not in bundled_names:
-                destination.writestr(f"system/fonts/{supplemental['filename']}", supplemental["data"])
+            destination.writestr(f"system/fonts/{supplemental['filename']}", supplemental["data"])
             destination.writestr(f"licenses/{supplemental['license_filename']}",
                                  supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
