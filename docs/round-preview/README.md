@@ -6,7 +6,9 @@
 
 | 图 | 内容 |
 |---|---|
-| [`二创329字-对Maruko.png`](2026-10-26-cjk-redraw/二创329字-对Maruko.png) | 二创 329 字 vs Maruko 原版（灰=母版，蓝=二创，黑=重合） |
+| [`覆盖-CJK基本区.png`](2026-10-26-cjk-redraw/覆盖-CJK基本区.png) | CJK 基本区 20,977 字逐码位收录情况（绿=进字体，橙=闸门剔除） |
+| [`并排24字-对Maruko.png`](2026-10-26-cjk-redraw/并排24字-对Maruko.png) | 左 Maruko / 右 二创，抽样 24 字 |
+| [`二创329字-对Maruko.png`](2026-10-26-cjk-redraw/二创329字-对Maruko.png) | 早期手工复核的 329 字 vs Maruko 原版（灰=母版，蓝=二创，黑=重合） |
 | [`新增182字-对Maruko.png`](2026-10-26-cjk-redraw/新增182字-对Maruko.png) | 本轮新增的 182 字 |
 | [`放大8字-对Maruko.png`](2026-10-26-cjk-redraw/放大8字-对Maruko.png) | 新批逐字放大 8 个（看端头与交叉） |
 | [`围框字12-对Maruko.png`](2026-10-26-cjk-redraw/围框字12-对Maruko.png) | 以前取不出的 12 个围框/多部件字 |

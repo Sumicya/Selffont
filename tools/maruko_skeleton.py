@@ -28,7 +28,7 @@ from PIL import Image, ImageDraw
 from skimage.morphology import skeletonize
 
 UPM = 1000
-SS = 2                      # 超采样
+SS = 1                      # 栅格化倍率（1 = 每单位 1 像素；邻居阈值 1.5/SS 跟着走）
 BOX = (-40, -160, 1040, 900)
 HW = 33.0                   # 半笔宽：Maruko「一」竖切实测笔宽 66/67
 
@@ -83,7 +83,19 @@ def _area(poly):
     return a * 0.5
 
 
-def rasterize(path: Path, cp: int, box=BOX):
+_FONT_CACHE = {}
+
+
+def _font(path):
+    """同一进程里每个字体只解析一次（全表解码约 0.1 s/字，20k 字就是半小时）。"""
+    key = str(path)
+    if key not in _FONT_CACHE:
+        font = TTFont(key)
+        _FONT_CACHE[key] = (font, font.getBestCmap(), font.getGlyphSet())
+    return _FONT_CACHE[key]
+
+
+def rasterize(path: Path, cp: int, box=None):
     """字形 → 布尔位图。
 
     字腔（`口`/`日`/`田` 的内圈、`路` 里那个「口」）**必须留空**。早先每个轮廓都按
@@ -94,14 +106,11 @@ def rasterize(path: Path, cp: int, box=BOX):
     """
     import pathops
 
-    font = TTFont(str(path))
-    cmap = font.getBestCmap()
+    font, cmap, glyphs = _font(path)
     if cp not in cmap:
-        font.close()
         return None, None
     pen = RecordingPen()
-    font.getGlyphSet()[cmap[cp]].draw(pen)
-    font.close()
+    glyphs[cmap[cp]].draw(pen)
     pp = pathops.Path()
     pen.draw(pp.getPen())
     pp.simplify(fix_winding=True, keep_starting_points=False)
@@ -110,8 +119,16 @@ def rasterize(path: Path, cp: int, box=BOX):
     polys = _flatten(spen.value)
     if not polys:
         return None, None
+    # 只栅格化这个字的包围盒（外扩 30 单位）：整框 4.6M 像素里有六成是空白，
+    # 而骨架化与距离变换都是按像素数计费的。
+    if box is None:
+        bx0 = min(min(x for x, _ in q) for q in polys) - 30
+        bx1 = max(max(x for x, _ in q) for q in polys) + 30
+        by0 = min(min(y for _, y in q) for q in polys) - 30
+        by1 = max(max(y for _, y in q) for q in polys) + 30
+        box = (max(BOX[0], bx0), max(BOX[1], by0), min(BOX[2], bx1), min(BOX[3], by1))
     x0, y0, x1, y1 = box
-    img = Image.new("L", (int((x1 - x0) * SS), int((y1 - y0) * SS)), 0)
+    img = Image.new("L", (max(1, int(round((x1 - x0) * SS))), max(1, int(round((y1 - y0) * SS)))), 0)
     d = ImageDraw.Draw(img)
     # simplify 已经把绕向规范化：最大面积那个定「外」的方向，同向填实、反向挖空。
     areas = [abs(_area(q)) for q in polys]
@@ -122,10 +139,13 @@ def rasterize(path: Path, cp: int, box=BOX):
     return img, box
 
 
-def analyze(path: Path, cp: int):
-    """栅格化 + 距离变换 + 骨架，返回字体单位下的骨架点与实测半笔宽。"""
+def analyze(path: Path, cp: int, box=None):
+    """栅格化 + 距离变换 + 骨架，返回字体单位下的骨架点与实测半笔宽。
+
+    `box` 留空时只栅格化这个字的包围盒（快 1.6 倍）；要跟整框对齐的位图就传 BOX。
+    """
     from scipy import ndimage
-    img, box = rasterize(path, cp)
+    img, box = rasterize(path, cp, box)
     if img is None:
         return None
     a = np.asarray(img) > 128
@@ -138,9 +158,16 @@ def analyze(path: Path, cp: int):
     return dict(skeleton=pts, half_width=half, mask=a, box=box, dist=dist)
 
 
-def _graph(points, radius=0.75):
-    """骨架点 → 8 邻接图（半径 0.75 = 只连像素的 8 邻居，不用笔宽，避免捷径短路）。"""
+def _graph(points, radius=None):
+    """骨架点 → 8 邻接图（只连像素的 8 邻居，不用笔宽，避免捷径短路）。
+
+    阈值必须跟着栅格化倍率走：SS=2 时邻居距离 0.5 / 0.707，取 1.5/SS（=对角距离的 1.06 倍）
+    对角邻居；写死 0.75 的话 SS=1.5 的对角距离 0.943 连不上，骨架退化成 4 连通、
+    笔画断成一截一截（实测墨量比掉到 0.19）。
+    """
     from scipy.spatial import cKDTree
+    if radius is None:
+        radius = 1.5 / SS
     pts = np.asarray(points, dtype=float)
     pairs = cKDTree(pts).query_pairs(radius, output_type="ndarray")
     adj = {i: set() for i in range(len(pts))}
@@ -715,7 +742,7 @@ def strokes(path: Path, cp: int, hw=HW, tol=3.0, step=4.0):
     return dict(strokes=out, half_width=hw, measured=r["half_width"], box=r["box"])
 
 
-def measure_halfwidth(mask, rs, s, r_hint):
+def measure_halfwidth(mask, rs, s, r_hint, box=BOX):
     """笔画中段横截面半宽的中位数。
 
     骨架的距离变换在端头附近偏小，直接拿它的中位数当半宽会把笔画画细 2–3 单位
@@ -741,8 +768,8 @@ def measure_halfwidth(mask, rs, s, r_hint):
             d = 0.0
             while d < 2.0 * r_hint:
                 q = origin + nrm * sgn * (d + 0.5)
-                x = int(round((q[0] - BOX[0]) * SS))
-                y = int(round((BOX[3] - q[1]) * SS))
+                x = int(round((q[0] - box[0]) * SS))
+                y = int(round((box[3] - q[1]) * SS))
                 if not (0 <= y < mask.shape[0] and 0 <= x < mask.shape[1]) or not mask[y, x]:
                     break
                 d += 0.5
@@ -889,7 +916,7 @@ def bezier_strokes(path: Path, cp: int, hw=None, dot_r=None):
             continue
         raw.append((rs, s, L))
         if L > 2.0 * hint:
-            probes.append(measure_halfwidth(mask_of(r), rs, s, hint))
+            probes.append(measure_halfwidth(mask_of(r), rs, s, hint, r["box"]))
     if not raw:
         return None
     half = float(np.median(probes)) if probes else hint

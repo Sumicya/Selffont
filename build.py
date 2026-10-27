@@ -173,6 +173,16 @@ SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE, NEW_UNICODE_18, NEW_UNICODE_17,
                              NOTO_SANS_PRO_SOURCE, UNICODIA_FUNKY_SOURCE,
                              NOTO_EMOJI_SOURCE, NOTO_COLR_EMOJI_SOURCE)
 
+# 二创汉字字库：数据在 tools/design_cjk.bin（Maruko 骨架量出来的中线，SIL OFL 1.1），
+# 构建时描边成轮廓、编成一份独立的 OTF，作为**单独的 family** 排在主字体之前。
+# 单独成族是硬要求：configure_fonts 的注释里记着真机结论——同一个 family 里混
+# supportedAxes 可变字体与静态字体会让 ColorOS 16 开机卡第一屏。
+CJK_DATA = ROOT / "tools" / "design_cjk.bin"
+CJK_FONT_NAME = "SelffontCJK-Regular.otf"
+CJK_FAMILY = "Selffont CJK"
+CJK_LICENSE = ROOT / "LICENSES" / "MarukoGothic-OFL.txt"
+CJK_LICENSE_NAME = "MarukoGothic-OFL.txt"
+
 # ---------------------------------------------------------------- 配置数据
 CARRIER = "Roboto-Regular.ttf"  # 输入 fonts.xml 的默认家族必须保留的度量空壳
 PRIMARY_FAMILIES = {"sans-serif", "sans-serif-condensed", "serif"}
@@ -524,6 +534,67 @@ def rename_font(data: bytes, family: str) -> bytes:
 
 # ---------------------------------------------------------------- fonts.xml 生成
 
+def cjk_glyphs() -> dict[int, dict]:
+    """读二创汉字数据（码位 → 半宽 + 笔画中线）；文件不在就返回空，构建退回纯宿主。"""
+    if not CJK_DATA.exists():
+        return {}
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import design_cjk
+    return design_cjk.load()
+
+
+def build_cjk_font(glyphs: dict[int, dict]) -> bytes:
+    """中线 → 轮廓 → 一份独立的 CFF/OTF；码位、前进宽度全部按 upm 1000 写死。
+
+    用 CFF 而不是 glyf：中线是三次贝塞尔，CFF 直接存三次，不用 cu2qu 降阶，
+    两万字也不用等转换。
+    """
+    import io as _io
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import design_cjk
+    from fontTools.pens.t2CharStringPen import T2CharStringPen
+
+    order = [".notdef"]
+    cmap: dict[int, str] = {}
+    charstrings = {}
+    for codepoint in sorted(glyphs):
+        name = f"uni{codepoint:04X}"
+        order.append(name)
+        cmap[codepoint] = name
+        pen = T2CharStringPen(1000, None)
+        design_cjk.outline(glyphs[codepoint]).draw(pen)
+        charstrings[name] = pen.getCharString()
+    charstrings[".notdef"] = T2CharStringPen(1000, None).getCharString()
+
+    builder = FontBuilder(1000, isTTF=False)
+    builder.setupGlyphOrder(order)
+    builder.setupCharacterMap(cmap)
+    builder.setupCFF(
+        "SelffontCJK-Regular",
+        {"FullName": "Selffont CJK Regular", "FamilyName": CJK_FAMILY, "Weight": "Regular"},
+        charstrings, {},
+    )
+    builder.setupHorizontalMetrics({name: (1000, 0) for name in order})
+    builder.setupHorizontalHeader(ascent=880, descent=-120)
+    builder.setupNameTable({
+        "familyName": CJK_FAMILY, "styleName": "Regular",
+        "uniqueFontIdentifier": "Selffont CJK Regular 1.0",
+        "fullName": "Selffont CJK Regular", "psName": "SelffontCJK-Regular",
+        "version": "Version 1.000",
+        "copyright": "Derived from Maruko Gothic (max32002/maruko-gothic, SIL OFL 1.1).",
+        "licenseDescription": "SIL Open Font License 1.1",
+    })
+    builder.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWinAscent=880, usWinDescent=120,
+                     sxHeight=500, sCapHeight=700, achVendID="SLFF")
+    builder.setupPost()
+    buffer = _io.BytesIO()
+    builder.save(buffer)
+    return buffer.getvalue()
+
+
 def supported_axes(ladder: list[dict]) -> str | None:
     """可变字体的 supportedAxes 值（Android 15+ 只认 wght / wght,ital）；静态字体返回 None。
 
@@ -579,7 +650,8 @@ def is_cjk_locale(tag: str | None) -> bool:
                for part in (tag or "").split(",") if part.strip())
 
 
-def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> bytes:
+def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
+                    cjk: bool = False) -> bytes:
     """主字体接管全部主家族、CJK 语言区与默认区；空壳留在度量家族；匿名字形回退紧随默认家族。
 
     输出统一是新语法（supportedAxes,Android 15+ 运行时实例化）：安装脚本只投放 font_fallback*.xml,
@@ -617,9 +689,19 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict]) -> byte
             swap_fonts(family, font_name, ladder)  # CJK 语言区：清空的族换主字体单字件，混有其他字件的族不动
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
             replace_fonts(family, font_name, ladder)  # 语言区只换字件，lang/variant 属性原样保留
+    # 二创汉字族：单独一个 family，排在主字体之前，让它覆盖到的码位先落这里。
+    # 不混进任何已有族（混 supportedAxes 与静态字件会卡开机），也不带 lang 属性
+    # （CJK 语言区族只能是纯主字体族，见 swap_fonts 的注释）。
+    index = list(root).index(default) + 1
+    if cjk:
+        own = ET.Element("family")
+        node = ET.SubElement(own, "font", weight="400", style="normal")
+        node.text = CJK_FONT_NAME
+        root.insert(index, own)
+        index += 1
     fallback = ET.Element("family")
     replace_fonts(fallback, font_name, ladder)
-    root.insert(list(root).index(default) + 1, fallback)
+    root.insert(index, fallback)
     for family in list(root.findall("family")):  # 清完不要的字体后空掉的家族：空节点没有意义，删
         if not family.findall("font"):
             root.remove(family)
@@ -803,7 +885,8 @@ def font_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 def build(base: str | None = None, font: str | None = None, output: Path | None = None,
           build_num: str | None = None, day: str | None = None, date: str | None = None,
           query: bool = False, keep_web_fonts: bool = False,
-          supplemental_font_sources: tuple[dict, ...] | None = None) -> list[str]:
+          supplemental_font_sources: tuple[dict, ...] | None = None,
+          cjk: bool = True) -> list[str]:
     """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。
 
     supplementals=None 使用仓库固定的 OFL 来源；显式空 tuple 仅供离线自检夹具使用。
@@ -849,8 +932,11 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         if pruned:
             warnings.append(f"剪除空壳映射 {pruned} 个（上游声称覆盖但字形空白），这些字落到回退链。")
 
+        # 二创汉字字库：数据 → 轮廓 → 一份独立 OTF，作为单独 family 排在主字体之前。
+        glyphs = cjk_glyphs() if cjk else {}
+        cjk_font = build_cjk_font(glyphs) if glyphs else b""
         # 只出新语法（Android 15+ 的 font_fallback.xml）；库存 fonts.xml 不再替换。
-        xml = configure_fonts((ROOT / "fonts.xml").read_bytes(), name, ladder)
+        xml = configure_fonts((ROOT / "fonts.xml").read_bytes(), name, ladder, cjk=bool(glyphs))
         xml_root = ET.fromstring(xml)
         references = [(node.text or "").strip() for node in xml_root.iter("font")]
         referenced = set(references)
@@ -902,13 +988,16 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
         config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
-        write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals)
+        write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals,
+                     cjk_font)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}")
     print(f"  主字体 {face['family']!r} → {RENAME}（{name},{len(ladder)} 档）")
     print(f"  补充字库 {len(bundled)} 个基础字体 + {len(supplementals)} 个固定许可外部字体；"
           "fonts.xml 其余引用由设备自带（Noto/OEM，不打包）")
+    print(f"  二创汉字 {len(glyphs)} 字 / {len(cjk_font) / 1e6:.1f} MB（{CJK_FAMILY}，排在主字体之前）"
+          if glyphs else "  二创汉字：无数据，跳过")
     print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成文渊")
     for message in warnings:
         warn(message)
@@ -917,7 +1006,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
                  name: str, packaged: bytes, xml: bytes, prop: str, config: str,
-                 supplementals: list[dict]) -> None:
+                 supplementals: list[dict], cjk_font: bytes = b"") -> None:
     """写模块 zip：被配置引用的基础包字体 + 固定许可外部字体 + 主字体 + 原生 KSU 模块布局。
 
     包内只有一份字体配置 font_fallback.xml（新语法）：安装脚本把它投放到系统里存在的
@@ -940,6 +1029,9 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
             written_licenses[license_name] = supplemental["license_data"]
             destination.writestr(f"licenses/{license_name}", supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
+        if cjk_font:
+            destination.writestr(f"system/fonts/{CJK_FONT_NAME}", cjk_font)
+            destination.writestr(f"licenses/{CJK_LICENSE_NAME}", CJK_LICENSE.read_bytes())
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("module.prop", prop)
         destination.writestr("geckoview-config.yaml", config)  # 静态模板 + 构建期尾链
@@ -1232,6 +1324,7 @@ def build_end_to_end():
 
         def test_build(**kwargs):
             kwargs.setdefault("supplemental_font_sources", ())
+            kwargs.setdefault("cjk", False)   # 自检夹具不跑两万字描边
             return build(**kwargs)
         fonts_dir = tmp / "fonts"
         fonts_dir.mkdir()
@@ -1746,6 +1839,48 @@ def run_checks() -> None:
         print(f"{failed} 个检查失败")
         sys.exit(1)
     print(f"{len(CHECKS)} 项全部通过")
+
+
+@check
+def cjk_font():
+    """二创汉字字库：数据能读、能编成 OTF、在配置里单独成族且排在主字体之前。
+
+    只用 3 个字验管线，不在这里跑两万字（--check 要能几秒跑完）。
+    """
+    import io as _io
+    assert CJK_DATA.exists(), f"缺少二创汉字数据：{CJK_DATA}"
+    assert CJK_LICENSE.exists() and b"SIL OPEN FONT LICENSE" in CJK_LICENSE.read_bytes(), \
+        "二创字体必须随包带 OFL 文本（母版 Maruko 是 SIL OFL 1.1）"
+    glyphs = cjk_glyphs()
+    assert len(glyphs) >= 19000, f"二创汉字只读到 {len(glyphs)} 字"
+    sample = {cp: glyphs[cp] for cp in (0x4E00, 0x53E3, 0x9F98) if cp in glyphs}
+    data = build_cjk_font(sample)
+    with TTFont(_io.BytesIO(data)) as font:
+        assert font["head"].unitsPerEm == 1000
+        assert font["name"].getDebugName(1) == CJK_FAMILY
+        assert set(font.getBestCmap()) == set(sample), "码位没有一对一落进 cmap"
+        assert all(font["hmtx"][name][0] == 1000 for name in font.getGlyphOrder())
+        glyph_set = font.getGlyphSet()
+        for name in font.getGlyphOrder()[1:]:
+            pen = BoundsPen(glyph_set)
+            glyph_set[name].draw(pen)
+            assert pen.bounds is not None, f"{name} 没有轮廓"
+    xml = configure_fonts((ROOT / "fonts.xml").read_bytes(), PRIMARY_NAME,
+                          [{"axes": [("wght", 400)]}], cjk=True)
+    root = ET.fromstring(xml)
+    holders = [family for family in root.findall("family")
+               if any((node.text or "").strip() == CJK_FONT_NAME for node in family.findall("font"))]
+    assert len(holders) == 1, "二创字件必须恰好出现在一个 family 里"
+    alone = holders[0]
+    assert len(alone.findall("font")) == 1, "二创字件不能与别的字件同族（真机会卡开机）"
+    assert alone.get("lang") is None and alone.get("name") is None, "二创族放在默认区，不带语言/名字"
+    order = list(root)
+    primary_family = next(child for child in order
+                          if child.tag == "family"
+                          and any((node.text or "").strip() == PRIMARY_NAME
+                                  for node in child.findall("font")))
+    assert order.index(alone) < order.index(primary_family), \
+        "二创族必须排在主字体之前，否则永远轮不到它"
 
 
 def main() -> None:

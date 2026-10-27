@@ -143,6 +143,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 | 内容 | 大小量级 |
 | --- | --- |
 | 主字体（文渊圆体 VF，归一度量后的安装副本） | 约 46 MiB |
+| 二创汉字字库（`SelffontCJK-Regular.otf`，构建期由 `tools/design_cjk.bin` 现编） | 约 20 MiB |
 | 补充字库（`fonts.xml` 引用、基础包里有的那几个：Plangothic、Unicode*-New、NotoSansPro、ZDigit 等） | 约 54 MiB |
 | 配置与脚本（`font_fallback.xml`、`customize.sh`、火狐配置） | 不到 0.1 MiB |
 
@@ -157,9 +158,15 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 - MFGA 基础包只取字体资源，绝不执行其代码（归属见 `LICENSES.md`）。
 - 主字体必须能被 fontTools 解析且含 `wght` 轴；`.ttf`/`.otf`/`.ttc` 之外的后缀、静态字体、缺空壳的基础包都直接拒绝。
 
+### 二创汉字字库（进生产）
+
+自绘的 CJK 汉字字件 `SelffontCJK-Regular.otf` 随模块发布：笔画中线由母版 Maruko Gothic（SIL OFL 1.1）量出，构建时用 pathops 按 2×半笔宽、圆端头描边，再编成 CFF/OTF。它在 `font_fallback.xml` 里**单独一个 `<family>`、排在主字体之前**——二创覆盖到的汉字先落二创，其余照旧落文渊；不塞进任何已有族（同族混可变字体与静态字体会卡开机，2026-10-07 真机结论）。
+
+覆盖范围与判据见[当前 Maruko 审阅入口](docs/round-preview/README.md)：收字走四条结构闸门（面积比、轮廓数、包围盒、笔画数），局部缺陷靠抽样放大图。尚未做：Light / Medium 两档字重、扩展 A/B 区、真机渲染验收。
+
 ### 字形研究候选（非生产）
 
-[当前 Maruko 审阅入口](docs/round-preview/README.md) 只展示一张清楚标注的新稿：SC Regular 的 62 字实际笔宽样本、全映射曲线重新拟合，以及 Maruko Jamo 组合 Hangul 原型；[研究文档入口](docs/README.md) 汇总范围和审计。全映射控制点减少不等于全字库笔画简化；当前仍是静态研究候选，不接入生产构建。Light / Medium、TC / JP、KR 地区 Hanja、全字库视觉验收与可变字体构建尚未完成。
+[研究文档入口](docs/README.md) 汇总 SC Regular 的笔宽样本、全映射曲线重新拟合与 Jamo 组合原型等过程材料；这些是研究记录，不接入生产构建。
 
 ### 未验证项的真机清单
 
