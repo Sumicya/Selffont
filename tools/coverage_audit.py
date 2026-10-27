@@ -60,9 +60,12 @@ def main() -> int:
           f"缺失 {len(missing)}  → 覆盖 {len(union_ink)}/{total}")
     if missing:
         print("缺失:", " ".join(f"U+{cp:05X}" for cp in missing))
-    reserved = [cp for cp in union_ink if cp in UNASSIGNED]
+    reserved = [cp for cp in TARGETS if cp in UNASSIGNED]
+    drawn = [cp for cp in reserved if cp in union_ink]
     if reserved:
-        print(f"其中 {len(reserved)} 个是 Unicode 尚未分配的码位（自绘占位）")
+        print(f"其中 {len(reserved)} 个是 Unicode 尚未分配的码位，本库不自绘")
+        if drawn:
+            print("  已由某字件画出:", " ".join(f"U+{cp:05X}" for cp in drawn))
     return 0 if not missing else 2
 
 

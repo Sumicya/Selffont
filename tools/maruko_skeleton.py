@@ -425,21 +425,143 @@ def strokes(path: Path, cp: int, hw=HW, tol=3.0, step=4.0):
     return dict(strokes=out, half_width=hw, measured=r["half_width"], box=r["box"])
 
 
-def stroke_outline(stroke_list, hw=HW):
-    """中线 → 轮廓：2×半宽、圆端头、圆转角，再并成一条路径。
+def measure_halfwidth(mask, rs, s, r_hint):
+    """笔画中段横截面半宽的中位数。
 
-    圆端头 + 圆转角意味着轮廓是「中线的闵可夫斯基和（与半径 hw 的圆）」，
+    骨架的距离变换在端头附近偏小，直接拿它的中位数当半宽会把笔画画细 2–3 单位
+    （6× 放大时母版灰边会从四周露出来）。这里改成量横截面：沿笔身每 8 单位取一点，
+    垂直切线量两侧墨迹边界的距离，取 (左+右)/2 的中位数。
+    """
+    rs = np.asarray(rs, float)
+    s = np.asarray(s, float)
+    L = float(s[-1])
+    vals = []
+    for a in np.arange(2.0 * r_hint, L - 2.0 * r_hint, 8.0):
+        i = int(np.searchsorted(s, a))
+        i = min(max(i, 2), len(rs) - 3)
+        t = rs[i + 2] - rs[i - 2]
+        n = np.hypot(*t)
+        if n < 1e-9:
+            continue
+        t = t / n
+        nrm = np.array([-t[1], t[0]])
+        origin = rs[i]
+        lr = []
+        for sgn in (1.0, -1.0):
+            d = 0.0
+            while d < 2.0 * r_hint:
+                q = origin + nrm * sgn * (d + 0.5)
+                x = int(round((q[0] - BOX[0]) * SS))
+                y = int(round((BOX[3] - q[1]) * SS))
+                if not (0 <= y < mask.shape[0] and 0 <= x < mask.shape[1]) or not mask[y, x]:
+                    break
+                d += 0.5
+            lr.append(d)
+        if lr[0] + lr[1] > 0.6 * r_hint:
+            vals.append(0.5 * (lr[0] + lr[1]))
+    return float(np.median(vals)) if vals else r_hint
+
+
+def spline_beziers(points, smooth_units=1.0, k=3):
+    """中线点列 → 三次贝塞尔段（每段 4 个控制点，首尾相接）。
+
+    先用平滑 B 样条拟合（总残差上界 n·smooth_units²，即平均每点偏 ≤1 单位），
+    再把内部节点补到 k 重，于是每段的 4 个控制点直接就是贝塞尔控制点。
+    中线因此 G1 连续——描边后不会留下折线拼接的波纹，这正是前几版「不平滑」的来源。
+    """
+    from scipy.interpolate import BSpline, splprep
+
+    P = np.asarray(points, float)
+    if len(P) < k + 1:
+        return None
+    d = np.hypot(*(np.diff(P, axis=0).T))
+    P = P[np.concatenate([[True], d > 1e-9])]
+    if len(P) < k + 1:
+        return None
+    tck, _ = splprep([P[:, 0], P[:, 1]], s=len(P) * smooth_units ** 2, k=k)
+    t, c, kk = tck
+    bs = BSpline(np.asarray(t), np.asarray(c).T, kk)
+    uq, mult = np.unique(t, return_counts=True)
+    for u, m in zip(uq, mult):
+        if u <= t[kk] + 1e-9 or u >= t[-kk - 1] - 1e-9:
+            continue
+        for _ in range(max(0, kk - int(m))):
+            bs = bs.insert_knot(float(u))
+    nctrl = len(bs.t) - kk - 1
+    if (nctrl - 1) % kk:
+        return None
+    return [np.asarray(bs.c[i * kk:i * kk + kk + 1], float)
+            for i in range((nctrl - 1) // kk)]
+
+
+def bezier_strokes(path: Path, cp: int, hw=None, hook_deg=65.0, min_ratio=1.4):
+    """读一个字 → 每条笔画的贝塞尔中线 + 该字实测半宽。
+
+    与 `strokes()` 的区别只在末端：这里不把断口补到墨迹极值、也不拉直，
+    因为圆端头描边本来就会自然补出半个圆；拉直反而让中线偏离笔身，描边后偏细。
+    """
+    r = analyze(path, cp)
+    if r is None:
+        return None
+    hint = float(r["half_width"]) if hw is None else float(hw)
+    mask = np.asarray(r["mask"])
+    coords, adj = _graph(r["skeleton"])
+    alive = set(adj)
+    raw, probes = [], []
+    while alive:
+        sub = {i: {j for j in adj[i] if j in alive} for i in alive}
+        sub = {i: v for i, v in sub.items() if v}
+        if not sub:
+            break
+        idx = _longest_path(coords, sub)
+        if len(idx) < 6:
+            break
+        rs, s = _resample(smooth([coords[i] for i in idx]), 4.0)
+        L = float(s[-1])
+        if L > 2.0 * hint:
+            probes.append(measure_halfwidth(mask, rs, s, hint))
+        raw.append((rs, s, L))
+        alive -= set(idx)
+    half = float(np.median(probes)) if probes else hint
+    out = []
+    for rs, s, L in raw:
+        if L < 1.4 * half:
+            continue
+        lo, hi = 0.0, L
+        for at_end in (True, False):
+            seq = rs[::-1] if at_end else rs
+            k = trim_end(seq, half, deg=hook_deg)
+            if k > 0:
+                if at_end:
+                    hi = L - k
+                else:
+                    lo = k
+        if hi - lo < 1.0 * half:
+            continue
+        keep = [(a >= lo - 1e-6) and (a <= hi + 1e-6) for a in s]
+        pts = np.asarray(rs, float)[np.asarray(keep)]
+        segs = spline_beziers(pts)
+        if segs:
+            out.append([[tuple(round(float(q), 1) for q in pt) for pt in seg] for seg in segs])
+    return dict(half_width=half, strokes=out)
+
+
+def stroke_outline(bezier_list, hw=HW):
+    """贝塞尔中线 → 轮廓：2×半宽、圆端头、圆转角，再并成一条路径。
+
+    圆端头 + 圆转角意味着轮廓是「中线与半径 hw 的圆的闵可夫斯基和」，
     拐角和收笔在构造上就是圆弧，没有需要事后修的折角或小角度。
     """
     import pathops
+
     acc = pathops.Path()
-    for st in stroke_list:
+    for segs in bezier_list:
         p = pathops.Path()
-        p.moveTo(*st[0])
-        for x, y in st[1:]:
-            p.lineTo(x, y)
+        p.moveTo(*segs[0][0])
+        for seg in segs:
+            p.cubicTo(*seg[1], *seg[2], *seg[3])
         p.stroke(2 * hw, pathops.LineCap.ROUND_CAP, pathops.LineJoin.ROUND_JOIN, 4)
-        p.convertConicsToQuads(0.2)
+        p.convertConicsToQuads(0.1)
         acc.addPath(p)
     acc.simplify(fix_winding=True, keep_starting_points=False)
     return acc
@@ -450,8 +572,11 @@ if __name__ == "__main__":
     src = sys.argv[1] if len(sys.argv) > 1 else "/tmp/maruko.ttf"
     chars = sys.argv[2] if len(sys.argv) > 2 else "乙了子九"
     for ch in chars:
-        s = strokes(Path(src), ord(ch))
-        if s is None:
+        out = bezier_strokes(Path(src), ord(ch))
+        if out is None:
             print(f"{ch}: 无字形")
             continue
-        print(f'    "{ord(ch):04X}": {s["strokes"]!r},')
+        print(f'    "{ord(ch):04X}": {{"hw": {out["half_width"]:.2f}, "curves": [')
+        for st in out["strokes"]:
+            print(f"        {st!r},")
+        print("    ]},")
