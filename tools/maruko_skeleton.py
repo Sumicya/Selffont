@@ -7,15 +7,14 @@
 
 流程
 ----
-高分辨率栅格化 → 距离变换（顺便得到每处的半笔宽）→ 中轴骨架 → 骨架拆分支 →
-在每个**自由端**上找回卷钩并按转角逐点切掉 → 沿切线把断口补回到原墨迹的极值 →
-按 2×半笔宽、圆端头、圆转角描边 → 并集。
+高分辨率栅格化（字腔留空）→ 距离变换（顺便得到每处的半笔宽）→ 中轴骨架 →
+交叉点处一次分解成「臂」、方向相反的臂接回成一条穿过去的笔画 → 交叉点补半径=半宽的
+圆盘 → 按 2×半笔宽、圆端头、圆转角描边 → 并集。笔画照母版原样取，不切钩。
 
 为什么这样画出来不会有「小角度」
 --------------------------------
 描边用的是 round join + round cap：轮廓是折线的闵可夫斯基和（与半径 33 的圆的并），
-拐角与端头在构造上就是圆弧，没有需要事后修的折角。二创要的「去掉钩、收笔是半圆」
-也正是这一步自然的结果。
+拐角与端头在构造上就是圆弧，没有需要事后修的折角；母版自己的钩也照原样保留。
 """
 from __future__ import annotations
 
@@ -33,17 +32,8 @@ SS = 2                      # 超采样
 BOX = (-40, -160, 1040, 900)
 HW = 33.0                   # 半笔宽：Maruko「一」竖切实测笔宽 66/67
 
-# 横折弯钩 / 横折提 要换成「横 + 捺」的字。判据本身在 `_fold_cut()` 里（横 ≥5hw、
-# 折后下沉 ≥8hw、末端外卷、折点在横的右端），但**仍然逐字过目再收进来**：
-# `几`/`凡` 的竖段是笔画主体（切掉就没了右半边），`乙` 的「弯」也是笔画主体
-# （换成横捺就成了「七」），所以只收图形已经看过、确实成立的字：九、气。
-# 主人点名的也是这两个字。2026-10-27。
-NA_FOLD = {0x4E5D, 0x6C14}                     # 九 气
 
-# 母版把两笔连成一笔、二创要断开的地方：(要断开处, 从这里往后保留)。
-# `天`：撇的起笔从顶横中点垂下来接住顶横，是 Maruko 的设计；主人要求顶横
-# 独立、平，所以在顶横处切断，撇从中横上沿起笔（穿过中横，是「天」的本形）。
-DETACH = {0x5929: [((494.0, 709.0), (494.0, 490.0))]}
+
 
 
 def _flatten(pen_value):
@@ -84,7 +74,26 @@ def _flatten(pen_value):
     return polys   # 保持字体单位，缩放由调用方统一做一次（重复缩放会把字形推出画布）
 
 
+def _area(poly):
+    a = 0.0
+    for i in range(len(poly)):
+        x0, y0 = poly[i]
+        x1, y1 = poly[(i + 1) % len(poly)]
+        a += x0 * y1 - x1 * y0
+    return a * 0.5
+
+
 def rasterize(path: Path, cp: int, box=BOX):
+    """字形 → 布尔位图。
+
+    字腔（`口`/`日`/`田` 的内圈、`路` 里那个「口」）**必须留空**。早先每个轮廓都按
+    实心填，字腔被填满，骨架于是塌成一个半径 330 的小团，围框字全部取不出笔画。
+    轮廓的绕向不能靠「最大面积」去猜（多部件字里各部件的绕向并不一致，`路` 的
+    「口」就会被挖空），所以先用 pathOps 按 nonzero 规则求并——它输出的就是最终
+    墨迹区域，绕向也已经规范化——再逐个轮廓填充。
+    """
+    import pathops
+
     font = TTFont(str(path))
     cmap = font.getBestCmap()
     if cp not in cmap:
@@ -93,11 +102,23 @@ def rasterize(path: Path, cp: int, box=BOX):
     pen = RecordingPen()
     font.getGlyphSet()[cmap[cp]].draw(pen)
     font.close()
+    pp = pathops.Path()
+    pen.draw(pp.getPen())
+    pp.simplify(fix_winding=True, keep_starting_points=False)
+    spen = RecordingPen()
+    pp.draw(spen)
+    polys = _flatten(spen.value)
+    if not polys:
+        return None, None
     x0, y0, x1, y1 = box
     img = Image.new("L", (int((x1 - x0) * SS), int((y1 - y0) * SS)), 0)
     d = ImageDraw.Draw(img)
-    for poly in _flatten(pen.value):
-        d.polygon([((x - x0) * SS, (y1 - y) * SS) for x, y in poly], fill=255)
+    # simplify 已经把绕向规范化：最大面积那个定「外」的方向，同向填实、反向挖空。
+    areas = [abs(_area(q)) for q in polys]
+    sign = 1.0 if _area(polys[max(range(len(polys)), key=lambda k: areas[k])]) > 0 else -1.0
+    for k in sorted(range(len(polys)), key=lambda k: -areas[k]):
+        fill = 255 if _area(polys[k]) * sign > 0 else 0
+        d.polygon([((x - x0) * SS, (y1 - y) * SS) for x, y in polys[k]], fill=fill)
     return img, box
 
 
@@ -627,156 +648,8 @@ def _assemble(coords, adj, hw, straight_deg=145.0):
     return chains, [np.asarray(c, float) for c in joints]
 
 
-def _fold_hook(pts, hw, flat=0.35, need=3.0):
-    """这条笔画是不是「横折弯钩」：笔身里有一段够长的横。
-
-    只判「末端竖直」会把竖钩（丁/了/子/手）也当折弯钩，那些字去钩后该直着收笔，
-    不能捺。横折弯钩的标志是**先横后竖**，所以查笔身里有没有够长的水平段。
-    末端的弯不参与判断：Maruko 的钩在底部会先往下再向右上卷 180°，切完之后
-    剩下的末段已经是水平的，按末段判会漏。
-    """
-    P = np.asarray(pts, float)
-    if len(P) < 8:
-        return False
-    d = np.diff(P, axis=0)
-    seg = np.hypot(*d.T)
-    best = run = 0.0
-    for (dx, dy), ln in zip(d, seg):
-        run = run + ln if abs(dy) <= flat * abs(dx) else 0.0
-        best = max(best, run)
-    # 横不能是整条笔画的主体：`也` 的「乚」横段占 64%，那是笔画本身，
-    # 不是折弯钩的横，切掉它等于把乚砍成一根斜线。
-    return best >= need * hw and best <= 0.5 * float(np.sum(seg))
-
-
-def _flat_run(pts, hw, at_start, flat=0.35, reach=6.0):
-    """从这一端出发，笔身保持水平的弧长。"""
-    P = np.asarray(pts, float)
-    if not at_start:
-        P = P[::-1]
-    if len(P) < 4:
-        return 0.0
-    step = np.hypot(*np.diff(P, axis=0).T)
-    cum = np.concatenate([[0.0], np.cumsum(step)])
-    run = 0.0
-    for i in range(len(P) - 1):
-        if cum[i] > reach * hw:
-            break
-        dx, dy = P[i + 1] - P[i]
-        if abs(dy) > flat * abs(dx):
-            break
-        run += float(step[i])
-    return run
-
-
-def _na_right(pts, hw):
-    """捺往哪一侧落：横是起笔那一端，从它指向带钩的那一端就是书写方向。"""
-    a, b = np.asarray(pts[0], float), np.asarray(pts[-1], float)
-    if _flat_run(pts, hw, True) >= _flat_run(pts, hw, False):
-        return bool((b - a)[0] > 0)
-    return bool((a - b)[0] > 0)
-
-
-def _cut_leg(P, hw, at_start, flat=0.35, run=3, vert=4.0, reach=20.0):
-    """从末端往回切到「笔身竖直」的地方，返回要切掉的点数（0 = 没找到竖段）。
-
-    `trim_end` 按累计转角只削掉钩前面那 65°，钩的**斜段**还留在笔身上：
-    `九` 切完的那一截方向已经是 (0.87,-0.5)，再按捺势转 60° 就走成了月牙。
-    折弯钩的钩是往右上卷的，往回走到出现连续竖直的笔身才是钩真正的根。
-    """
-    Q = np.asarray(P, float)
-    if not at_start:
-        Q = Q[::-1]
-    if len(Q) < 12:
-        return 0
-    cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(Q, axis=0).T))])
-    ok = []
-    for i in range(1, len(Q) - 1):
-        if cum[i] > reach * hw:
-            break
-        d = Q[i + 1] - Q[i - 1]
-        ok.append(abs(d[0]) <= flat * abs(d[1]))
-    for i in range(len(ok) - run + 1):
-        if all(ok[i:i + run]):
-            j = i
-            while j < len(ok) and ok[j]:
-                j += 1
-            # 这段竖直要够长才算真的竖段：`乙` 的钩后面是一条长斜撇，
-            # 斜段里偶尔有十几个单位恰好竖直，按那点切会把右半整条切掉。
-            if cum[j] - cum[i] >= vert * hw:
-                return i + 1
-    return 0
-
-
-def _cut_leg(P, hw, at_start, flat=0.35, run=3, vert=4.0, reach=20.0):
-    """从末端往回切到「笔身竖直」的地方，返回要切掉的点数（0 = 没找到竖段）。
-
-    `trim_end` 按累计转角只削掉钩前面那 65°，钩的**斜段**还留在笔身上：
-    `九` 切完的那一截方向已经是 (0.87,-0.5)，再按捺势转 60° 就走成了月牙。
-    折弯钩的钩是往右上卷的，往回走到出现连续竖直的笔身才是钩真正的根。
-    """
-    Q = np.asarray(P, float)
-    if not at_start:
-        Q = Q[::-1]
-    if len(Q) < 12:
-        return 0
-    cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(Q, axis=0).T))])
-    ok = []
-    for i in range(1, len(Q) - 1):
-        if cum[i] > reach * hw:
-            break
-        d = Q[i + 1] - Q[i - 1]
-        ok.append(abs(d[0]) <= flat * abs(d[1]))
-    for i in range(len(ok) - run + 1):
-        if all(ok[i:i + run]):
-            j = i
-            while j < len(ok) and ok[j]:
-                j += 1
-            # 这段竖直要够长才算真的竖段：`乙` 的钩后面是一条长斜撇，
-            # 斜段里偶尔有十几个单位恰好竖直，按那点切会把右半整条切掉。
-            if cum[j] - cum[i] >= vert * hw:
-                return i + 1
-    return 0
-
-
-def _cut_to_flat(P, hw, at_start, flat=0.18, need=6.0, reach=40.0):
-    """从钩那一端往回切到最近一段**长横的折点**，返回 (切掉的点数, 横的书写方向)。
-
-    主人 2026-10-27 对 `九` 的要求是「横 + 捺」接笔：折弯钩整段（折、竖、钩）都不要，
-    横收笔后直接接一段捺。所以这里找的不是竖直段而是横段——往回扫，跳过钩，
-    遇到第一段够长（≥6×半笔宽）且真的水平（|dy| ≤ 0.18|dx|）的笔身就切到折点。
-
-    0.18 这个角度是按 `九` 的钩底量的：钩底那一小段斜到 |dy/dx|≈0.27，
-    用 0.35 会把钩底当横，切在钩上，捺就从钩底斜出去，等于没改。
-
-    方向按「自由端 → 折点」给：横的书写永远是从自由端走向折点，和链条点序
-    正反无关（`九` 的链是从钩走到横左端，`也` 的竖弯钩是从竖顶走到钩）。
-    """
-    Q = np.asarray(P, float)
-    if not at_start:
-        Q = Q[::-1]
-    if len(Q) < 12:
-        return 0, None
-    step = np.hypot(*np.diff(Q, axis=0).T)
-    cum = np.concatenate([[0.0], np.cumsum(step)])
-    run_start = None
-    for i in range(len(Q) - 1):
-        if cum[i] > reach * hw:
-            break
-        dx, dy = Q[i + 1] - Q[i]
-        if abs(dy) <= flat * abs(dx):
-            if run_start is None:
-                run_start = i
-            continue
-        if run_start is not None and cum[i] - cum[run_start] >= need * hw:
-            # Q[run_start] 靠钩（折点），Q[i] 远（自由端）：书写方向是自由端 → 折点
-            right = bool((Q[run_start] - Q[i])[0] > 0)
-            return run_start, right
-        run_start = None
-    if run_start is not None and cum[-1] - cum[run_start] >= need * hw:
-        right = bool((Q[run_start] - Q[-1])[0] > 0)
-        return run_start, right
-    return 0, None
+def mask_of(r):
+    return np.asarray(r["mask"])
 
 
 def _smooth_chain(chain, hw):
@@ -962,72 +835,6 @@ def _tip_out(pts, hw, at_start):
     return body, target
 
 
-def _fold_cut(pts, hw, need=5.0, drop=8.0, flat=0.3, dev=0.6):
-    """横折弯钩 / 横折提 的**折点**下标与写法方向；不是这类笔画就返回 (None, None)。
-
-    主人 2026-10-27：「横折弯勾/横折提改横捺」「不要自己加个折」。所以整段
-    横折弯钩要换成「横 + 捺」：横收笔之后直接接一段捺，折、弯、竖、钩全部丢掉。
-
-    判据（全部量在骨架上，不是手比坐标）：
-      · 横 ≥5×半笔宽，且横的纵向起伏 ≤0.6×半笔宽（母版的横本身是浅弓形）；
-      · 横的**另一头**要么是笔画自由端，要么是另一条更长的笔画（`几`/`凡` 的撇
-        与横折弯钩在圆顶相接，母版把两笔连成了一条链）；
-      · 折点之后要下沉 ≥8×半笔宽 —— `了`/`子` 的横撇只沉 7.3hw，排除；
-      · 那条尾巴的末端要**外卷**（收笔方向与折后方向差 ≥90°）—— `己` 的横折尾巴
-        接着下一笔，不收卷，排除。
-    """
-    P = np.asarray(pts, float)
-    n = len(P)
-    if n < 20:
-        return None, None
-    step = np.hypot(*np.diff(P, axis=0).T)
-    cum = np.concatenate([[0.0], np.cumsum(step)])
-    cands = []
-    i = 0
-    while i < n - 1:
-        j = i
-        while j < n - 1:
-            dx, dy = P[j + 1] - P[j]
-            if abs(dx) < 1e-9 or abs(dy) > flat * abs(dx):
-                break
-            if abs(P[j + 1][1] - P[i][1]) > dev * hw:
-                break
-            j += 1
-        run = float(cum[j] - cum[i])
-        if j > i and run >= need * hw:
-            for fold, far in ((i, j), (j, i)):
-                tail = P[fold:] if fold == j else P[:fold + 1][::-1]
-                if len(tail) < 8:
-                    continue
-                if tail[0][1] - tail[-1][1] < drop * hw:
-                    continue
-                # 尾巴末端外卷：末段方向 vs 折后 1.5hw 处方向
-                k = max(3, int(1.5 * hw / 4.0))
-                d0 = tail[min(k, len(tail) - 1)] - tail[0]
-                d1 = tail[-1] - tail[-min(k, len(tail) - 1) - 1]
-                n0, n1 = np.hypot(*d0), np.hypot(*d1)
-                if n0 < 1e-9 or n1 < 1e-9:
-                    continue
-                turn = math.degrees(math.acos(float(np.clip(d0 @ d1 / (n0 * n1), -1, 1))))
-                if turn < 90.0:
-                    continue
-                # 横的另一头：自由端，或另一条更长的笔画
-                other = P[far:] if far < fold else P[:far + 1]
-                if len(other) > 6 and float(np.sum(np.hypot(*np.diff(other, axis=0).T))) < 6.0 * hw:
-                    continue
-                # 横永远从左往右写：折点必须是横的**右端**。这一条把 `乙` 底部那段
-                # 「弯」的水平（折点在左端）排除掉，只认顶部那条横折。
-                right = bool((P[fold] - P[far])[0] > 0)
-                if right:
-                    cands.append((run, fold, right))
-                break
-        i = j + 1 if j > i else i + 1
-    if not cands:
-        return None, None
-    run, fold, right = max(cands)
-    return fold, right
-
-
 def _split_sharp(rs, s, hw, deg=88.0, max_parts=3):
     """按锐角把一条链切段：母版把两笔的角接在一起时（`几`/`凡` 的撇与横折），
     骨架是一条链，不切就永远分不出两笔。返回 [(i0, i1), ...]。"""
@@ -1056,166 +863,24 @@ def _split_sharp(rs, s, hw, deg=88.0, max_parts=3):
     return out
 
 
-def _na_stroke(pts, hw, at_start, right=True, angle_deg=32.0, box=None, tail=12.0,
-               min_len=2.0):
-    """在末端接一段**独立**的捺：等宽、圆头、−32° 直走，长度到墨迹框为止。
-
-    这不是把笔身弯成捺，而是横收笔之后另起一段，和 Maruko 自己的捺同一种几何
-    （等宽、圆头、无渐变；母版右捺实测 −22°～−34°，取 −32°）。
-    """
-    P = np.asarray(pts, float)
-    if len(P) < 4:
-        return P
-    tip = P[0] if at_start else P[-1]
-    ang = math.radians(-angle_deg) if right else math.radians(180.0 + angle_deg)
-    t = np.array([math.cos(ang), math.sin(ang)])
-    length = tail * hw
-    if box is not None:
-        lim = []
-        for k, hi, lo in ((0, box[2], box[0]), (1, box[3], box[1])):
-            if t[k] > 1e-6:
-                lim.append((hi - tip[k]) / t[k])
-            elif t[k] < -1e-6:
-                lim.append((lo - tip[k]) / t[k])
-        if lim:
-            length = min(length, min(lim))
-    if length < min_len * hw:
-        return P
-    n = max(2, int(length / 4.0))
-    seg = np.asarray([tip + t * (length * k / n) for k in range(1, n + 1)], float)
-    return np.vstack([seg[::-1], P]) if at_start else np.vstack([P, seg])
-
-
-def _hook_to_na(pts, hw, at_start, box=None, right=True, tail=4.0, angle_deg=30.0):
-    """把末端的钩换成一段捺：从切口沿 −30° 直走一截，长度到墨迹框为止。
-
-    比「按半径 2hw 的圆弧旋转」可靠：圆弧要占掉两个半笔宽，在字底（`乙`/`九`
-    的钩就在墨迹底边）根本没有那个空间，一转身就掉到框外；直尾只占一个长度，
-    转折交给描边的 round join 和样条本身去圆。
-    """
-    P = np.asarray(pts, float)
-    if len(P) < 6:
-        return P
-    tip = P[0] if at_start else P[-1]
-    ang = math.radians(-angle_deg) if right else math.radians(180.0 + angle_deg)
-    t = np.array([math.cos(ang), math.sin(ang)])
-    length = tail * hw
-    if box is not None:
-        lim = []
-        for k, hi, lo in ((0, box[2], box[0]), (1, box[3], box[1])):
-            if t[k] > 1e-6:
-                lim.append((hi - tip[k]) / t[k])
-            elif t[k] < -1e-6:
-                lim.append((lo - tip[k]) / t[k])
-        if lim:
-            length = max(0.0, min(length, min(lim)))
-    n = max(2, int(length / 4.0))
-    seg = np.asarray([tip + t * (length * i / n) for i in range(1, n + 1)], float)
-    return np.vstack([seg[::-1], P]) if at_start else np.vstack([P, seg])
-
-
-def _end_at_joint(tip, joints, half):
-    """这个笔端是不是贴在交叉点上（贴着的端不能当自由端去切钩、接捺）。"""
-    if not joints:
-        return False
-    return min(float(np.hypot(*(np.asarray(tip, float) - j))) for j in joints) < 1.5 * half
-
-
-def _piece_strokes(pts, half, ink, mask, joints, hook_deg, cp):
-    """一段连续笔身 → 若干条中线。
-
-    顺序是先判「横折 → 横 + 捺」，再处理剩下的钩：横折类的折、竖、钩整段都要丢，
-    所以必须在去钩之前判，否则先按钩切一刀，横折的横就已经被破坏。
-    """
-    out = []
-    # ① 横折弯钩 / 横折提 → 横 + 捺：折、弯、竖、钩整段丢掉，横末端另起一段捺。
-    fold, right = _fold_cut(pts, half) if cp in NA_FOLD else (None, None)
-    if fold is not None:
-        kept = pts[:fold + 1]
-        kept = _na_stroke(kept, half, False, right=right, box=ink)
-        out.append(kept)
-        return out
-    # ② 去钩
-    L = float(np.sum(np.hypot(*np.diff(pts, axis=0).T)))
-    lo, hi = 0.0, L
-    cut = {True: False, False: False}
-    for at_start in (True, False):
-        tip = pts[0] if at_start else pts[-1]
-        if _end_at_joint(tip, joints, half):
-            continue
-        seq = pts if at_start else pts[::-1]
-        k = trim_end(seq, half, deg=hook_deg, max_len=5.0)
-        if k > 0:
-            cut[at_start] = True
-            if at_start:
-                lo = k
-            else:
-                hi = L - k
-    if hi - lo < 2.5 * half:
-        a_len, b_len = lo, L - hi
-        if max(a_len, b_len) > 0 and L - max(a_len, b_len) >= 2.5 * half:
-            if b_len >= a_len:
-                lo = 0.0
-            else:
-                hi = L
-        else:
-            lo, hi = 0.0, L
-        cut = {True: False, False: False}
-    if hi - lo < 1.0 * half:
-        return out
-    cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pts, axis=0).T))])
-    q = np.asarray(pts, float)[(cum >= lo - 1e-6) & (cum <= hi + 1e-6)]
-    if len(q) < 6:
-        return out
-    # ③ 收笔：竖直的直收，斜的转捺势；去钩之后沿笔身补回母版墨迹极值（限 2hw）
-    for at_start in (True, False):
-        if not cut[at_start]:
-            continue
-        origin = q[0] if at_start else q[-1]
-        body, d = _tip_out(q, half, at_start)
-        # 只有末段是**横**才转捺；斜的、竖的收笔一律直收，不然会在斜笔上凭空
-        # 长出一小段 −35° 的尾巴（`么`/`儿` 放大后就是一根蓝刺）。
-        if abs(body[1]) > 0.35 * abs(body[0]) and abs(body[1]) < 0.8:
-            cut[at_start] = False
-            continue
-        if abs(float(body @ d) - 1.0) > 1e-3:
-            q = _na_stroke(q, half, at_start, right=bool(body[0] > 0), box=ink,
-                           angle_deg=35.0, tail=4.0)
-            continue
-        if abs(body[1]) > 0.6:
-            continue
-        ext = min(_ink_reach(mask, origin, d, half, 2.0 * half), 2.0 * half)
-        if ext >= 0.3 * half:
-            tip = (np.asarray(origin, float) + d * ext)[None, :]
-            q = np.vstack([tip, q]) if at_start else np.vstack([q, tip])
-    out.append(q)
-    return out
-
-
-def bezier_strokes(path: Path, cp: int, hw=None, hook_deg=65.0, detach=(),
-                   detach_hw=2.4, dot_r=None):
+def bezier_strokes(path: Path, cp: int, hw=None, dot_r=None):
     """读一个字 → 每条笔画的贝塞尔中线 + 该字实测半宽 + 交叉点圆盘。
 
-    `detach` 是「在这里把笔画切断」的坐标（母版把两笔连成了一笔、二创要断开，
-    例如 `天` 的撇上提到顶横）。`dot_r` 非空时，每个交叉点额外输出一个圆盘
-    中线：T 字路口靠它把上沿补成圆弧，不补就是凹口。
+    笔画**照母版骨架原样**取：不切钩、不改收笔、不断开交接。上一版的「去钩 /
+    折弯钩改横捺」整条路线已放弃（主人 2026-10-27：放弃去钩转向扩字集），
+    因为去钩要逐字判钩根、还要逐字过目白名单，扩不动字集；而母版本身的钩
+    只是端点处的一小段回卷，圆头描边照原样画出来就是 Maruko 的写法。
+
+    `dot_r` 非空时每个交叉点额外输出一个圆盘中线：T 字路口靠它把上沿补成圆弧。
     """
     r = analyze(path, cp)
     if r is None:
         return None
     hint = float(r["half_width"]) if hw is None else float(hw)
-    mask = np.asarray(r["mask"])
     coords, adj = _graph(r["skeleton"])
     chains, joints = _assemble(coords, adj, hint)
     if not chains:
         return None
-    ys, xs = np.nonzero(mask)
-    # 捺的中线可走范围 = 母版墨迹框**内缩** 1.1hw。圆端头还会向外加一个 hw，
-    # 所以中线收到这里，描边后的尖刚好落在母版墨迹边缘——既不缺墨，也不掉出格子。
-    inset = 1.1 * hint
-    ink = (xs.min() / SS + BOX[0] + inset, BOX[3] - ys.max() / SS + inset,
-           xs.max() / SS + BOX[0] - inset, BOX[3] - ys.min() / SS - inset)
-
     raw, probes = [], []
     for c in chains:
         rs, s = _smooth_chain(c, hint)
@@ -1224,48 +889,34 @@ def bezier_strokes(path: Path, cp: int, hw=None, hook_deg=65.0, detach=(),
             continue
         raw.append((rs, s, L))
         if L > 2.0 * hint:
-            probes.append(measure_halfwidth(mask, rs, s, hint))
+            probes.append(measure_halfwidth(mask_of(r), rs, s, hint))
     if not raw:
         return None
     half = float(np.median(probes)) if probes else hint
     out = []
     for rs, s, L in raw:
+        # 闭合环（口/日/田 的内外圈）：首尾相接的一整圈，必须 close() 收口，
+        # 否则接缝处会留一个笔宽的豁口。
+        if float(np.hypot(*(np.asarray(rs[0], float) - np.asarray(rs[-1], float)))) < 1.5 * half \
+                and L > 3.0 * half:
+            pts = np.vstack([np.asarray(rs, float), np.asarray(rs, float)[:3]])
+            segs = spline_beziers(pts)
+            if segs:
+                out.append({"closed": True,
+                            "segs": [[tuple(round(float(v), 1) for v in pt) for pt in seg]
+                                     for seg in segs]})
+            continue
         for i0, i1 in _split_sharp(rs, s, half):
             pts = np.asarray(rs[i0:i1 + 1], float)
             if len(pts) < 6:
                 continue
-            plen = float(np.sum(np.hypot(*np.diff(pts, axis=0).T)))
-            if plen < 1.4 * half:
+            if float(np.sum(np.hypot(*np.diff(pts, axis=0).T))) < 1.4 * half:
                 continue
-            # 交接断开：端点落在 detach 点附近就把这一截切掉
-            keep = np.ones(len(pts), bool)
-            for spec in detach:
-                src = np.asarray(spec[0], float)
-                for at_start in (True, False):
-                    tip = pts[0] if at_start else pts[-1]
-                    if float(np.hypot(*(tip - src))) > 2.0 * half:
-                        continue
-                    if len(spec) > 1 and spec[1] is not None:
-                        k = int(np.argmin(np.hypot(*(pts - np.asarray(spec[1], float)).T)))
-                    else:
-                        far = np.hypot(*(pts - src).T) >= detach_hw * half
-                        ok = np.nonzero(far)[0]
-                        if not len(ok):
-                            continue
-                        k = int(ok[0]) if at_start else int(ok[-1])
-                    if at_start:
-                        keep[:k + 1] = False
-                    else:
-                        keep[k:] = False
-            pts = pts[keep]
-            if len(pts) < 6:
-                continue
-            for q in _piece_strokes(pts, half, ink, mask, joints, hook_deg, cp):
-                segs = spline_beziers(q)
-                if segs:
-                    out.append({"closed": False,
-                                "segs": [[tuple(round(float(v), 1) for v in pt) for pt in seg]
-                                         for seg in segs]})
+            segs = spline_beziers(pts)
+            if segs:
+                out.append({"closed": False,
+                            "segs": [[tuple(round(float(v), 1) for v in pt) for pt in seg]
+                                     for seg in segs]})
     if dot_r:
         for j in joints:
             c = (round(float(j[0]), 1), round(float(j[1]), 1))
@@ -1305,8 +956,7 @@ if __name__ == "__main__":
     src = sys.argv[1] if len(sys.argv) > 1 else "/tmp/maruko.ttf"
     chars = sys.argv[2] if len(sys.argv) > 2 else "乙了子九"
     for ch in chars:
-        out = bezier_strokes(Path(src), ord(ch),
-                             detach=DETACH.get(ord(ch), ()), dot_r=True)
+        out = bezier_strokes(Path(src), ord(ch), dot_r=True)
         if out is None:
             print(f"{ch}: 无字形")
             continue
