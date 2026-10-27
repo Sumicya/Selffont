@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# 网页字体开关（运行时）：keep = 放行网页自带字体，block = 压成文渊（默认）。
+# 网页字体开关（运行时）：keep = 放行网页自带字体，block = 压成本模块主字体（默认）。
 #
 # 状态存在配置副本旁边（FIREFOX_DATA_DIR，默认 /data/local/tmp），所以模块更新时
 # customize.sh / firefox.sh 重新生成副本会按状态来，不会把你的选择覆盖掉。
@@ -52,7 +52,7 @@ refresh() {  # 按状态（没有状态文件就用模板默认）重生成副�
     mv -f "$tmp" "$CONFIG" || { rm -f "$tmp"; exit 1; }
 }
 
-label() { [ "$1" = keep ] && echo '放行' || echo '压成文渊'; }
+label() { [ "$1" = keep ] && echo '放行' || echo '压成主字体'; }
 
 set_state() {  # $1=keep|block：记状态，已接入就立刻刷新副本
     ensure_template

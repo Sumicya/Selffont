@@ -1,2 +1,1 @@
 fonttools==4.66.0
-skia-pathops==0.9.2

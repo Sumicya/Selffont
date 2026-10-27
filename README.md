@@ -1,6 +1,6 @@
 # Selffont
 
-Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃维护；一个 VF 文件内含 `wght` 100–900 + `ital` 真字重）接管系统的主字体家族。
+Android 个人字体模块：**Maruko 圆体 SC**（SIL OFL 1.1；Regular / Medium 两档静态，各覆盖 20,977 个 CJK 基本区汉字）接管系统的主字体家族。
 
 ## 要求
 
@@ -10,17 +10,17 @@ Android 个人字体模块：**文渊圆体 v1.010 可变字体**（OFL，活跃
 
 ## 功能
 
-**本来各有自己字体的命名族（等宽 / 手写 / 小型大写等）保持原样**，缺 CJK 时才落到文渊。原生 `fonts.xml` 挂载，模块即全部交付，无伴侣应用。模块 zip 由本地构建产出，CI 只做校验。
+**本来各有自己字体的命名族（等宽 / 手写 / 小型大写等）保持原样**，缺 CJK 时才落到主字体。原生 `fonts.xml` 挂载，模块即全部交付，无伴侣应用。模块 zip 由本地构建产出，CI 只做校验。
 
-照搬[文渊圆体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)：字形、cmap、可变轴逐字节不动（构建期逐字形守卫），安装副本只动三处——
+照搬 [Maruko Gothic](https://github.com/max32002/maruko-gothic)（固定提交 `97e9dd4`，`CJK SC` 目录）：字形、cmap 逐字节不动（构建期逐字形守卫），安装副本只动三处——
 
 1. 竖直行度量归一到基础包的 Roboto 空壳（真机验证：修角标数字偏低/切下沿）；
 2. 剪除映射到空白字形的码位（上游声称覆盖但字形空白，会吞掉回退链）；
-3. 按 OFL 保留名规则把内部家族名改成 **Selffont Rounded SC VF**。
+3. 内部家族名统一改成 **Selffont SC**（母版的 OFL 没有保留名，改名不是许可要求，是为了配置与火狐名单写一个名字）。
 
-字重阶梯现场从字体的 `wght`/`ital` 轴读取（越界夹取）；**主字体必须是含 `wght` 轴的可变字体**，静态字体直接拒绝（配置只出新语法，没有可声明的轴）。
+字重是**两档静态**（Regular 400 / Medium 500，取自母版同目录的两个文件），配置里逐档列出；请求 700 落 500，请求 300 落 400。母版另有 Light（33.8 MB），需要三档时在 `MARUKO_SC["files"]` 里加一项即可。
 
-模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置），主字体一条 `supportedAxes="wght,ital"`，由系统按请求的字重 / 斜体**运行时实例化**——任意字重精确插值，不再落到最近的离散档。
+模块只带**一份字体配置**：`font_fallback.xml`（Android 15+ 的新配置）。可变主字体走的是一条 `supportedAxes` 字件（运行时实例化），本模块的两档静态按 weight 逐条列出——两条路 `configure_fonts()` 都支持，由主字体来源决定。
 
 缺字回退分两个区，两边都要放主字体（AOSP `font_fallback.xml` 头注：家族分默认家族、命名家族、**locale fallback family** 三类，缺字时按「完整 BCP-47 标签（含 script）→ 仅语言 → 顺序」匹配）：
 
@@ -62,20 +62,20 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh'          # 接入
 su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 ```
 
-`firefox.sh` 只做两件事：把 `geckoview-config.yaml` 放到 `/data/local/tmp/org.mozilla.firefox-geckoview-config.yaml`，再把 Firefox 设成 Android「调试应用」（`am set-debug-app --persistent`，重启后仍在）——GeckoView 只在这两种情况下读那份配置。配置里每条首选项都只**插入**不清空，后面原样保留 Gecko 自己的回退链（整条覆盖会掐断回退，那才是缺字的来源）。谁排在最前，看这个泛型在系统里本来是什么字体：`sans-serif` / `serif` / `emoji` 本来就是主字体（`serif` 是旧数字字件、`sans-serif` 是度量空壳），文渊在最前是把火狐改掉的恢复回来；`monospace` / `cursive` / `fantasy` 本来是 Droid Sans Mono / Dancing Script / Coming Soon（`fonts.xml` 的 `monospace` / `cursive` / `casual`），**本来是什么字体就保持什么字体**，文渊只紧随其后兜这些字体没有的 CJK。
+`firefox.sh` 只做两件事：把 `geckoview-config.yaml` 放到 `/data/local/tmp/org.mozilla.firefox-geckoview-config.yaml`，再把 Firefox 设成 Android「调试应用」（`am set-debug-app --persistent`，重启后仍在）——GeckoView 只在这两种情况下读那份配置。配置里每条首选项都只**插入**不清空，后面原样保留 Gecko 自己的回退链（整条覆盖会掐断回退，那才是缺字的来源）。谁排在最前，看这个泛型在系统里本来是什么字体：`sans-serif` / `serif` / `emoji` 本来就是主字体（`serif` 是旧数字字件、`sans-serif` 是度量空壳），主字体在最前是把火狐改掉的恢复回来；`monospace` / `cursive` / `fantasy` 本来是 Droid Sans Mono / Dancing Script / Coming Soon（`fonts.xml` 的 `monospace` / `cursive` / `casual`），**本来是什么字体就保持什么字体**，主字体只紧随其后兜这些字体没有的 CJK。
 
 **花体 / 小型大写（Unicode 字符本身，如 𝓐𝓑𝓒、ᴀʙᴄ）**——这类字符不选字体，走逐字回退，而 Gecko 的逐字回退**不读 fonts.xml 顺序**（先按字符语言组查 `font.name-list.*`，再全清单乱序扫描），选中的兜底字体和系统不同 → 同一字符两副面孔。修法 = 让火狐的回退链与 fonts.xml 同序：
 
-- 数学字母数字区（𝓐𝓑𝓒）的语言组是 `x-math`，Gecko 在 Android 的默认名单全是桌面数学字体（设备上没有）——配置补上 x-math 三条（前置文渊）；
+- 数学字母数字区（𝓐𝓑𝓒）的语言组是 `x-math`，Gecko 在 Android 的默认名单全是桌面数学字体（设备上没有）——配置补上 x-math 三条（前置主字体）；
 - 其余语言组的名单，构建时把模块补充字库的**内部家族名按 fonts.xml 顺序**追加到每条 `font.name-list.*` 末尾（火狐只认字件内部名，构建期现场从基础包读取）；
 - 配置是 `firefox.sh` 装的拷贝：**模块更新时 `customize.sh` 检测到已接入就按当前开关状态重生成**，不用记得重放 `firefox.sh`，也不会把你切过的网页字体开关覆盖掉。
 
 **泛型与家族名的坑**（CSS 写法不同，路径完全不同）：
 
 - 泛型关键字（`font-family: cursive/fantasy`，不带引号）：all.js 的 Android 段只有 `cursive.x-unicode/x-western` 默认、`fantasy` 一个都没有，zh/ja/ko 下解析成空字体组落平台默认——配置把 cursive/fantasy × 7 语言组补齐。
-- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 的字体清单只收**写进系统配置的字件**。曾试过给这些别名各发一枚「别名字件」（家族名 = 别名、无字形），2026-10-05 真机实测（OnePlus / ColorOS 16）**解析不到**：20 个空格的宽度与默认链完全相同，别名字件的 0.5em 空格没有出现。又因为每条 `font.name-list.*` 都被我们前置了文渊，命中与不命中最终渲染一致——既不可见也无收益，**已删除**（`build.py` 不再产别名字件、也无 `--no-alias-fonts` 开关）。
-- 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成文渊**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/MFGA/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是文渊；`web-fonts.sh status` 看当前状态。
-- CSS `font-variant: small-caps` 由基础字体合成：基础字体是文渊，小型大写就是文渊。
+- 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 的字体清单只收**写进系统配置的字件**。曾试过给这些别名各发一枚「别名字件」（家族名 = 别名、无字形），2026-10-05 真机实测（OnePlus / ColorOS 16）**解析不到**：20 个空格的宽度与默认链完全相同，别名字件的 0.5em 空格没有出现。又因为每条 `font.name-list.*` 都被我们前置了主字体，命中与不命中最终渲染一致——既不可见也无收益，**已删除**（`build.py` 不再产别名字件、也无 `--no-alias-fonts` 开关）。
+- 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成主字体**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/MFGA/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是主字体；`web-fonts.sh status` 看当前状态。
+- CSS `font-variant: small-caps` 由基础字体合成：基础字体是主字体，小型大写就是主字体。
 
 验证：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`，应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。
 
@@ -97,7 +97,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python build.py --check                  # 自检:无框架、无夹具,不下载不打包
 .venv/bin/python build.py --build 47 --day 3 --date 26.10.6   # 或手工传三段(离线;缺一段就报错不出包)
 .venv/bin/python build.py --font 文件或URL --base 本地ZIP或URL
-.venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成文渊）
+.venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成主字体）
 ```
 
 产物名跟版本走：`build/Selffont-<版本>.zip`；没有规范版本数据就不出包（取数失败停止出包和上传）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
@@ -142,12 +142,11 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 
 | 内容 | 大小量级 |
 | --- | --- |
-| 主字体（文渊圆体 VF，归一度量后的安装副本） | 约 46 MiB |
-| 二创汉字字库（`SelffontCJK-Regular.otf`，构建期由 `tools/design_cjk.bin` 现编） | 约 20 MiB |
+| 主字体（Maruko SC Regular 20.0 MiB + Medium 20.9 MiB，归一度量后的安装副本） | 约 41 MiB |
 | 补充字库（`fonts.xml` 引用、基础包里有的那几个：Plangothic、Unicode*-New、NotoSansPro、ZDigit 等） | 约 54 MiB |
 | 配置与脚本（`font_fallback.xml`、`customize.sh`、火狐配置） | 不到 0.1 MiB |
 
-「去掉静态」只删掉了配置里的逐档展开（`fonts.xml` 的 18 个 `<font>` 节点，几 KB）——字体数据从来只带一份 VF，没有按字重复制过文件，所以体积不变。装完想自己看构成：`unzip -l Selffont-<版本>.zip | sort -k1 -nr | head -15`。
+主字体从「一个 46 MiB 的可变字体」换成「两个 20 MiB 的静态字体」，产物总量基本持平。装完想自己看构成：`unzip -l Selffont-<版本>.zip | sort -k1 -nr | head -15`。
 
 ## 项目限制
 
@@ -156,13 +155,19 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 - `fonts.xml` 里的字体名是「设备自带 + 基础包补充」的并集：基础包只带设备没有的补充字库（Plangothic、天珩、Unicode 新平面、SourceSansPro、ZDigit 等），Noto 全套与其余 OEM 字体由设备提供，不打包（`MiSans` 不要，引用已在构建期清掉，见「功能」）。引用两边都没有的字体只会让该条目失效，不中断渲染、也没法在构建期判断——构建只打一行摘要，不出名单。
 - 火狐的家族名单来自 Gecko 自己的 `all.js`（Android 段），随 Firefox 版本可能变；名单变了 `firefox.sh install` 重放一次即可，不匹配时 Gecko 只是回到自己的默认字体。
 - MFGA 基础包只取字体资源，绝不执行其代码（归属见 `LICENSES.md`）。
-- 主字体必须能被 fontTools 解析且含 `wght` 轴；`.ttf`/`.otf`/`.ttc` 之外的后缀、静态字体、缺空壳的基础包都直接拒绝。
+- 主字体必须能被 fontTools 解析；`.ttf`/`.otf`/`.ttc` 之外的后缀、缺空壳的基础包都直接拒绝。单个文件的主字体必须是含 `wght` 轴的可变字体（否则无法声明 `supportedAxes`）；多档静态只能像 `MARUKO_SC` 那样成组给出。**两档静态的装机表现尚未验证**（真机只验证过可变字体那一版）。
 
-### 二创汉字字库（进生产）
+### 为什么不再自绘汉字（2026-10-27 收尾）
 
-自绘的 CJK 汉字字件 `SelffontCJK-Regular.otf` 随模块发布：笔画中线由母版 Maruko Gothic（SIL OFL 1.1）量出，构建时用 pathops 按 2×半笔宽、圆端头描边，再编成 CFF/OTF。它在 `font_fallback.xml` 里**单独一个 `<family>`、排在主字体之前**——二创覆盖到的汉字先落二创，其余照旧落文渊；不塞进任何已有族（同族混可变字体与静态字体会卡开机，2026-10-07 真机结论）。
+上一版随模块发布过一个自绘的 `SelffontCJK-Regular.otf`：按母版骨架取中线、pathops 描边再编成字体。它的账算下来是亏的——
 
-覆盖范围与判据见[当前 Maruko 审阅入口](docs/round-preview/README.md)：收字走四条结构闸门（面积比、轮廓数、包围盒、笔画数），局部缺陷靠抽样放大图。尚未做：Light / Medium 两档字重、扩展 A/B 区、真机渲染验收。
+| | 自绘（二创） | 母版本体 |
+| --- | --- | --- |
+| 覆盖（CJK 基本区） | 19,352 / 20,977（92.3%） | 20,977 / 20,977 |
+| 体积 | 40.6 MiB + 13.7 MB 中线数据 | 20.1 MiB（Regular） |
+| 额外机制 | pathops 描边 115 秒、独立 `<family>`、单字重 | 无 |
+
+而且自绘的笔画与母版同源同形（IoU 中位 0.948），本来就没有「另一副设计」可言。所以整条自绘路径下线，模块直接用母版本体；取笔工具（`tools/maruko_skeleton.py`）留在仓库里做度量与研究，不再出字体。过程与数字见[这一轮的审阅入口](docs/round-preview/README.md)。
 
 ### 字形研究候选（非生产）
 
@@ -180,6 +185,6 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 
 ## 许可证
 
-主字体文渊圆体与模块基础包内各补充字库均为 OFL 或等效可自由分发许可，逐项来源、许可证与保留名处理见 [`LICENSES.md`](LICENSES.md)；本仓库自身代码未单独声明许可证。
+主字体 Maruko Gothic 与模块基础包内各补充字库均为 OFL 或等效可自由分发许可，逐项来源、许可证与保留名处理见 [`LICENSES.md`](LICENSES.md)；本仓库自身代码未单独声明许可证。
 
 遵循 [Sumicya/selfs](https://github.com/Sumicya/selfs) 最新 GLOBAL.md。

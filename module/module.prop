@@ -3,4 +3,4 @@ name=Selffont
 version=dev
 versionCode=0
 author=Sumicya
-description=文渊圆体（可变字体，100-900 真字重）接管系统字体家族，原生 fonts.xml 挂载；火狐走 Gecko 原生配置（firefox.sh）。无平台闸门：装在未测试设备上自担风险。
+description=Maruko 圆体（SC Regular/Medium 两档静态）接管系统字体家族，原生 fonts.xml 挂载；火狐走 Gecko 原生配置（firefox.sh）。无平台闸门：装在未测试设备上自担风险。
