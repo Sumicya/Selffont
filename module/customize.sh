@@ -8,11 +8,14 @@ command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 [ -n "$(ls -A "$MODPATH/system/fonts" 2>/dev/null)" ] ||
     abort "Selffont: 模块里没有字体文件。请用 build.py 打包，不要直接压缩仓库。"
 
-# 设备读哪份字体配置按厂商而定，都用包里同一份新语法配置（supportedAxes）填充：
-#   font_fallback.xml   AOSP 15+：SystemFonts 源码 FONTS_XML = font_fallback.xml
-#   fonts_base.xml      ColorOS 基础层（日志：Loading font config from /system_ext/etc/fonts_base.xml）
-#   fonts_ule.xml       ColorOS 界面实际使用的那层
-# 不碰库存 fonts.xml（AOSP 16 头注已标 DEPRECATED）与 fonts_customization.xml。
+# 读配置的程序有两类，各读各的，两份都得换：
+#   font_fallback.xml / fonts_base.xml / fonts_ule.xml   新语法，Android 框架（SystemFonts）读
+#   fonts.xml                                            库存旧语法，Skia 读，路径写死在
+#                                                        Skia 的 SkFontMgr_android_parser.cpp
+#                                                        （LMP_SYSTEM_FONTS_FILE）
+# Flutter（FlClash 这类）、WebView、部分厂商小组件走 Skia：只换前者，它们一个字都不变。
+# 2026-10-28 真机：/system/etc/fonts.xml 里 Selffont 出现 0 次，另外三份各 16 次。
+# fonts_customization.xml 不碰（它只管别名，不装字件）。
 # 模块内统一放 $MODPATH/system/<分区>/…：KernelSU 的 vendor / product / system_ext 就是
 # 指向 system/ 下同名的符号链接，直接建顶层分区目录会顶掉符号链接（已知会卡开机）。
 ROOT=${SELFFONT_SYSTEM_ROOT:-}
@@ -33,8 +36,61 @@ for partition in system system_ext product; do
     done
 done
 
+# Skia 那份（/system/etc/fonts.xml）**只插不换**：设备自己那份里有 OPPO Sans 等 OEM 字件，
+# 整份盖掉等于把它们删掉（真机反馈：天气小组件落到 OPPO Sans）。这里在设备那份的副本上
+# 做最小插入——默认链、sans-serif、中日韩语言族的最前面加我们的字件，其余行一个字节不动。
+insert="$MODPATH/fonts-insert.xml"
+skia="设备没有 /system/etc/fonts.xml：Flutter / WebView 不跟系统换字"
+if [ -f "$ROOT/system/etc/fonts.xml" ]; then
+    if [ -s "$insert" ]; then
+        mkdir -p "$MODPATH/system/etc"
+        awk -v rowsfile="$insert" '
+            function cjk(tag,   s, n, a, i, v) {
+                if (!match(tag, /lang="[^"]*"/)) return 0
+                s = substr(tag, RSTART + 6, RLENGTH - 7)
+                n = split(s, a, ",")
+                for (i = 1; i <= n; i++) {
+                    v = a[i]; sub(/-.*$/, "", v); gsub(/[ \t]/, "", v)
+                    if (tolower(v) == "zh" || tolower(v) == "ja" || tolower(v) == "ko") return 1
+                }
+                return 0
+            }
+            BEGIN {
+                while ((getline row < rowsfile) > 0) rows = rows row "\n"
+                close(rowsfile)
+            }
+            {
+                print
+                if (!opened && index($0, "<familyset") > 0) {
+                    print "    <family>"
+                    printf "%s", rows
+                    print "    </family>"
+                    opened = 1
+                    next
+                }
+                if ($0 ~ /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/) {
+                    if (index($0, "name=\"sans-serif\"") > 0 || cjk($0)) printf "%s", rows
+                }
+            }
+            ' "$ROOT/system/etc/fonts.xml" > "$MODPATH/system/etc/fonts.xml" 2>/dev/null
+        # 校验插进去了几条：拿插入行里的字件文件名去数（不写死 Selffont，
+        # 自检夹具用的就是别的名字）。grep -c 没命中会先打印 0 再返回 1，
+        # 写成 `|| echo 0` 会拿到两行的 "0\n0"，[ -gt 0 ] 直接报 Illegal number。
+        marker=$(sed -n 's|.*>\([^<]*\)</font>.*|\1|p' "$insert" | head -n 1)
+        touched=$(grep -c -F "$marker" "$MODPATH/system/etc/fonts.xml" 2>/dev/null || true)
+        [ -n "$touched" ] || touched=0
+        if [ "${touched:-0}" -gt 0 ]; then
+            skia="已插 $touched 处（默认链 / sans-serif / 中日韩语言族，OEM 字件原样保留）"
+        else
+            rm -f "$MODPATH/system/etc/fonts.xml"
+            skia="失败：设备 fonts.xml 插不进去，Flutter / WebView 不跟系统换字"
+        fi
+    fi
+fi
+
 if [ "$count" -gt 0 ]; then
     ui_print "Selffont: 已替换 $count 份字体配置：$replaced"
+    ui_print "Selffont: Skia 配置 /system/etc/fonts.xml：$skia"
     ui_print "Selffont: 重启后生效（字体文件挂在 /system/fonts）。"
 else
     abort "Selffont: 设备上没有可替换的字体配置（font_fallback.xml / fonts_base.xml / fonts_ule.xml 都没有）。本模块只支持带其中至少一份的设备。"

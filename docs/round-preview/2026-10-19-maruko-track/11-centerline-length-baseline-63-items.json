@@ -1,0 +1,80 @@
+[
+  {
+    "weight": "Light",
+    "sample_occurrences": 63,
+    "unique_characters": 62,
+    "mean_intraglyph_branch_cv": 0.8248835486091399,
+    "glyphs_with_intraglyph_cv": 59,
+    "median_total_centerline_fu": 3619.201153134918,
+    "cross_glyph_orientation_medians": {
+      "H": {
+        "glyph_occurrences": 57,
+        "mean_median_fu": 405.89772008684525,
+        "cv_across_glyphs": 0.9957044994249522
+      },
+      "V": {
+        "glyph_occurrences": 54,
+        "mean_median_fu": 380.7525777172327,
+        "cv_across_glyphs": 1.3190207990708451
+      },
+      "D": {
+        "glyph_occurrences": 52,
+        "mean_median_fu": 357.3640322062089,
+        "cv_across_glyphs": 0.6694468505489293
+      }
+    },
+    "interpretation": "Raster medial-axis paths between endpoints/junctions, not semantic Hanzi strokes. H/V/D are coarse PCA orientation groups. Exploratory baseline only."
+  },
+  {
+    "weight": "Regular",
+    "sample_occurrences": 63,
+    "unique_characters": 62,
+    "mean_intraglyph_branch_cv": 0.7338708358528546,
+    "glyphs_with_intraglyph_cv": 60,
+    "median_total_centerline_fu": 3475.517568746074,
+    "cross_glyph_orientation_medians": {
+      "H": {
+        "glyph_occurrences": 52,
+        "mean_median_fu": 430.9815438825817,
+        "cv_across_glyphs": 0.9075598051854469
+      },
+      "V": {
+        "glyph_occurrences": 54,
+        "mean_median_fu": 418.9155674284951,
+        "cv_across_glyphs": 1.1643154566941933
+      },
+      "D": {
+        "glyph_occurrences": 51,
+        "mean_median_fu": 352.9495201570022,
+        "cv_across_glyphs": 0.6882077900689818
+      }
+    },
+    "interpretation": "Raster medial-axis paths between endpoints/junctions, not semantic Hanzi strokes. H/V/D are coarse PCA orientation groups. Exploratory baseline only."
+  },
+  {
+    "weight": "Medium",
+    "sample_occurrences": 63,
+    "unique_characters": 62,
+    "mean_intraglyph_branch_cv": 0.7385358897921165,
+    "glyphs_with_intraglyph_cv": 60,
+    "median_total_centerline_fu": 3441.9818082164606,
+    "cross_glyph_orientation_medians": {
+      "H": {
+        "glyph_occurrences": 54,
+        "mean_median_fu": 415.3294600063434,
+        "cv_across_glyphs": 0.9511673586555425
+      },
+      "V": {
+        "glyph_occurrences": 55,
+        "mean_median_fu": 394.14644764452487,
+        "cv_across_glyphs": 1.2553252612281516
+      },
+      "D": {
+        "glyph_occurrences": 51,
+        "mean_median_fu": 375.96501976845553,
+        "cv_across_glyphs": 1.0608524410125746
+      }
+    },
+    "interpretation": "Raster medial-axis paths between endpoints/junctions, not semantic Hanzi strokes. H/V/D are coarse PCA orientation groups. Exploratory baseline only."
+  }
+]

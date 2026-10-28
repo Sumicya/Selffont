@@ -1,0 +1,56 @@
+# 马路口中轴宽度试验：逐字目标与跨字共享目标（2026-10-20；实验，不是全字体修复）
+
+## 输入与方法
+
+- 源字体仓库：`max32002/maruko-gothic`，固定提交 `97e9dd4a2fdde58084dde8d022de253f8d8415e9`；许可证 SIL OFL 1.1。
+- 输入文件 SHA-256：Light `5236beda2cc5019ed8f1bfc02dbd18f4e59e7286ddf9f2948ad23dfde6836391`；Regular `e3709389bce13fa75af28cc2370b6175520d97f74dfbf3894ca24838f47241b7`；Medium `b357990f8a1a30cec5e4502fb318b71b35e9e86b5ccd92e017c0f494d436f79d`。
+- 审计集沿用 `07-笔画宽度量化-3档字重-63字.txt` 的 63 个样本项；`国`重复一次，共 62 个不同字符/字形。原型按不同字形只处理一次，审计按原样本序列计权。
+- 三种输出都用 1200px 光栅、8% 边距和 `curve_simplify.py --tolerance 2.0 --seg-len 2.0`；roundtrip 控制只重建光栅轮廓、不改宽度。审计用同一 63 项，几何自检用 62 个唯一字形。
+- 逐字中位宽原型以每字骨架局部宽度中位数为目标。跨字试验先计算 62 个逐字中位数，再取其中位数作为该静态字重的共享目标；最终采用 `global_strength=0`（纯共享目标）。共享目标分别为 Light `37.03`、Regular `62.01`、Medium `87.94` font units。
+- 几何复核发现纯共享目标会使 Regular `文` 自交；只将 Regular `文` 回退到自身的逐字中位数目标（`63.50` units）。Light 与 Medium 的纯共享结果无需回退。一次 50% blend 中间试验则需回退 Medium `森`，但跨字 CV 不如纯共享目标，因此未选作最终实验结果。最终共享目标 + 单字回退的 62×3 项自交检查全部通过。
+
+## 结果
+
+跨字 CV 衡量 63 项中各字“平均笔画宽度”的差异；单字内部平均 CV 衡量同一个字内局部宽度的离散程度。CV 越低代表该项统计上的离散越小。
+
+| 字重 | 跨字 CV：原字 / roundtrip 控制 / 逐字中位宽 / 共享目标+回退 | 单字内部平均 CV：原字 / 控制 / 逐字中位宽 / 共享目标 | 单字内部最大 CV：原字 → 逐字中位宽 → 共享目标 |
+|---|---|---|---|
+| Light | 0.035 / 0.041 / 0.043 / **0.028** | 0.097 / 0.102 / 0.065 / **0.065** | 0.176（森）→0.107（绣）→**0.100（森）** |
+| Regular | 0.040 / 0.042 / 0.042 / **0.018** | 0.073 / 0.078 / 0.054 / **0.052** | 0.162（木）→0.105（木）→**0.105（绣）** |
+| Medium | 0.051 / 0.053 / 0.053 / **0.017** | 0.078 / 0.082 / 0.058 / **0.058** | 0.177（木）→0.141（森）→**0.157（森）** |
+
+- 相对原字，跨字 CV 分别从 `0.035→0.028`、`0.040→0.018`、`0.051→0.017`；相对逐字中位宽，分别下降 `0.015`、`0.024`、`0.036`。
+- 单字内部平均 CV 与逐字中位宽原型接近；最大内部 CV 并非每档都更好。因此该结果只支持所选跨字指标，不代表所有宽度指标或视觉效果都改善。
+- 相对逐字中位数的目标宽度设置变化（`target_shift`）约为 Light `-10.4%…+5.6%`、Regular `-7.3%…+12.7%`、Medium `-11.8%…+18.8%`；Regular `文` 使用逐字回退，目标变化为 0。与原字体相比，审计所得逐字平均宽度实际变化范围为 Light `-8.5%（一）…+8.5%（木）`、Regular `-8.7%（十）…+12.9%（雪）`、Medium `-10.9%（一）…+15.2%（雪）`。这是本轮接受的统计权衡，不等于字形视觉质量已确认。
+- 曾对 `一/十/木/雪/道/森/文` 等代表字做过 13 字三档原字 / 共享目标沙箱渲染对照；该历史图已于 2026-10-22 按用户要求清理。它仅是代表字抽查，不是 63 字视觉验收、全字体检查或真机验证。
+- 最终共享目标 / 回退输出的 62 个不同字形 × 三档，共 186 项 `tools/check_self_intersect.py` 检查均无失败。该检查只排除单轮廓自交，不证明比例、拓扑、字形风格或显示质量正确。
+
+## 再现命令
+
+先按 `requirements-research.txt` 安装可选研究依赖，并把固定提交的三个源 TTF 放在 `/tmp/selffont-maruko/`，文件名为 `Light.ttf`、`Regular.ttf`、`Medium.ttf`。本轮输出只放在 `/tmp`，不接入 `build.py`、字体包或发布流程。
+
+```sh
+CHARS_63='一二三十口日回国了乙人入八木林森永心必水走建进这远道你好中国语言文字书写规范长美丽颜色锦绣风雨雪龙马鸟虫鱼电子已己巳也包囚暖田'
+CHARS_UNIQUE='一二三十口日回国了乙人入八木林森永心必水走建进这远道你好中语言文字书写规范长美丽颜色锦绣风雨雪龙马鸟虫鱼电子已己巳也包囚暖田'
+
+for WEIGHT in Light Regular Medium; do
+  FONT="/tmp/selffont-maruko/$WEIGHT.ttf"
+  FALLBACK=''
+  if [ "$WEIGHT" = Regular ]; then FALLBACK='--fallback-chars 文'; fi
+  .venv/bin/python tools/stroke_width_normalize_prototype.py --mode global \
+    --global-strength 0 $FALLBACK --font "$FONT" \
+    --out "/tmp/selffont-maruko/$WEIGHT-global-raw.ttf" --chars "$CHARS_UNIQUE"
+  .venv/bin/python tools/curve_simplify.py \
+    "/tmp/selffont-maruko/$WEIGHT-global-raw.ttf" \
+    "/tmp/selffont-maruko/$WEIGHT-global.ttf" \
+    --chars "$CHARS_UNIQUE" --tolerance 2.0 --seg-len 2.0
+  .venv/bin/python tools/stroke_width_audit.py \
+    --font "/tmp/selffont-maruko/$WEIGHT-global.ttf" --chars "$CHARS_63"
+  .venv/bin/python tools/check_self_intersect.py \
+    "/tmp/selffont-maruko/$WEIGHT-global.ttf" -- "$CHARS_UNIQUE"
+done
+```
+
+## 结论边界
+
+本轮按主人选择优先降低跨字 CV，并接受不同字的平均笔画宽度变化。纯共享目标 + Regular `文` 单字回退，在这 63 个审计项上明显降低跨字 CV；但部分字的审计平均宽度变化达到约 15%，单字内部最大 CV 也非全部改善。结果支持继续小样本探索，不构成全字体修复或生产方案。下一步应先复核 13 字图；当前数据不足以直接替换或发布字体。
