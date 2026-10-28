@@ -59,6 +59,13 @@ def load(path: Path | None = None) -> dict[int, dict]:
     excluded = excluded_codepoints()
     if excluded:
         out = {cp: glyph for cp, glyph in out.items() if cp not in excluded}
+    # `design_cjk.bin` 是「环+尾」修复之前抽出来的，重新全量抽取要三个多小时
+    # （0.35 s/字 × 33,931 字），所以先按提取器的同一条规则在这里拆开。下次全量重抽
+    # 之后这一步自动变成空操作：拆过的环 `closed=True`，不会再命中。
+    from maruko_skeleton import split_ring_tail
+    for glyph in out.values():
+        if glyph.get("strokes"):
+            glyph["strokes"], _ = split_ring_tail(glyph["strokes"])
     if path is None:
         _CACHE = out
     return out

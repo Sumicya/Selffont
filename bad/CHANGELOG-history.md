@@ -1,5 +1,15 @@
 # 变更记录历史（已移出主 CHANGELOG，不对外展示）
 
+## 2026-10-27 · 自绘字体下线：CJK 主字体直接换成 Maruko SC 两档
+
+- **结论**：上一版的自绘 `SelffontCJK-Regular.otf`（19,352/20,977 字、40.6 MiB、需要 pathops 描边 + 额外 `<family>` + 13.7 MB 中线数据）整条下线，模块直接分发母版本体。理由：自绘的形状与母版同源同形（IoU 中位 0.948），覆盖率还低 7.7%，体积大一倍——自造只剩成本。
+- **主字体**：Maruko Gothic `CJK SC` 的 Regular（20,084,736 B）+ Medium（20,858,764 B），钉在固定提交 `97e9dd4` 的不可变 blob 上并校验 SHA-256；SIL OFL 1.1、无保留名，`licenses/MarukoGothic-OFL.txt` 随包。
+- **装配**：`configure_fonts()` 现在两种主字体都支持——单个可变字体出 `supportedAxes` 一条，多档静态按 weight 逐档列出（400/500），两档始终成对出现在同一族，混装配方式会让真机卡开机。安装副本改家族名为 `Selffont SC`，`nameID 16/17` 同步写入，Gecko 才能把 Regular/Medium 认成同族。
+- **删掉的东西**：`tools/design_cjk.py`、`tools/design_cjk.bin`（13.7 MB）、`tools/design_symbols.py`（1.2 MB 的 329 字样本）、`skia-pathops` 依赖、自绘字体的许可条目、`module/licenses/WenYuan-OFL.txt`（文渊下线）。
+- **自检**：新增 `maruko_primary` 一项（来源钉死、许可证哈希、静态两档成对、不带 `supportedAxes`、默认家族仍只留度量空壳、主字体紧跟其后）；`build_end_to_end` 的成员表改成 `licenses/MarukoGothic-OFL.txt`；共 **11 项全 PASS**。
+- **离线验证**：把网络取件换成 /tmp 里的真实字体跑完整 `build()` —— 两档各 20 MB 进包、匿名回退族是 `[(Regular,400),(Medium,500)]`、每个文件被 8 个族引用、许可证只写一次、`supportedAxes` 只出现在模板自带的字件上。
+- **未验证**：**两档静态的装机表现**（真机只验证过可变字体那一版）、`font_fallback.xml` 里新增静态阶梯会不会被 ColorOS 拒绝；包体预计与上一版持平（46 MiB VF → 41 MiB 静态）。
+
 ## 2026-10-27 · 二创接进生产：全 CJK 基本区 19,352 字成字体，单独成族排在主字体前
 
 - **换完**：按主人「要换就换完做就做好 全cjk搞好来」，二创从设计样本变成随模块发布的 `SelffontCJK-Regular.otf`；`font_fallback.xml` 里**单独一个 `<family>`、排在主字体之前**，二创覆盖到的汉字先落二创，其余照旧落文渊。

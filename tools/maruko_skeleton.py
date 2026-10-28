@@ -979,9 +979,69 @@ def bezier_strokes(path: Path, cp: int, hw=None, dot_r=None, probe=True, r=None)
             c = (round(float(j[0]), 1), round(float(j[1]), 1))
             out.append({"closed": False, "dot": True, "segs": [[c, c, c, c]]})
     out.extend(_dot_blobs(r, raw, han=is_han(cp)))
+    out, _ = split_ring_tail(out)
     if not out:
         return None
     return dict(half_width=half, strokes=out)
+
+
+def split_ring_tail(strokes, tol=45.0, min_arm=150.0, min_loop=500.0):
+    """把「绕过一圈、又接着走出去」的一条笔画拆成「闭合环 + 独立尾笔」。
+
+    为什么需要：`_assemble` 在交叉点把骨架切成臂、再把方向相反的臂接回一条穿过去的笔画。
+    笔画自己绕成环（`日`/`田`/`口` 的外框）时，环上的臂会跟穿过它的撇、竖发生「直穿」配对，
+    于是环和穿过它的笔画接成同一条：`暑` 的撇因此顺着 `日` 的外框走了一圈再出去，撇被拉成
+    环的一部分，收笔的圆头也没了（主人 2026-10-28：「暑的撇拉完了」）。
+
+    判据只看数据本身，不看是哪个字：折线上任意两点（相隔足够远、绕行长度 ≥ 0.5 em）回到
+    tol 以内，两侧各自还有不短的路，就在**回头点**把这条链拆成「环」与「尾」两段。
+    拆分只动拓扑、不动几何：环段按 closed 收口（两端相距 ≤ tol，接缝落在笔画自身的圆头里），
+    尾段单独成笔、两端各有圆头。三档共用同一份中线，拆完仍然逐一对应。
+    """
+    import math
+    out, split = [], 0
+    for stroke in strokes:
+        segs = stroke.get("segs") or []
+        if stroke.get("closed") or stroke.get("dot") or len(segs) < 8:
+            out.append(stroke)
+            continue
+        pts = [segs[0][0]] + [seg[3] for seg in segs]
+        n = len(pts)
+        cum = [0.0]
+        for a, b in zip(pts, pts[1:]):
+            cum.append(cum[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        best = None
+        for i in range(2, n - 4):
+            for j in range(i + 4, n):
+                if cum[j] - cum[i] < min_loop:
+                    continue
+                head, tail = cum[i], cum[-1] - cum[j]
+                if head < min_arm and tail < min_arm:
+                    continue
+                gap = math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1])
+                if gap > tol:
+                    continue
+                if best is None or gap < best[2]:
+                    best = (i, j, gap)
+        if best is None:
+            out.append(stroke)
+            continue
+        i, j, _ = best
+        ring = dict(stroke)
+        ring["segs"], ring["closed"] = segs[i:j], True
+        head = {k: v for k, v in stroke.items() if k != "closed"}
+        tail = {k: v for k, v in stroke.items() if k != "closed"}
+        pieces = []
+        if i > 0:
+            head["segs"] = segs[:i]
+            pieces.append(head)
+        if j < n - 1:
+            tail["segs"] = segs[j:]
+            pieces.append(tail)
+        out.append(ring)
+        out.extend(pieces)
+        split += 1
+    return out, split
 
 
 def is_han(cp: int) -> bool:

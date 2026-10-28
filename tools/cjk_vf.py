@@ -130,6 +130,56 @@ def align_face_height(rings: dict, weights=(300, 400, 500)) -> dict:
     return out
 
 
+def settle_junction_widths(glyph: dict, weights=(300, 400, 500)) -> None:
+    """把交叉口量胖的短笔半宽收回整字中位（就地改 `glyph["strokes"]` 的三档 hw）。
+
+    为什么要有这一步：取笔时每笔的半宽是从母版墨迹的距离变换上量的，量点落在交叉口
+    就会被邻笔的墨撑大——那里是两条笔画的并集，半径天然是笔宽的好几倍。实测
+    `棘`（U+68D8）右半交叉口那笔短笔量到半宽 77（母版该点实际 32.6、整字中位 27.8），
+    画出来是一坨黑斑；`荆`（U+8346）同样。这类短笔只是补路口圆角用的圆盘，半径应当
+    等于穿过路口的笔宽，也就是整字中位，绝不是交叉口并集的半径。
+
+    实测分布（2026-10-28，30,519 个汉字逐笔比「该笔半宽 ÷ 整字中位」）：中位 1.00，
+    5% 分位 0.87、95% 分位 1.09，超过 1.25 的只占 0.39%——正常笔画的偏差远小于此，
+    所以以「短于自身直径」判圆盘、「1.25 倍中位」判量胖，只碰异常笔。
+
+    只对汉字执行：非汉字里的实心符号（面填）本来就由长度不一的胶囊拼成，宽窄是设计，
+    按中位收回会把符号挖空。
+    """
+    strokes = glyph.get("strokes") or []
+    if len(strokes) < 2:
+        return
+    medians = {}
+    for weight in weights:
+        values = [(stroke.get("hw") or {}).get(weight) for stroke in strokes]
+        values = sorted(v for v in values if v)
+        if not values:
+            continue
+        mid = len(values) // 2
+        medians[weight] = (values[mid] if len(values) % 2
+                           else (values[mid - 1] + values[mid]) / 2.0)
+    if not medians:
+        return
+    for stroke in strokes:
+        hw = stroke.get("hw")
+        if not isinstance(hw, dict):
+            continue
+        length = 0.0
+        for seg in stroke.get("segs") or []:
+            for a, b in zip(seg, seg[1:]):
+                length += ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        own = hw.get(400) or 0.0
+        disc = length < 2.0 * own if own else True
+        for weight, median in medians.items():
+            value = hw.get(weight)
+            if not value:
+                continue
+            if disc:
+                hw[weight] = median
+            else:
+                hw[weight] = min(max(value, median * 0.7), median * 1.25)
+
+
 def _outside_frame(rings) -> str:
     """三档轮廓里有没有跑出字身框；返回原因（空串 = 没越界）。
 
@@ -186,6 +236,8 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
     default_glyphs[".notdef"] = empty
     for codepoint in sorted(glyphs):
         data = glyphs.pop(codepoint)
+        if is_han(codepoint):
+            settle_junction_widths(data)
         rings = _glyph_rings_all(data)
         rings = align_face_height(rings)
         advance = advance_of(codepoint, rings)
@@ -246,7 +298,12 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
     for name in order[1:]:
         glyph = default_glyphs[name]
         glyph.recalcBounds(builder.font["glyf"])
-        metrics[name] = (advance_by_name.get(name, 1000), 0)
+        # hmtx 的左边距必须写字形真实的 xMin：TrueType 的约定就是 lsb == xMin，写 0 是
+        # 「数据里说左边距为零、轮廓却从 200 开始」。FreeType 会按这个差值平移轮廓——
+        # 实测同一份 `日`（xMin 198）在 lsb=0 时比 lsb=xMin 时整体左移 198 单位，
+        # 满字库就是每个字按自己的 xMin 左移（`，` 偏 404 单位），行内空隙忽大忽小。
+        # 这个值**不改轮廓、不改字宽**，只让 hmtx 与 glyf 自洽。
+        metrics[name] = (advance_by_name.get(name, 1000), int(getattr(glyph, "xMin", 0)))
     builder.setupHorizontalMetrics(metrics)
     builder.setupHorizontalHeader(ascent=880, descent=-120)
     builder.setupNameTable({
