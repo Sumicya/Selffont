@@ -80,8 +80,49 @@ def advance_of(codepoint: int, rings: dict) -> int:
     return max(200, int(round(width)) + 2 * SIDE_BEARING)
 
 
+def recenter(rings: dict, advance: int) -> dict:
+    """把墨迹在字宽里重新居中：`lsb = (advance − 墨宽) / 2`。
+
+    为什么必须补这一步：字宽是**自算**的（墨宽 + 两侧 0.06 em 侧距），所以一个本来靠
+    母版坐标居中的符号（`·`、`：`、`+`、`-`）拿到新字宽后，墨迹还在原处——左边留 0.06 em、
+    右边留一整个差值，看过去就是「居中符号被改到左边去了」。字宽一改，墨迹就得跟着摆正：
+    取三档墨迹的并集包围盒，整体平移 (advance − 墨宽)/2 − xMin，取整到设计网格。
+    全角字（一个 em）不在这里动：它们的墨本来就在 1000 的单位框里设计好的。
+    """
+    points = [pt for weight_rings in rings.values() for ring in weight_rings for pt in ring]
+    if not points:
+        return rings
+    low = min(pt[0] for pt in points)
+    high = max(pt[0] for pt in points)
+    shift = int(round((advance - (high - low)) / 2.0 - low))
+    if not shift:
+        return rings
+    return {w: [[(x + shift, y) for x, y in ring] for ring in rs] for w, rs in rings.items()}
+
+
 def is_han(codepoint: int) -> bool:
     return any(low <= codepoint <= high for low, high in CJK_RANGES)
+
+
+def fit_frame(rings: dict, frame=FRAME) -> dict:
+    """汉字墨迹顶出字身框时，整字平移到框内——**平移，不是削形**。
+
+    字身框是硬规则（越界的字会顶到上一行/下一列）。实测只有 `鈅` 一字在 500 档
+    顶端越过 4 单位：能平移装下就平移，装不下才是设计错误。削掉那 4 单位等于改字形。
+    """
+    points = [pt for weight_rings in rings.values() for ring in weight_rings for pt in ring]
+    if not points:
+        return rings
+    x0, x1, y0, y1 = frame
+    low_x = min(pt[0] for pt in points)
+    high_x = max(pt[0] for pt in points)
+    low_y = min(pt[1] for pt in points)
+    high_y = max(pt[1] for pt in points)
+    shift_x = x0 - low_x if low_x < x0 else (x1 - high_x if high_x > x1 else 0)
+    shift_y = y0 - low_y if low_y < y0 else (y1 - high_y if high_y > y1 else 0)
+    if not shift_x and not shift_y:
+        return rings
+    return {w: [[(x + shift_x, y + shift_y) for x, y in ring] for ring in rs] for w, rs in rings.items()}
 
 
 def _outside_frame(rings) -> str:
@@ -142,7 +183,12 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selffont CJK",
         data = glyphs.pop(codepoint)
         rings = _glyph_rings_all(data)
         advance = advance_of(codepoint, rings)
-        outside = _outside_frame(rings) if is_han(codepoint) else ""
+        if advance != EM:
+            rings = recenter(rings, advance)
+        outside = ""
+        if is_han(codepoint):
+            rings = fit_frame(rings)
+            outside = _outside_frame(rings)
         if outside:
             REJECTS.append((codepoint, outside))
             continue
@@ -196,7 +242,10 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selffont CJK",
     for name in order[1:]:
         glyph = default_glyphs[name]
         glyph.recalcBounds(builder.font["glyf"])
-        metrics[name] = (advance_by_name.get(name, 1000), 0)
+        # hmtx 的 lsb 写真实 xMin：墨迹已经按字宽居中，左边界就是 xMin；写 0 会让
+        # 字体里出现「hmtx 说左边距 0、字形却从 60 开始」的矛盾数据，部分引擎按 lsb
+        # 取包围盒时会算错。渲染位置只看轮廓坐标，这个值不改变字形，只是让数据自洽。
+        metrics[name] = (advance_by_name.get(name, 1000), int(getattr(glyph, "xMin", 0)))
     builder.setupHorizontalMetrics(metrics)
     builder.setupHorizontalHeader(ascent=880, descent=-120)
     builder.setupNameTable({

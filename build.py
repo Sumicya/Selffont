@@ -433,8 +433,11 @@ def weight_ladder(axes: dict) -> list[dict]:
 
 # ---------------------------------------------------------------- 安装副本的三处修改
 
-HAN_RANGES = ((0x2A80, 0x2FDF), (0x3000, 0x312F), (0x3400, 0x4DBF),
-              (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2FA1F))
+# 汉字的码位范围。**只放汉字**：早先这里还带着 (0x2A80, 0x2FDF)（康熙部首/IDS）和
+# (0x3000, 0x312F)（汉字标点、假名、注音），于是 `〱` `〲`（竖排假名叠点，墨迹顶到 937）
+# 被当成汉字去卡 930 的行框，整个构建被判「行框会切墨迹」。它们不是汉字，它们该由
+# `usWinAscent`（跟真实墨迹走）管，不是由汉字的行框管。
+HAN_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2FA1F))
 
 
 def han_envelope(font: TTFont) -> tuple[int, int] | None:
@@ -2020,9 +2023,54 @@ def cjk_font():
         "二创族必须排在主字体之前，否则永远轮不到它"
 
 
+def emit_cjk_font(out_dir: Path) -> None:
+    """出二创汉字字件：数据 → 可变字体 → 行框锚定设备空壳 → 三个静态实例。
+
+    这一段原来是 `tools/build_cjk.py`。规范禁止把一次性辅助脚本堆在仓库里（同一个
+    `build.py` 能跑完的事，不该多一个入口），所以并回来当一个参数。
+    """
+    import io
+    import time
+    from fontTools.ttLib import TTFont
+    from fontTools.varLib.instancer import instantiateVariableFont
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    start = time.time()
+    glyphs = cjk_glyphs()
+    print(f"读数据 {len(glyphs)} 字 {time.time() - start:.1f}s", flush=True)
+
+    # 度量空壳：设备上就是基础包里的 Roboto；本机用自检里的同一份夹具，行框同一套数字。
+    carrier = layout_metrics(TTFont(io.BytesIO(make_carrier()), recalcBBoxes=False))
+    print("空壳度量", carrier, flush=True)
+
+    start = time.time()
+    data = build_cjk_font(glyphs, carrier)
+    print(f"编字体并校准 {len(data) / 1e6:.1f} MB {time.time() - start:.1f}s", flush=True)
+    (out_dir / CJK_FONT_NAME).write_bytes(data)
+
+    font = TTFont(io.BytesIO(data), recalcBBoxes=False)
+    hhea, os2 = font["hhea"], font["OS/2"]
+    print(f"  hhea {hhea.ascent}/{hhea.descent}/{hhea.lineGap}"
+          f"  typo {os2.sTypoAscender}/{os2.sTypoDescender}/{os2.sTypoLineGap}"
+          f"  win {os2.usWinAscent}/{os2.usWinDescent}")
+    low, high = ink_envelope(font)
+    print(f"  墨迹包络 {low}..{high}  字形数 {len(font.getGlyphOrder())}", flush=True)
+    del font
+
+    for weight in (300, 400, 500):
+        inst = instantiateVariableFont(TTFont(io.BytesIO(data)), {"wght": weight})
+        buf = io.BytesIO()
+        inst.save(buf)
+        (out_dir / f"static-{weight}.ttf").write_bytes(buf.getvalue())
+        print(f"  静态 {weight} {len(buf.getvalue()) / 1e6:.1f} MB", flush=True)
+    print("完成", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true", help="跑内建自检：不下载、不打包")
+    parser.add_argument("--cjk-font", type=Path, metavar="DIR",
+                        help="只出二创汉字字件（可变 + 三个静态实例）到 DIR，不下载、不打包")
     parser.add_argument("--base", help="基础包 ZIP：本地路径或 URL（默认下载并缓存）")
     parser.add_argument("--font", metavar="PATH|URL", help="主字体：本地文件或 URL（默认用内置来源）")
     parser.add_argument("--output", type=Path,
@@ -2037,7 +2085,9 @@ def main() -> None:
     parser.add_argument("--keep-web-fonts", action="store_true",
                         help="放行网页自带字体（图标字体等）；默认压成文渊")
     args = parser.parse_args()
-    if args.check:
+    if args.cjk_font:
+        emit_cjk_font(args.cjk_font)
+    elif args.check:
         run_checks()
     else:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,

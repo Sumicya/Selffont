@@ -6,13 +6,14 @@
 （见 `docs/design-principles.md` 2026-10-28 条）。
 
 文件格式（小端，顺序读）：
-    SFCJ3 + uint32 字数 + uint8 档数
-    每条记录：uint32 码位, uint8 笔画数
+    SFCJ4 + uint32 字数 + uint8 档数
+    每条记录：uint32 码位, uint16 笔画数
         每笔：uint8 标志（bit0 = 闭合环）, uint16 段数,
               3×uint16 该笔在 300/400/500 三档下的半宽×100, 2×int16 首段起点×10
             每段：6 个 int16 = 3 个控制点 (x*10, y*10)，起点恒等于上一段终点
 
-也认旧格式 SFCJ2（整字一个半宽），过渡期用固定比例摊到三档。
+为什么笔画数从 uint8 换成 uint16：实心符号走面填（扫描行胶囊）时，一个 `㉎` 这样的
+方框图要一百多条胶囊，装不进 255。旧格式 SFCJ3 / SFCJ2 仍能读，只是不再写。
 """
 from __future__ import annotations
 
@@ -21,8 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "design_cjk.bin"
-MAGIC = b"SFCJ3"
+MAGIC = b"SFCJ4"
 LEGACY_MAGIC = b"SFCJ2"
+OLD_MAGIC = b"SFCJ3"
 WEIGHTS = (300, 400, 500)
 
 _CACHE: dict[int, dict] | None = None
@@ -38,6 +40,8 @@ def load(path: Path | None = None) -> dict[int, dict]:
         raise FileNotFoundError(f"汉字字库数据不存在：{source}")
     raw = source.read_bytes()
     if raw[:5] == MAGIC:
+        out = _load4(raw)
+    elif raw[:5] == OLD_MAGIC:
         out = _load3(raw)
     elif raw[:5] == LEGACY_MAGIC:
         out = _load2(raw)
@@ -124,6 +128,39 @@ def excluded_codepoints() -> frozenset[int]:
         except ValueError:
             continue
     return frozenset(out)
+
+
+def _load4(raw: bytes) -> dict[int, dict]:
+    """当前格式：笔画数是 uint16（面填的胶囊一格里能有一百多条）。"""
+    count = struct.unpack_from("<I", raw, 5)[0]
+    nweight = raw[9]
+    weights = WEIGHTS[:nweight]
+    out: dict[int, dict] = {}
+    pos = 10
+    for _ in range(count):
+        cp, nstroke = struct.unpack_from("<IH", raw, pos)
+        pos += 6
+        strokes = []
+        for _ in range(nstroke):
+            flag, nseg = struct.unpack_from("<BH", raw, pos)
+            pos += 3
+            hws = struct.unpack_from("<" + "H" * nweight, raw, pos)
+            pos += 2 * nweight
+            start = struct.unpack_from("<2h", raw, pos)
+            pos += 4
+            segs = []
+            for _ in range(nseg):
+                v = struct.unpack_from("<6h", raw, pos)
+                pos += 12
+                segs.append([(start[0] / 10.0, start[1] / 10.0), (v[0] / 10.0, v[1] / 10.0),
+                             (v[2] / 10.0, v[3] / 10.0), (v[4] / 10.0, v[5] / 10.0)])
+                start = v[4:]
+            strokes.append({"closed": bool(flag & 1),
+                            "hw": {w: h / 100.0 for w, h in zip(weights, hws)}, "segs": segs})
+        out[cp] = {"strokes": strokes}
+    if pos != len(raw):
+        raise ValueError(f"汉字字库数据长度不符：读到 {pos}，文件 {len(raw)}")
+    return out
 
 
 def _load3(raw: bytes) -> dict[int, dict]:
@@ -280,6 +317,57 @@ def _offset_ring(axis, normals, half, side):
             for i in range(len(axis))]
 
 
+def _zero_length(stroke) -> bool:
+    """零长度笔：所有段的首末点重合，切向处处为零，单靠自己量不出形状。"""
+    points = [pt for seg in stroke["segs"] for pt in seg]
+    if not points:
+        return True
+    x0, y0 = points[0]
+    return all(abs(x - x0) < 0.5 and abs(y - y0) < 0.5 for x, y in points)
+
+
+def _centerline_points(stroke):
+    return [p for seg in stroke["segs"] for p in seg]
+
+
+def _covered(point, glyph, weight, own) -> bool:
+    """这一点是不是**落在别的笔画身上**。
+
+    骨架在交叉处会留下零长度笔当接点标记；这类笔不承载形状，画出来就是在交叉点盖一个
+    半径 30 的圆盘——`日`、`暑` 这类字里圆盘正落在字腔上，把封闭的小方块填实，于是
+    「孔少了」。但它跟 `.` `：` `·` `…` 的**字点**长得一模一样（也是一个零长度笔），
+    不能一律不画：上一版就是一刀切，把所有字点全删了，`：` 整字变成空白。
+
+    一刀切不成立，判据只能看**它是不是独立存在的墨**：点落在别的笔画的中线附近（到中线
+    距离不超过那一笔的半宽），说明它是交叉口；离所有中线都远，说明它是母版里独立的一团
+    圆墨，那就是字点，按半宽画圆。`·` `：` `…` 与 `日` 的交叉口在这条判据下分得干净。
+    """
+    px, py = point
+    for other in glyph.get("strokes", []):
+        if other is own or _zero_length(other):
+            continue
+        half = stroke_half(other, glyph, weight)
+        for a, b in zip(_centerline_points(other), _centerline_points(other)[1:]):
+            ax, ay = a
+            bx, by = b
+            dx, dy = bx - ax, by - ay
+            length2 = dx * dx + dy * dy
+            t = 0.0 if length2 < 1e-9 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length2))
+            qx, qy = ax + t * dx - px, ay + t * dy - py
+            if qx * qx + qy * qy <= (half * 0.9) ** 2:
+                return True
+    return False
+
+
+def _dot_contour(center, half):
+    """零长度笔按字点画：固定 2×ARC_STEPS 个点的正多边形，三档只变半径。"""
+    import math
+    n = ARC_STEPS * 2
+    ring = [(center[0] + half * math.cos(2 * math.pi * k / n),
+             center[1] + half * math.sin(2 * math.pi * k / n)) for k in range(n)]
+    return _as_cw(ring)
+
+
 def stroke_contours(stroke, weight, glyph=None):
     """一笔 → 一条闭合轮廓：左边界 → 终点半圆 → 右边界倒序 → 起点半圆。
 
@@ -293,6 +381,17 @@ def stroke_contours(stroke, weight, glyph=None):
     if not segs:
         return []
     half = stroke_half(stroke, glyph or {}, weight)
+    if _zero_length(stroke):
+        # 交叉口的接点标记：不画。独立的字点（`.` `·` `：`）按半宽画圆。
+        # 判据只看 400 档：可变字体要求三档点数逐一相同，如果 300 档因为半宽小一点
+        # 就把这个点判成「不画」，三档拓扑就对不上了（U+1E43 实测炸在构建期）。
+        # 形状随档变、**有没有这个点**不随档变。
+        if glyph is None or stroke_half(stroke, glyph, 400) < 1.0:
+            return []
+        center = stroke["segs"][0][0]
+        if _covered(center, glyph, 400, stroke):
+            return []
+        return [_dot_contour(center, half)]
     axis = _centerline(segs)
     if len(axis) < 2:
         return []
