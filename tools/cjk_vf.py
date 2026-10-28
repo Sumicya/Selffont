@@ -130,27 +130,6 @@ def align_face_height(rings: dict, weights=(300, 400, 500)) -> dict:
     return out
 
 
-def fit_frame(rings: dict, frame=FRAME) -> dict:
-    """汉字墨迹顶出字身框时，整字平移到框内——**平移，不是削形**。
-
-    字身框是硬规则（越界的字会顶到上一行/下一列）。实测只有 `鈅` 一字在 500 档
-    顶端越过 4 单位：能平移装下就平移，装不下才是设计错误。削掉那 4 单位等于改字形。
-    """
-    points = [pt for weight_rings in rings.values() for ring in weight_rings for pt in ring]
-    if not points:
-        return rings
-    x0, x1, y0, y1 = frame
-    low_x = min(pt[0] for pt in points)
-    high_x = max(pt[0] for pt in points)
-    low_y = min(pt[1] for pt in points)
-    high_y = max(pt[1] for pt in points)
-    shift_x = x0 - low_x if low_x < x0 else (x1 - high_x if high_x > x1 else 0)
-    shift_y = y0 - low_y if low_y < y0 else (y1 - high_y if high_y > y1 else 0)
-    if not shift_x and not shift_y:
-        return rings
-    return {w: [[(x + shift_x, y + shift_y) for x, y in ring] for ring in rs] for w, rs in rings.items()}
-
-
 def _outside_frame(rings) -> str:
     """三档轮廓里有没有跑出字身框；返回原因（空串 = 没越界）。
 
@@ -210,10 +189,10 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         rings = _glyph_rings_all(data)
         rings = align_face_height(rings)
         advance = advance_of(codepoint, rings)
-        outside = ""
-        if is_han(codepoint):
-            rings = fit_frame(rings)
-            outside = _outside_frame(rings)
+        # 字身框闸门：越界的汉字不进字体（宁可缺字也不发顶行的字）。越界不是靠平移
+        # 糊过去——`align_face_height` 把三档压到同一副字面之后，全库 0 个汉字越框；
+        # 真出现越界，说明取笔或校准有一处错了，要修那处，不是把字挪进框里。
+        outside = _outside_frame(rings) if is_han(codepoint) else ""
         if outside:
             REJECTS.append((codepoint, outside))
             continue
