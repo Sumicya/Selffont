@@ -80,28 +80,54 @@ def advance_of(codepoint: int, rings: dict) -> int:
     return max(200, int(round(width)) + 2 * SIDE_BEARING)
 
 
-def recenter(rings: dict, advance: int) -> dict:
-    """把墨迹在字宽里重新居中：`lsb = (advance − 墨宽) / 2`。
-
-    为什么必须补这一步：字宽是**自算**的（墨宽 + 两侧 0.06 em 侧距），所以一个本来靠
-    母版坐标居中的符号（`·`、`：`、`+`、`-`）拿到新字宽后，墨迹还在原处——左边留 0.06 em、
-    右边留一整个差值，看过去就是「居中符号被改到左边去了」。字宽一改，墨迹就得跟着摆正：
-    取三档墨迹的并集包围盒，整体平移 (advance − 墨宽)/2 − xMin，取整到设计网格。
-    全角字（一个 em）不在这里动：它们的墨本来就在 1000 的单位框里设计好的。
-    """
-    points = [pt for weight_rings in rings.values() for ring in weight_rings for pt in ring]
-    if not points:
-        return rings
-    low = min(pt[0] for pt in points)
-    high = max(pt[0] for pt in points)
-    shift = int(round((advance - (high - low)) / 2.0 - low))
-    if not shift:
-        return rings
-    return {w: [[(x + shift, y) for x, y in ring] for ring in rs] for w, rs in rings.items()}
-
-
 def is_han(codepoint: int) -> bool:
     return any(low <= codepoint <= high for low, high in CJK_RANGES)
+
+
+def align_face_height(rings: dict, weights=(300, 400, 500)) -> dict:
+    """同一码位在三档下的**墨迹上下沿必须一致**：字重只改笔画粗细，不改字面高度。
+
+    实测（2026-10-28，构建产物 static-300/400/500，30,385 个汉字逐字比墨迹高）：
+    高 400/300 的中位比值 1.024、500/400 的中位比值 1.025，上沿 400−300 中位 +11、
+    500−400 中位 +12，下沿同量下沉——每加一档字面就长大 2.5%，两档合计 5%。
+    后果是同一行里混排 300 与 500 时，粗的那几个字看着「字号被调大了」，不是「变粗了」；
+    500 档的 `Ȭ`（yMax 981）甚至顶穿了 `usWinAscent` 969 被裁掉上沿。
+
+    做法只动竖直方向：以 400 档的墨迹框上沿/下沿为目标，把 300/500 的轮廓沿 y 以框中心
+    缩放对齐。**x 一个数都不动**（字宽、侧距、墨迹左右位置属于另两项授权外的事）。
+    代价：500 档横画笔宽在竖直方向被压 2.5%（62 单位里 1.5 单位），肉眼不可见；
+    换来的是三档同一副字面高度，VF 插值过程中字面框不再随轴滑动。
+    """
+    if not rings:
+        return rings
+    base = rings.get(400)
+    if not base:
+        return rings
+    points = [pt for ring in base for pt in ring]
+    if not points:
+        return rings
+    low, high = min(pt[1] for pt in points), max(pt[1] for pt in points)
+    if high - low < 1.0:
+        return rings
+    centre = (low + high) / 2.0
+    out = {}
+    for weight, weight_rings in rings.items():
+        if weight == 400:
+            out[weight] = weight_rings
+            continue
+        own = [pt for ring in weight_rings for pt in ring]
+        if not own:
+            out[weight] = weight_rings
+            continue
+        own_low, own_high = min(pt[1] for pt in own), max(pt[1] for pt in own)
+        if own_high - own_low < 1.0:
+            out[weight] = weight_rings
+            continue
+        scale = (high - low) / (own_high - own_low)
+        own_centre = (own_low + own_high) / 2.0
+        out[weight] = [[(x, centre + (y - own_centre) * scale) for x, y in ring]
+                       for ring in weight_rings]
+    return out
 
 
 def fit_frame(rings: dict, frame=FRAME) -> dict:
@@ -145,8 +171,8 @@ def _glyph_rings_all(glyph: dict):
     return design_cjk.outline_points_all(glyph)
 
 
-def build_vf(glyphs: dict[int, dict], family: str = "Selffont CJK",
-             style: str = "Regular", ps_name: str = "SelffontCJK") -> bytes:
+def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
+             style: str = "Regular", ps_name: str = "SelfroundsCJK") -> bytes:
     """码位 → 可变 OTF（TrueType 轮廓 + gvar），单一 wght 轴 300–500。
 
     **会消费传入的字典**：每建一个字就 pop 掉，三万字全摊成 Python 对象要 500 MB 以上，
@@ -182,9 +208,8 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selffont CJK",
     for codepoint in sorted(glyphs):
         data = glyphs.pop(codepoint)
         rings = _glyph_rings_all(data)
+        rings = align_face_height(rings)
         advance = advance_of(codepoint, rings)
-        if advance != EM:
-            rings = recenter(rings, advance)
         outside = ""
         if is_han(codepoint):
             rings = fit_frame(rings)
@@ -242,10 +267,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selffont CJK",
     for name in order[1:]:
         glyph = default_glyphs[name]
         glyph.recalcBounds(builder.font["glyf"])
-        # hmtx 的 lsb 写真实 xMin：墨迹已经按字宽居中，左边界就是 xMin；写 0 会让
-        # 字体里出现「hmtx 说左边距 0、字形却从 60 开始」的矛盾数据，部分引擎按 lsb
-        # 取包围盒时会算错。渲染位置只看轮廓坐标，这个值不改变字形，只是让数据自洽。
-        metrics[name] = (advance_by_name.get(name, 1000), int(getattr(glyph, "xMin", 0)))
+        metrics[name] = (advance_by_name.get(name, 1000), 0)
     builder.setupHorizontalMetrics(metrics)
     builder.setupHorizontalHeader(ascent=880, descent=-120)
     builder.setupNameTable({

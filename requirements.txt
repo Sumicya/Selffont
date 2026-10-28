@@ -1,1 +1,9 @@
-fonttools==4.66.0
+# 构建（build.py --cjk-font）只需要 fontTools；版本锁在实测通过的那一版。
+fonttools==4.68.0
+# 取笔管线（tools/maruko_skeleton.py）独立于构建运行：栅格化用 Pillow、骨架化用 scikit-image、
+# 布尔求并用 skia-pathops。只在重新从母版量中线时用到，构建本身不 import 它们。
+pillow==13.0.0
+numpy==2.4.6
+scipy==1.17.1
+scikit-image==0.26.0
+skia-pathops==0.9.2

@@ -89,27 +89,6 @@ def blank_characters() -> dict[int, int]:
     return out
 
 
-def advance_widths() -> dict[int, int]:
-    """码位 → advance 宽度（从母版量的）。
-
-    CJK 一律 1000，但空格 280、`a` 535、`A` 653、`1` 383——全写成 1000 的话空格会变成
-    一个全角空、拉丁和数字被摊开。这个字件排在主字体之前，这些字符本来会被它接走。
-    """
-    if not ADVANCE.exists():
-        return {}
-    raw = ADVANCE.read_bytes()
-    if raw[:4] != b"SFCA":
-        raise ValueError(f"字宽数据魔数不符：{ADVANCE}")
-    count = struct.unpack_from("<I", raw, 4)[0]
-    out = {}
-    pos = 8
-    for _ in range(count):
-        codepoint, advance = struct.unpack_from("<IH", raw, pos)
-        pos += 6
-        out[codepoint] = advance
-    return out
-
-
 def excluded_codepoints() -> frozenset[int]:
     """结构体检刷下来的字（见 tools/qa_glyphs.py）。
 
@@ -226,31 +205,6 @@ def _load2(raw: bytes) -> dict[int, dict]:
 def glyph(codepoint: int) -> dict | None:
     return load().get(codepoint)
 
-
-def outline(glyph: dict):
-    """笔画中线 → 轮廓（2×半宽描边、圆端头 + 圆转角），返回 pathops.Path。
-
-    与 `tools/design_symbols.py::_stroked` 同一套几何：轮廓是中线和半径 hw 的圆的
-    闵可夫斯基和，所以端头构造上就是半圆、拐角构造上就是圆弧。零长度段（T 字路口
-    补的圆盘）在圆头描边下**就是一个圆**，不需要单独处理。
-    """
-    import pathops
-
-    acc = pathops.Path()
-    hw = glyph["hw"]
-    for stroke in glyph["strokes"]:
-        segs = stroke["segs"]
-        p = pathops.Path()
-        p.moveTo(*segs[0][0])
-        for seg in segs:
-            p.cubicTo(*seg[1], *seg[2], *seg[3])
-        if stroke.get("closed"):
-            p.close()
-        p.stroke(2 * hw, pathops.LineCap.ROUND_CAP, pathops.LineJoin.ROUND_JOIN, 4)
-        p.convertConicsToQuads(0.1)
-        acc.addPath(p)
-    acc.simplify(fix_winding=True, keep_starting_points=False)
-    return acc
 
 # ---------------------------------------------------------------- 可变字体用的固定拓扑描边
 

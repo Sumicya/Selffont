@@ -1,9 +1,0 @@
-# Optional dependencies for glyph audit, heatmap, rendering, self-intersection checks,
-# and experimental stroke-width/centerline-length research tools. Not required to build a release package.
-fonttools==4.66.0
-matplotlib==3.11.2
-numpy==2.4.6
-Pillow==13.0.0
-scikit-image==0.26.0
-scipy==1.17.1
-shapely==2.2.0

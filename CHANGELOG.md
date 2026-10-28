@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2026-10-28 · 字面高度三档对齐、命名 Selfrounds、工具目录收敛
+
+- **先量后改**：这一轮先出测量报告再动手。实测（构建产物 `static-300/400/500.ttf`，30,385 个汉字逐字量墨迹上沿/下沿）：汉字墨迹包络 300 档 −130…886（高 1016）、400 档 −129…888（高 1017）、500 档 −152…900（高 1052）；单字墨迹高度比 **400/300 中位 1.024、500/400 中位 1.025**（5%–95% 分位 1.015–1.030、1.020–1.031），上沿 400−300 中位 +11、500−400 中位 +12，下沿同量下沉。结论：**字重每加一档，字面就长大 2.5%**，三档不是同一副字面。
+- **只围绕字面高度校准**：`cjk_vf.align_face_height()`——以 400 档的墨迹框上沿/下沿为目标，把 300/500 的轮廓沿 y 以框中心缩放对齐。**x 一个数都不动**（字宽、侧距、墨迹左右位置属于另两项授权外的事）。校准后三档：汉字墨迹包络全部 −129…892（高 1021），单字墨迹最高 1001（籪）、最低 68（一），逐字上下沿比对 **33,918 个字形里 977 个差 1 单位**（整数网格取整，逐档不会漂），其余逐一相同。代价：500 档竖直方向压缩 2.5%（62 单位里约 1.5 单位）。
+- **回退上一轮越界改动**（提交 `841736c` 的部分，按反向 patch 撤，不拿新改动盖）：`cjk_vf.recenter()` 墨心居中平移整段删除、hmtx 的 lsb 由「真实 xMin」改回 0。改之前 `·` 205 字宽下左 90 右 53、`+` 124/15、`×` 170/−34（`×` 右边距是负数，墨迹顶出字宽）；改回后 `·` 72/71、`+` 70/69、`×` 68/68、`a` 72/71、`A` 75/74、`1` 73/73——符号与字母回到母版原来的居中位置。**advance 逻辑（`advance_of`）一行未动**；上下行距（hhea/typo/usWin 的 930/−250/0、969/250）**只测不改**。
+- **命名统一为 Selfrounds**：`CJK_FONT_NAME` → `SelfroundsCJK-VF.ttf`、`CJK_FAMILY` → `Selfrounds CJK`、`ps_name` → `SelfroundsCJK-VF`；README 一句话简介、`LICENSES.md` 中英文两条、`docs/design-principles.md` 的 OFL 改名条目同步。旧名 `Selffont CJK` / `SelffontCJK-VF` 在提交历史里照实保留，不回填。
+- **工具目录收敛（按四类禁入第 4 类定性删除）**：`tools/` **54 个条目 → 6 个**（删 47 个脚本 + 1 个 `__pycache__`）。删：`build_tsukushi_a_v9/v10`、`render_tsukushi_a_preview/v10`、`tsukushi_a_preview_simplify`、`audit_tsukushi_a_candidate`、`hook_cut`/`hook_cut_hybrid`/`hook_erase`/`hook_pathops`/`hook_taper`/`hook_verify`、`round`/`vf_round`/`batch_vf_merge`、`le_slant`/`foot_trim`/`dian_box_compress`/`jiu_na_taper`/`curve_arc_merge`/`curve_fit_g1`/`curve_simplify`/`fair_curve`/`g1_audit`、`skeleton_rebuild_prototype`/`stroke_centerline_rebuild_prototype`/`stroke_width_audit`/`stroke_width_heatmap`/`stroke_width_normalize_prototype`/`stroke_length_audit`、`audit_maruko_coverage`/`audit_maruko_regional_coverage`/`coverage_audit`/`terminal_audit`、`render_grid`/`render_maruko_refinement`、`glyph-lab`（网页小工具）、`import_glyphs`/`merge_strokes`/`modernize_maruko`/`maruko_vf_build`/`compose_maruko_hangul`/`restore_glyph_outlines`/`check_self_intersect`/`qa_glyphs`/`freetype_iou`/`symbol_targets`。留：`design_cjk.py`（数据读取与固定拓扑描边）、`cjk_vf.py`（VF 编译）、`maruko_skeleton.py`（**取笔管线本身，主线**）、`design_cjk.bin` 与两张码位表。同一批删掉 `tests/`（15 个文件、1405 行，逐一核过：全部只测已删脚本）、`requirements-research.txt`（额外依赖表）、`docs/round-preview/`（20 个条目、38 个文件、1.6 MB 过程材料）、`docs/README.md` 与 `docs/decisions-笔画简化.md`（过程文档）、根 `TODO.md`。
+- **未完成项并进本文件**（`TODO.md` 删除前逐条核过）：① `uni4910`（暖）并发合并碰撞的真修复；② 逐字视觉校稿；③ TC / JP / KR Hanja 覆盖；④ 母版 Light 档之外的更深字重；⑤ 拐角观感（主人 2026-10-17「整体仍太方」）——`round.py` 那套削圆已按第 4 类删除，这条重新变成未解；⑥ 真机渲染实测（本文件此前所有「已验证」都只到配置层）。
+- **自检**：`build.py --check` **11 项全 PASS**（`python3` 换成 `.venv` 后实测）；`requirements.txt` 补全取笔管线的依赖并锁到实测版本（fonttools 4.68.0 / pillow 13.0.0 / numpy 2.4.6 / scipy 1.17.1 / scikit-image 0.26.0 / skia-pathops 0.9.2）；`design_cjk.py` 删掉两个死函数（`advance_widths` 引用未定义的 `ADVANCE`，且「整表搬 advance」已被主人否决；`outline` 是 pathops 描边旧路线）。
+
 ## 2026-10-28 · 补回 1,040 字、字宽回正墨心、字腔与面填
 
 - **一个都不放弃**：上一版按「孔/连通块/IoU<0.55」自动刷掉 1,040 个码位（其中 942 个汉字、98 个非汉字符号）。这一版全部补回，`tools/design_cjk_exclude.txt` 清空并写明「以后加回来一条，只能是取法错了，不是『画不像母版』」。字库从 32,878 字回到 **33,918 字**，字件 **33,931 个字形 / cmap 33,930**。
@@ -54,34 +64,3 @@
 - **自检**：`build.py --check` 新增 `cjk_font` 一项（数据可读、能编 OTF、cmap 一对一、单独成族、不带 lang、排在主字体之前），共 **11 项全 PASS**。
 - **图**：`覆盖-CJK基本区.png`（逐码位收录）、`并排24字-对Maruko.png`（左母版右二创）。
 - **未做/未验证**：字重只有一档（母版有 Light/Regular/Medium）、扩展 A 区 6,582 字没跑、**真机渲染未验证**（新增一个 family 是否卡开机只有装机才知道）。
-
-## 2026-10-27 · 二创扩到 329 字；收字判据先定后跑；按眼睛否掉一个
-
-- **方向**：按主人「放弃去钩转向扩字集」，本轮不碰钩、不改形状，只扩字集。二创从 147 字扩到 **329 字**，新增 **182 字**（日月星辰 / 时间 / 方位 / 起居动作 / 亲属称谓 / 五行木石 六组高频字）。
-- **判据（先定后跑）**：①码位必须在母版 Maruko 的 cmap 里（本轮实测 329 字全部命中，缺失 0）；②同窗口栅格比对 IoU ≥0.93 且墨量比 0.92–1.07；③逐字过图。试了 215 个新字，判据放进 182 个。
-- **实测**：新批 182 字 IoU 中位 **0.948**、最低 0.931、最高 0.968；墨量比 0.94–1.05、中位 0.994。全量 329 字最低仍是上一批的 `了` 0.914，没有一字低于 0.91。
-- **按眼睛否掉**：`够` 判据 0.94/0.98 过关，但放大后右半边「多」的两个「夕」交角处有一小块尖刺（两条近似相切的圆头描边交叉留下的箭头形凸起），阈值抓不到这种小面积缺陷，整字不收。
-- **未过的 33 字与真因**：`霜/露/雾/霞/零` 一族卡在 0.89–0.90，墨量比接近 1.0、形状也对，差的是每个笔画端头一圈 1–2 单位的边——这类密排字的骨架半宽被**笔画之间的空隙**压小（实测 `霜` 24.5、`雷` 26.8，简单字是 33），根因在「半宽逐字实测」量到的是空隙内切半径而不是笔宽；这一版没改这一层，所以先不收。`路` 仍 0.65，母版右下角本来就是实心墨块，与 `丸` 同类。
-- **图**：`二创329字-对Maruko.png`、`新增182字-对Maruko.png`、`放大8字-对Maruko.png`；旧的 `二创147字-对Maruko.png`、`新增50字-对Maruko.png` 同提交删除。
-- **未做**：二创仍是单字重静态、没接进 `build.py` 生产路径。`configure_fonts()` 里记着真机结论——同一 `<family>` 混「带 supportedAxes 的可变字体」与静态字体会让 ColorOS 16 开机卡第一屏；要接只能单开一个 `<family>` 排前面（粗体那批字会偏细）或先做出多档字重，两条都有取舍，没替主人选，也没做没验证过的 `fonts.xml` 改动。
-
-## 2026-10-27 · 放弃去钩转扩字集；修字腔栅格化；二创 147 字
-
-- **方向**：按主人「放弃去钩转向扩字集」，把去钩、折弯钩改横捺、`DETACH` 断开三套机制整段删除，笔画照母版骨架原样取。理由：去钩要逐字判钩根（`九` 卷 180°、`乙` 贴墨迹底、`几`/`凡` 短而平，无共同参数）并配白名单，每加一字都要人工裁决，扩不动字集；而母版的钩只是端点一小段回卷，圆头描边照原样就是它的写法。
-- **根因**：`rasterize()` 早先把每个轮廓都按实心填，字腔被填满——`口` 的骨架只剩 50 点、实测半宽 332（正常 33），塌成一个半径 330 的小团。旧记录里「闭合环字输出 0 条」「`面` 墨量 0.176」的真因就是它，不是闭合环分支没生效。改为先用 pathOps 按 nonzero 求并（输出即最终墨迹、绕向已规范），再按有向面积分层填。
-- **围框字**：`口 日 田 回 目 白 巴 电 包 中 女 面` 12 字全部可用，IoU 0.93–0.97。
-- **扩字集**：二创从 85 字扩到 **147 字**；本轮新增 50 个高频字（`的一是我在有个这们来到时地为你说国年就那和要她出里后自以家可而过能对多然学都好看起发当没成只如全已身`）。
-- **实测**：147 字 IoU 中位 0.951、最低 0.914（`了`），墨量比 0.96–1.04、中位 0.99 —— 这一版不再有「为了改形状而丢墨」的字。
-- **判据（新）**：`tools/maruko_skeleton.py` 里只保留「骨架 → 臂分解 → 直穿配对 → 交叉点圆盘 → 锐角切段 → B 样条 → 圆头描边」，试字时用「IoU ≥0.93 且墨量比 0.92–1.07」筛，逐字过图后才入库。
-- **图**：`二创147字-对Maruko.png`、`新增50字-对Maruko.png`、`围框字12-对Maruko.png`、`母版钩与交叉-4x.png`；旧的 `二创85字-对Maruko.png`、`横折弯钩改横捺与T字路口-4x.png` 同提交删除。
-- **未做**：`電/象/路/雨` 等仍不在这批（`路` 是母版自身缺点，右下角本来就是实心块，与 `丸` 同类）；二创仍只落在 `tools/design_symbols.py` 的设计样本里，没接进 `build.py` 生产路径。
-
-## 2026-10-27 · 号源改回 CI 运行数；两个工作流按 C1–C6 重写；清理脚本统一
-
-- **号源**：版本号回到 CI 运行数——总序号 = `build.yml` 本次运行的 `run_number` 原值，当日序号按差值锚定法（当日现存运行的最小 `run_number` 与当日产物 `Selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，取小作 `R_first`）。`build.py` 删掉全部 `git rev-list`/`rev-parse` 取数函数，`--query-git` 换成 `--query-ci`，自检改为 10 组合成数据的纯函数用例。
-- **工作流**：`build.yml` 拆成 `build`（只读取号出包）/`cleanup-artifacts`（`needs: build` + `if: always()`）/`cleanup-releases`（`if: always()` 且限默认分支，仅 `contents: write`）三个 job；`pr-check.yml` 改为 `check` + `cleanup-artifacts`。顶部注释压到 5 行内，步骤名改中文短语，去掉 `fetch-depth: 0`。
-- **清理脚本**：`.github/scripts/cleanup.py` 重写为全仓统一接口（`GH_TOKEN/REPO/RUN_ID/SEGMENTS/CLEANUP_APPLY/CLEANUP_SCOPE`），artifact 第四判据改为「末段总序号 == 来源运行的 `run_number`」，删掉全部 git 命令调用，两处清理共用 `selffont-cleanup` 锁，403 打 warning、非 403 当轮红。
-- **构建**：补充字库共用的 OFL（三个来源都叫 `NewUnicode-OFL.txt`）只写进包一次——重复写会在 zip 里留下同名条目，解包时要人确认覆盖、CI 直接卡死；解包命令同时加 `-o`，非交互。
-- **构建**：基础包自带同名但内容不同的补充字体（实测 `NotoSansPro.otf`）不再中止构建，改为按本仓固定、带许可与覆盖区间声明的那份打包并记警告；同名字件只进包一份。
-- **字体配置**：补上 `Noto-COLRv1.ttf` 的回退家族（排在 `NotoEmoji.ttf` 之后，彩色补单色没有那批，老系统自动落上一支）——此前该补充字体在清单里却没有任何一处引用，构建期「每个补充字体恰好引用一次」直接判红。
-- **字体配置**：`fonts.xml` 把 `NotoEmoji.ttf` 从 `NotoUnicode.otf` 与 `NotoMusic-Regular.ttf` 之间挪到 Noto Music 之后，修掉连红四轮的 `supplemental_font_reference`。

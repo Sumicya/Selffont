@@ -178,8 +178,8 @@ SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE, NEW_UNICODE_18, NEW_UNICODE_17,
 # 单独成族是硬要求：configure_fonts 的注释里记着真机结论——同一个 family 里混
 # supportedAxes 可变字体与静态字体会让 ColorOS 16 开机卡第一屏。
 CJK_DATA = ROOT / "tools" / "design_cjk.bin"
-CJK_FONT_NAME = "SelffontCJK-VF.ttf"   # 可变字体（wght 300–500），一份顶三档
-CJK_FAMILY = "Selffont CJK"
+CJK_FONT_NAME = "SelfroundsCJK-VF.ttf"   # 可变字体（wght 300–500），一份顶三档
+CJK_FAMILY = "Selfrounds CJK"
 CJK_AXES = "wght"                      # 可变轴：安装配置里写成 supportedAxes
 CJK_LICENSE = ROOT / "LICENSES" / "MarukoGothic-OFL.txt"
 CJK_LICENSE_NAME = "MarukoGothic-OFL.txt"
@@ -612,7 +612,7 @@ def build_cjk_font(glyphs: dict[int, dict], carrier: dict | None = None) -> byte
     _sys.path.insert(0, str(ROOT / "tools"))
     import cjk_vf
     data = cjk_vf.build_vf(glyphs, family=CJK_FAMILY, style="Regular",
-                           ps_name="SelffontCJK-VF")
+                           ps_name="SelfroundsCJK-VF")
     rejected = list(cjk_vf.REJECTS)
     if rejected:
         print(f"  越出字身框未收 {len(rejected)} 字（例 {', '.join(chr(cp) for cp, _ in rejected[:6])}）")
