@@ -209,6 +209,64 @@ def _load2(raw: bytes) -> dict[int, dict]:
     return out
 
 
+def rewrite_half_widths(measured: dict[int, list[float]], path: Path | None = None) -> tuple[int, int]:
+    """把重测的 400 档半宽原地写回数据文件，返回（改动字数, 改动笔数）。
+
+    为什么要重测：旧数据里「一笔多宽」是取笔时用**横截面行走**量的——沿法向一直走到
+    墨迹边界为止，上限是 2×整字半宽。密排字里两条笔画之间只隔十来个单位，行走会直接
+    跨过白缝量到邻笔的另一侧，于是整字每一笔都被量成半宽 40–56（`叠` 29 笔存值中位
+    52.1，母版同一批横截面的中位只有 21）。画出来就是黑团，字腔被糊掉。
+
+    重测改用**距离变换**：字形按 1 单位 = 1 像素栅格化，沿中轴取样，取骨架上每点到
+    背景距离的中位数。这个量在并集处只会被「最近的空隙」压低，不会被邻笔撑大——正是
+    描边时要的那个半径。
+
+    只改 400 档的绝对值；300/500 档按原值与 400 档的比例跟着走：三档之间本来只差
+    笔画粗细，比例是母版实测出来的，重测要校正的是「同一笔被量胖」，不是三档关系。
+    `measured` 里没有的码位、以及实测落在骨架外的笔（值为 None）保持原样。
+    """
+    source = Path(path) if path else DATA
+    raw = bytearray(source.read_bytes())
+    if raw[:5] != MAGIC:
+        raise ValueError(f"只有 SFCJ4 格式支持重写半宽：{source}")
+    count = struct.unpack_from("<I", raw, 5)[0]
+    nweight = raw[9]
+    weights = WEIGHTS[:nweight]
+    if 400 not in weights:
+        raise ValueError(f"数据文件里没有 400 档，无法重测：{source}")
+    at400 = weights.index(400)
+    pos = 10
+    glyphs_changed = strokes_changed = 0
+    for _ in range(count):
+        cp, nstroke = struct.unpack_from("<IH", raw, pos)
+        pos += 6
+        wanted = measured.get(cp)
+        changed = 0
+        for index in range(nstroke):
+            flag, nseg = struct.unpack_from("<BH", raw, pos)
+            pos += 3
+            field = pos
+            hws = struct.unpack_from("<" + "H" * nweight, raw, field)
+            pos += 2 * nweight + 4 + 12 * nseg
+            if not wanted or index >= len(wanted) or wanted[index] is None:
+                continue
+            old = hws[at400] / 100.0
+            new = wanted[index]
+            if old <= 0 or new <= 0:
+                continue
+            ratio = new / old
+            values = [max(1, min(65535, int(round(v * ratio)))) for v in hws]
+            struct.pack_into("<" + "H" * nweight, raw, field, *values)
+            changed += 1
+        if changed:
+            glyphs_changed += 1
+            strokes_changed += changed
+    if pos != len(raw):
+        raise ValueError(f"数据文件长度不符：读到 {pos}，文件 {len(raw)}")
+    source.write_bytes(bytes(raw))
+    return glyphs_changed, strokes_changed
+
+
 def glyph(codepoint: int) -> dict | None:
     return load().get(codepoint)
 

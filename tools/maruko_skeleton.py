@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 from fontTools.pens.recordingPen import DecomposingRecordingPen, RecordingPen
 from fontTools.ttLib import TTFont
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
 
 UPM = 1000
@@ -1132,8 +1132,93 @@ def stroke_outline(bezier_list, hw=HW):
     return acc
 
 
+def _polyline_of_stroke(stroke, steps=8, step=6.0):
+    """一笔的三次贝塞尔段 → 按弧长重采样的中线点列（单位：字体单位）。"""
+    pts = []
+    for seg in stroke.get("segs") or []:
+        p = seg[0]
+        pts.append(p)
+        for k in range(1, steps + 1):
+            t = k / steps
+            u = 1 - t
+            q = (u ** 3 * seg[0][0] + 3 * u * u * t * seg[1][0] + 3 * u * t * t * seg[2][0] + t ** 3 * seg[3][0],
+                 u ** 3 * seg[0][1] + 3 * u * u * t * seg[1][1] + 3 * u * t * t * seg[2][1] + t ** 3 * seg[3][1])
+            if math.hypot(q[0] - p[0], q[1] - p[1]) >= step:
+                pts.append(q)
+                p = q
+        pts.append(seg[3])
+    return pts
+
+
+def measure_stroke_widths(master: Path, glyph: dict, size: int | None = None):
+    """逐笔量母版上的真实半宽：沿中线取母版墨迹的**距离变换**中位数。
+
+    为什么不用 `measure_halfwidth` 那套横截面行走：它沿法向一直走到墨迹边界，上限
+    2×整字半宽——密排字里两条笔画相距十来个单位，行走会跨过白缝量到邻笔，整字每一笔
+    都被量胖成 40–56（`叠` 存值中位 52.1，同一批横截面实测 21）。距离变换在并集处
+    只会被最近的空隙压小，不会被邻笔撑大，正是描边要的半径；中位数再压掉交叉口的
+    个别高点与端头的个别低点。
+
+    返回逐笔半宽列表（字体单位）；笔落在母版墨迹之外（数据与母版不同步）时给 None。
+    需 `design_cjk` 里的笔序与 `glyph["strokes"]` 一致。
+    """
+    from scipy import ndimage
+
+    font, cmap, _ = _font(master)
+    if glyph.get("codepoint") not in cmap:
+        return None
+    upem = round(size or font["head"].unitsPerEm)
+    # 画布按字号取整框：1 单位 = 1 像素，误差 ≤0.5 单位，比数据里 0.01 的存值精度粗，
+    # 但远小于这次要修的 20–30 单位量级。
+    left, top = 120, 980
+    width, height = upem + 240, upem + 340
+    image = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(image).text((left, top), chr(glyph["codepoint"]), font=ImageFont.truetype(str(master), upem),
+                               fill=255, anchor="ls")
+    ink = np.asarray(image) > 127
+    if not ink.any():
+        return None
+    distance = ndimage.distance_transform_edt(ink)
+    scale = upem / float(font["head"].unitsPerEm)
+    out = []
+    for stroke in glyph.get("strokes") or []:
+        values = []
+        for x, y in _polyline_of_stroke(stroke):
+            px, py = int(round(left + x * scale)), int(round(top - y * scale))
+            if 0 <= py < height and 0 <= px < width and ink[py, px]:
+                values.append(float(distance[py, px]))
+        out.append(float(np.median(values)) / scale if values else None)
+    return out
+
+
+def remeasure(master: Path, data: Path | None = None, limit: int | None = None) -> tuple[int, int]:
+    """把数据文件里每个字的逐笔半宽按母版重测一遍并写回，返回（字数, 笔数）。"""
+    import design_cjk
+
+    design_cjk._CACHE = None
+    glyphs = design_cjk.load(data)
+    measured, skipped = {}, 0
+    for done, (codepoint, glyph) in enumerate(sorted(glyphs.items()), 1):
+        if limit is not None and done > limit:
+            break
+        glyph = dict(glyph, codepoint=codepoint)
+        widths = measure_stroke_widths(master, glyph)
+        if widths is None:
+            skipped += 1
+            continue
+        measured[codepoint] = widths
+        if done % 2000 == 0:
+            print(f"  量过 {done}/{min(len(glyphs), limit or len(glyphs))}", flush=True)
+    print(f"  母版里没有的字形 {skipped} 个（保留原值）", flush=True)
+    return design_cjk.rewrite_half_widths(measured, data)
+
+
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) > 2 and sys.argv[1] == "--remeasure":
+        total_glyphs, total_strokes = remeasure(Path(sys.argv[2]))
+        print(f"重测完成：{total_glyphs} 字 / {total_strokes} 笔改写了半宽")
+        raise SystemExit(0)
     src = sys.argv[1] if len(sys.argv) > 1 else "/tmp/maruko.ttf"
     chars = sys.argv[2] if len(sys.argv) > 2 else "乙了子九"
     for ch in chars:
