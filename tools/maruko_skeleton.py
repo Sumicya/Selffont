@@ -1150,6 +1150,97 @@ def _polyline_of_stroke(stroke, steps=8, step=6.0):
     return pts
 
 
+def ink_distance(master: Path, glyph: dict, size: int | None = None):
+    """字位栅格化 + 距离变换：返回 (墨迹布尔图, 距离图, 缩放, left, top, 宽, 高)。
+
+    画布按字号取整框：1 单位 = 1 像素，误差 ≤0.5 单位，比数据里 0.01 的存值精度粗，
+    但远小于半宽要修的 20–30 单位量级。母版里没有这个码位、或渲染成空白，返回 None。
+    """
+    from scipy import ndimage
+
+    font, cmap, _ = _font(master)
+    if glyph.get("codepoint") not in cmap:
+        return None
+    upem = round(size or font["head"].unitsPerEm)
+    scale = upem / float(font["head"].unitsPerEm)
+    # 画布按母版这个字的墨迹框裁：整字画布 1240×1340 里，汉字墨迹只占中间 800×800，
+    # 空白像素占了 60% 的面积，渲染与距离变换都白做。框外留 4 单位，采样点落在框外
+    # 就按「不在墨里」处理，与整字画布的结果一致。
+    left, top = 120, 980
+    width, height = upem + 240, upem + 340
+    bounds = None
+    try:
+        name = cmap[glyph["codepoint"]]
+        g = font["glyf"][name]
+        if all(hasattr(g, a) for a in ("xMin", "yMin", "xMax", "yMax")):
+            bounds = (g.xMin, g.yMin, g.xMax, g.yMax)
+    except (KeyError, AttributeError):
+        bounds = None
+    if bounds and bounds[2] > bounds[0] and bounds[3] > bounds[1]:
+        margin = 4
+        left = margin - int(math.floor(bounds[0] * scale))
+        top = int(math.ceil(bounds[3] * scale)) + margin
+        width = int(math.ceil((bounds[2] - bounds[0]) * scale)) + 2 * margin
+        height = int(math.ceil((bounds[3] - bounds[1]) * scale)) + 2 * margin
+    image = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(image).text((left, top), chr(glyph["codepoint"]), font=ImageFont.truetype(str(master), upem),
+                               fill=255, anchor="ls")
+    ink = np.asarray(image) > 127
+    if not ink.any():
+        return None
+    distance = ndimage.distance_transform_edt(ink)
+    scale = upem / float(font["head"].unitsPerEm)
+    return ink, distance, scale, left, top, width, height
+
+
+def measure_stroke_profiles(master: Path, glyph: dict, clamp=(0.6, 1.55), size: int | None = None):
+    """逐笔量 400 档的**逐点**半宽剖面，返回「相对该笔 400 档半宽的倍数」列表。
+
+    为什么不能只用中位数：母版的笔画不是等宽。`暑` 的长撇沿中线实测 30.6 / 25.0 /
+    27.3 / 24.0 / 24.0，存一个中位数 26.1 —— 粗的地方画细（缺墨）、细的地方画粗（多墨），
+    2026-10-29 主人圈出的四处正是「多墨 1–4%、缺墨却是它的 2–10 倍」两边不讨好。
+
+    取样点必须与 `design_cjk._centerline` 完全相同（每段 SAMPLE_PER_SEG 个参数点），
+    剖面长度才对得上中线点数；平滑用 7 点滑动平均（约一段贝塞尔长），压掉距离变换在
+    交叉口的单个高点，同时保住「粗一处细一处」的大势。倍数夹在 clamp 内：交叉口的
+    内切圆半径会大于笔身，放开会把路口吹成球。
+    """
+    import design_cjk
+
+    raster = ink_distance(master, glyph, size)
+    if raster is None:
+        return None
+    ink, distance, scale, left, top, width, height = raster
+    out = []
+    for stroke in glyph.get("strokes") or []:
+        segs = stroke.get("segs") or []
+        if not segs:
+            out.append(None)
+            continue
+        values = []
+        for x, y in design_cjk._centerline(segs):
+            px, py = int(round(left + x * scale)), int(round(top - y * scale))
+            if 0 <= py < height and 0 <= px < width and ink[py, px]:
+                values.append(float(distance[py, px]) / scale)
+            else:
+                values.append(0.0)
+        v = np.asarray(values, float)
+        hw400 = float((stroke.get("hw") or {}).get(400) or 0.0) or float(np.median(v)) or 1.0
+        k = min(7, len(v) if len(v) % 2 else max(3, len(v) - 1))
+        if k >= 3:
+            if stroke.get("closed"):
+                pad = k // 2
+                v = np.convolve(np.concatenate([v[-pad:], v, v[:pad]]), np.ones(k) / k, "same")[pad:-pad]
+            else:
+                v = np.convolve(np.pad(v, k // 2, mode="edge"), np.ones(k) / k, "valid")
+        # 倍数夹在 clamp 内：交叉口的内切圆半径是**另一条笔**撑出来的（`暑` 顶横两端
+        # dt=35、笔身只有 22），不夹会把每个路口吹成一个球；1.55 是实测能吃掉缺墨、
+        # 又不让路口鼓起来的边界（10 字 XOR 反复扫过 1.25 / 1.35 / 1.4 / 1.55）。
+        v = np.clip(v, clamp[0] * hw400, clamp[1] * hw400)
+        out.append([round(float(t) / hw400, 4) for t in v])
+    return out
+
+
 def measure_stroke_widths(master: Path, glyph: dict, size: int | None = None):
     """逐笔量母版上的真实半宽：沿中线取母版墨迹的**距离变换**中位数。
 
@@ -1162,24 +1253,10 @@ def measure_stroke_widths(master: Path, glyph: dict, size: int | None = None):
     返回逐笔半宽列表（字体单位）；笔落在母版墨迹之外（数据与母版不同步）时给 None。
     需 `design_cjk` 里的笔序与 `glyph["strokes"]` 一致。
     """
-    from scipy import ndimage
-
-    font, cmap, _ = _font(master)
-    if glyph.get("codepoint") not in cmap:
+    raster = ink_distance(master, glyph, size)
+    if raster is None:
         return None
-    upem = round(size or font["head"].unitsPerEm)
-    # 画布按字号取整框：1 单位 = 1 像素，误差 ≤0.5 单位，比数据里 0.01 的存值精度粗，
-    # 但远小于这次要修的 20–30 单位量级。
-    left, top = 120, 980
-    width, height = upem + 240, upem + 340
-    image = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(image).text((left, top), chr(glyph["codepoint"]), font=ImageFont.truetype(str(master), upem),
-                               fill=255, anchor="ls")
-    ink = np.asarray(image) > 127
-    if not ink.any():
-        return None
-    distance = ndimage.distance_transform_edt(ink)
-    scale = upem / float(font["head"].unitsPerEm)
+    ink, distance, scale, left, top, width, height = raster
     out = []
     for stroke in glyph.get("strokes") or []:
         values = []
@@ -1213,8 +1290,80 @@ def remeasure(master: Path, data: Path | None = None, limit: int | None = None) 
     return design_cjk.rewrite_half_widths(measured, data)
 
 
+def _profile_worker(job):
+    """子进程入口：量一个字（或一批）的剖面。母版字体在进程内只解析一次。"""
+    master, items = job
+    out = []
+    for codepoint, strokes in items:
+        glyph = {"codepoint": codepoint, "strokes": strokes}
+        out.append((codepoint, measure_stroke_profiles(Path(master), glyph)))
+    return out
+
+
+def profile_all(master: Path, data: Path | None = None, limit: int | None = None,
+                jobs: int = 1) -> tuple[int, int, int]:
+    """给数据文件里每个字量逐点剖面并写成 SFCJ5，返回（笔数, 缺字形数, 字节数）。
+
+    机器只有两个核，`jobs` 默认单进程；这条测量本身与顺序无关，分成两半并行跑，
+    结果逐字节相同（逐字独立，没有任何跨字状态）。
+    """
+    import design_cjk
+
+    design_cjk._CACHE = None
+    glyphs = design_cjk.load(data)
+    codes = sorted(glyphs)
+    if limit is not None:
+        codes = codes[:limit]
+    measured = skipped = done = 0
+
+    def take(codepoint, profiles):
+        nonlocal measured, skipped
+        # 剖面只给汉字：拉丁与符号的笔画不是这套「中线 + 半宽」量出来的（`.notdef`
+        # 与带下伸部的字母另有形状来源），给它们逐点收窄会把 `ĵ` 这类字的墨迹顶到
+        # 行框外，连带把 `usWin` 从 969 改成 941 —— 行框不在本轮授权范围。
+        if not is_han(codepoint):
+            return
+        if profiles is None:
+            skipped += 1
+            return
+        for stroke, prof in zip(glyphs[codepoint]["strokes"], profiles):
+            if prof:
+                stroke["prof"] = prof
+                measured += 1
+
+    if jobs <= 1:
+        for codepoint in codes:
+            glyph = dict(glyphs[codepoint], codepoint=codepoint)
+            take(codepoint, measure_stroke_profiles(master, glyph))
+            done += 1
+            if done % 2000 == 0:
+                print(f"  量过 {done}/{len(codes)}（{measured} 笔带剖面）", flush=True)
+    else:
+        from multiprocessing import Pool
+
+        # 按字数切块，每块 ~128 字：太碎通信开销大，太粗进度不好看
+        chunks = [codes[i:i + 128] for i in range(0, len(codes), 128)]
+        batches = [[(cp, glyphs[cp]["strokes"]) for cp in chunk] for chunk in chunks]
+        with Pool(jobs) as pool:
+            for got in pool.imap_unordered(_profile_worker,
+                                           [(str(master), batch) for batch in batches]):
+                for codepoint, profiles in got:
+                    take(codepoint, profiles)
+                    done += 1
+                if done % 2000 < 128:
+                    print(f"  量过 {done}/{len(codes)}（{measured} 笔带剖面）", flush=True)
+    print(f"  母版里没有的字形 {skipped} 个（保持等宽）", flush=True)
+    size = design_cjk.write(glyphs, data)
+    return measured, skipped, size
+
+
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) > 2 and sys.argv[1] == "--profile":
+        jobs = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+        said, missing, size = profile_all(Path(sys.argv[2]), jobs=jobs)
+        print(f"剖面写回完成：{said} 笔，缺字形 {missing} 个，数据 {size} 字节")
+        raise SystemExit(0)
     if len(sys.argv) > 2 and sys.argv[1] == "--remeasure":
         total_glyphs, total_strokes = remeasure(Path(sys.argv[2]))
         print(f"重测完成：{total_glyphs} 字 / {total_strokes} 笔改写了半宽")

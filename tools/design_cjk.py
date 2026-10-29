@@ -6,14 +6,22 @@
 （见 `docs/design-principles.md` 2026-10-28 条）。
 
 文件格式（小端，顺序读）：
-    SFCJ4 + uint32 字数 + uint8 档数
+    SFCJ5 + uint32 字数 + uint8 档数
     每条记录：uint32 码位, uint16 笔画数
         每笔：uint8 标志（bit0 = 闭合环）, uint16 段数,
-              3×uint16 该笔在 300/400/500 三档下的半宽×100, 2×int16 首段起点×10
+              3×uint16 该笔在 300/400/500 三档下的半宽×100, 2×int16 首段起点×10,
+              uint16 剖面点数, 每点 uint8（该点半宽 ÷ 该笔 400 档半宽 ×128）,
             每段：6 个 int16 = 3 个控制点 (x*10, y*10)，起点恒等于上一段终点
 
 为什么笔画数从 uint8 换成 uint16：实心符号走面填（扫描行胶囊）时，一个 `㉎` 这样的
-方框图要一百多条胶囊，装不进 255。旧格式 SFCJ3 / SFCJ2 仍能读，只是不再写。
+方框图要一百多条胶囊，装不进 255。旧格式 SFCJ4 / SFCJ3 / SFCJ2 仍能读，只是不再写。
+
+SFCJ5 在 SFCJ4 的每笔记录里多了一段**逐点半宽剖面**（uint16 点数 + 每点 uint8，
+值是「该点半宽 ÷ 该笔 400 档半宽」×128）。为什么要有：母版的笔画不是等宽的，
+同一条中线上的粗细从 0.7 倍变到 1.5 倍很常见（`暑` 的长撇实测 30.6 / 25.0 / 27.3 /
+24.0 / 24.0）。只存一个中位数，粗的地方画细、细的地方画粗，2026-10-29 主人圈出的
+四处「多墨 1–4%、缺墨却是 2–10 倍」正是这个两边不讨好。剖面只乘比例、不加点数，
+300/400/500 三档的点数仍然一一对应（可变字体的硬约束）。
 """
 from __future__ import annotations
 
@@ -22,9 +30,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "design_cjk.bin"
-MAGIC = b"SFCJ4"
-LEGACY_MAGIC = b"SFCJ2"
+MAGIC = b"SFCJ5"
+FOUR_MAGIC = b"SFCJ4"
 OLD_MAGIC = b"SFCJ3"
+LEGACY_MAGIC = b"SFCJ2"
 WEIGHTS = (300, 400, 500)
 
 _CACHE: dict[int, dict] | None = None
@@ -40,6 +49,8 @@ def load(path: Path | None = None) -> dict[int, dict]:
         raise FileNotFoundError(f"汉字字库数据不存在：{source}")
     raw = source.read_bytes()
     if raw[:5] == MAGIC:
+        out = _load5(raw)
+    elif raw[:5] == FOUR_MAGIC:
         out = _load4(raw)
     elif raw[:5] == OLD_MAGIC:
         out = _load3(raw)
@@ -116,8 +127,48 @@ def excluded_codepoints() -> frozenset[int]:
     return frozenset(out)
 
 
+def _load5(raw: bytes) -> dict[int, dict]:
+    """当前格式：笔画数 uint16 + 每笔一段逐点半宽剖面（相对 400 档半宽的倍数 ×128）。"""
+    count = struct.unpack_from("<I", raw, 5)[0]
+    nweight = raw[9]
+    weights = WEIGHTS[:nweight]
+    out: dict[int, dict] = {}
+    pos = 10
+    for _ in range(count):
+        cp, nstroke = struct.unpack_from("<IH", raw, pos)
+        pos += 6
+        strokes = []
+        for _ in range(nstroke):
+            flag, nseg = struct.unpack_from("<BH", raw, pos)
+            pos += 3
+            hws = struct.unpack_from("<" + "H" * nweight, raw, pos)
+            pos += 2 * nweight
+            start = struct.unpack_from("<2h", raw, pos)
+            pos += 4
+            nprof = struct.unpack_from("<H", raw, pos)[0]
+            pos += 2
+            prof = [v / 128.0 for v in raw[pos:pos + nprof]]
+            pos += nprof
+            segs = []
+            for _ in range(nseg):
+                v = struct.unpack_from("<6h", raw, pos)
+                pos += 12
+                segs.append([(start[0] / 10.0, start[1] / 10.0), (v[0] / 10.0, v[1] / 10.0),
+                             (v[2] / 10.0, v[3] / 10.0), (v[4] / 10.0, v[5] / 10.0)])
+                start = v[4:]
+            stroke = {"closed": bool(flag & 1),
+                      "hw": {w: h / 100.0 for w, h in zip(weights, hws)}, "segs": segs}
+            if prof:
+                stroke["prof"] = prof
+            strokes.append(stroke)
+        out[cp] = {"strokes": strokes}
+    if pos != len(raw):
+        raise ValueError(f"汉字字库数据长度不符：读到 {pos}，文件 {len(raw)}")
+    return out
+
+
 def _load4(raw: bytes) -> dict[int, dict]:
-    """当前格式：笔画数是 uint16（面填的胶囊一格里能有一百多条）。"""
+    """旧格式：笔画数是 uint16（面填的胶囊一格里能有一百多条），没有逐点剖面。"""
     count = struct.unpack_from("<I", raw, 5)[0]
     nweight = raw[9]
     weights = WEIGHTS[:nweight]
@@ -209,6 +260,48 @@ def _load2(raw: bytes) -> dict[int, dict]:
     return out
 
 
+def write(glyphs: dict[int, dict], path: Path | None = None) -> int:
+    """把「码位 → 笔画」整份写成 SFCJ5，返回字节数。
+
+    只写 300/400/500 三档（缺的档按 400 补），逐点剖面缺就写 0 点（= 等宽笔）。
+    剖面存的是「该点半宽 ÷ 该笔 400 档半宽」的倍数，量化到 1/128：`暑` 的 26 单位
+    半宽下分辨率 0.2 单位，比要修的 1–2 单位误差细一个数量级，一个点占 1 字节。
+    """
+    target = Path(path) if path else DATA
+    items = sorted(glyphs.items())
+    out = bytearray(MAGIC)
+    out += struct.pack("<IB", len(items), len(WEIGHTS))
+    for cp, glyph in items:
+        strokes = glyph.get("strokes") or []
+        out += struct.pack("<IH", cp, len(strokes))
+        for stroke in strokes:
+            segs = stroke.get("segs") or []
+            hw = stroke.get("hw")
+            if not isinstance(hw, dict):
+                hw = {w: float(hw or glyph.get("hw") or 1.0) for w in WEIGHTS}
+            hws = []
+            for w in WEIGHTS:
+                v = hw.get(w) or hw.get(400) or 1.0
+                hws.append(max(1, min(65535, int(round(float(v) * 100)))))
+            start = segs[0][0] if segs else (0.0, 0.0)
+            prof = stroke.get("prof") or []
+            if len(prof) != len(segs) * SAMPLE_PER_SEG + 1:
+                prof = []
+            out += struct.pack("<BH", 1 if stroke.get("closed") else 0, len(segs))
+            out += struct.pack("<" + "H" * len(WEIGHTS), *hws)
+            out += struct.pack("<2h", int(round(start[0] * 10)), int(round(start[1] * 10)))
+            out += struct.pack("<H", len(prof))
+            out += bytes(max(1, min(255, int(round(float(v) * 128)))) for v in prof)
+            prev = start
+            for seg in segs:
+                out += struct.pack("<6h", *[int(round(c * 10)) for c in seg[1]],
+                                   *[int(round(c * 10)) for c in seg[2]],
+                                   *[int(round(c * 10)) for c in seg[3]])
+                prev = seg[3]
+    target.write_bytes(bytes(out))
+    return len(out)
+
+
 def rewrite_half_widths(measured: dict[int, list[float]], path: Path | None = None) -> tuple[int, int]:
     """把重测的 400 档半宽原地写回数据文件，返回（改动字数, 改动笔数）。
 
@@ -227,8 +320,10 @@ def rewrite_half_widths(measured: dict[int, list[float]], path: Path | None = No
     """
     source = Path(path) if path else DATA
     raw = bytearray(source.read_bytes())
-    if raw[:5] != MAGIC:
-        raise ValueError(f"只有 SFCJ4 格式支持重写半宽：{source}")
+    version = bytes(raw[:5])
+    if version not in (MAGIC, FOUR_MAGIC):
+        raise ValueError(f"只有 SFCJ4 / SFCJ5 格式支持重写半宽：{source}")
+    has_profile = version == MAGIC
     count = struct.unpack_from("<I", raw, 5)[0]
     nweight = raw[9]
     weights = WEIGHTS[:nweight]
@@ -248,6 +343,8 @@ def rewrite_half_widths(measured: dict[int, list[float]], path: Path | None = No
             field = pos
             hws = struct.unpack_from("<" + "H" * nweight, raw, field)
             pos += 2 * nweight + 4 + 12 * nseg
+            if has_profile:
+                pos += 2 + struct.unpack_from("<H", raw, pos)[0]
             if not wanted or index >= len(wanted) or wanted[index] is None:
                 continue
             old = hws[at400] / 100.0
@@ -332,8 +429,43 @@ def _as_ccw(ring):
 
 
 def _offset_ring(axis, normals, half, side):
-    return [(axis[i][0] + side * normals[i][0] * half, axis[i][1] + side * normals[i][1] * half)
-            for i in range(len(axis))]
+    """轴线一侧的偏移环；`half` 可以是定值，也可以是逐点半宽。
+
+    **外角补圆角**，内角不补。不补时，一笔在拐点处的外轮廓是两条偏移线直接相交的尖楔，
+    拐得越急楔伸得越长；母版的笔画是「中线与半径 half 的圆的闵可夫斯基和」，拐点外侧
+    应当是半径 half 的圆弧（和端头同一个圆）。内侧不能补：弧会朝笔画里凹，等于把拐角
+    内侧挖掉一块；内侧让两段偏移线相交，nonzero 规则下交点以里仍是实心。
+
+    补弧的点数只由转角决定、与 half 无关，所以 300/400/500 三档点数仍然一一对应
+    （可变字体的硬约束）。
+    """
+    import math
+
+    n = len(axis)
+    halves = [float(half)] * n if isinstance(half, (int, float)) else list(half)
+    out = []
+    for i in range(n):
+        x, y = axis[i]
+        nx, ny = normals[i]
+        out.append((x + side * nx * halves[i], y + side * ny * halves[i]))
+        if i + 1 >= n:
+            continue
+        mx, my = normals[i + 1]
+        cross = nx * my - ny * mx
+        if side * cross >= 0.0:          # 内侧：两段偏移线相交即止
+            continue
+        dot = max(-1.0, min(1.0, nx * mx + ny * my))
+        turn = abs(math.atan2(cross, dot))
+        if turn < math.radians(10.0):
+            continue
+        steps = max(1, int(math.ceil(turn / math.radians(9.0))))
+        d = math.atan2(cross, dot)
+        a0 = math.atan2(ny, nx)
+        for k in range(1, steps):
+            a = a0 + d * k / steps
+            r = halves[i] + (halves[i + 1] - halves[i]) * k / steps
+            out.append((x + side * r * math.cos(a), y + side * r * math.sin(a)))
+    return out
 
 
 def _zero_length(stroke) -> bool:
@@ -427,8 +559,12 @@ def stroke_contours(stroke, weight, glyph=None):
                 tx, ty = px, py
         tangents.append((tx, ty))
     normals = [(-ty, tx) for tx, ty in tangents]   # 左法向
-    left = _offset_ring(axis, normals, half, 1.0)
-    right = _offset_ring(axis, normals, half, -1.0)
+    # 逐点半宽剖面（SFCJ5）：值是相对该笔 400 档半宽的倍数，这里乘上本档的 half。
+    # 剖面长度与中线点数一一对应；对不上就退回等宽，宁可不变形也不画出错点。
+    prof = stroke.get("prof")
+    halves = [v * half for v in prof] if prof and len(prof) == n else half
+    left = _offset_ring(axis, normals, halves, 1.0)
+    right = _offset_ring(axis, normals, halves, -1.0)
     if stroke.get("closed"):
         # 闭合环（口/日/田 的外圈）：**两条**轮廓——外圈顺时针、内圈逆时针，
         # nonzero 下内圈正好抵消成空心。
@@ -439,10 +575,12 @@ def stroke_contours(stroke, weight, glyph=None):
         outer, inner = (left, right) if abs(_area(left)) >= abs(_area(right)) else (right, left)
         return [_as_cw(outer), _as_ccw(inner)]
     import math
+    h_end = halves[-1] if isinstance(halves, list) else half
+    h_start = halves[0] if isinstance(halves, list) else half
     # 终点端头：从 left[-1]（左法向角）顺时针扫到 right[-1]（右法向角），凸向笔画前方。
-    end = _round_cap(axis[-1], math.atan2(normals[-1][1], normals[-1][0]), half, ARC_STEPS)
+    end = _round_cap(axis[-1], math.atan2(normals[-1][1], normals[-1][0]), h_end, ARC_STEPS)
     # 起点端头：从 right[0]（左法向 +180°）顺时针扫到 left[0]，凸向笔画后方。
-    start = _round_cap(axis[0], math.atan2(normals[0][1], normals[0][0]) + math.pi, half, ARC_STEPS)
+    start = _round_cap(axis[0], math.atan2(normals[0][1], normals[0][0]) + math.pi, h_start, ARC_STEPS)
     return [_as_cw(left + end + right[::-1] + start)]
 
 
