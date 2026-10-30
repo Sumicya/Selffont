@@ -94,6 +94,56 @@ def _band_edges(rings, bands=48):
     return left, right
 
 
+
+# 字身带：baseline 到 cap-height 之间（y ∈ [-20, 700]）。侧距要按**字身**的边算，
+# 不能按整字墨迹的边算——`j` 的钩、`y` 的尾、`Q` 的尾都伸到字身之外，把它们算进
+# 「贴边覆盖率」会把侧距判成 0，再把整字平移过去，`j` 就整个右移 100 单位（实测）。
+BODY_BAND = (-20, 700)
+
+
+def _body_index():
+    """字身带落在 48 条横带里的下标区间（含两端）。"""
+    y0, y1 = BAND_Y
+    lo = max(0, int((BODY_BAND[0] - y0) / (y1 - y0) * 48))
+    hi = min(47, int((BODY_BAND[1] - y0) / (y1 - y0) * 48))
+    return lo, hi
+
+
+def _body_edges(edges):
+    """只保留字身那几带的最左/最右 x（其余填 None，形状不变）。"""
+    lo, hi = _body_index()
+    left, right = list(edges[0]), list(edges[1])
+    for k in range(len(left)):
+        if k < lo or k > hi:
+            left[k] = None
+            right[k] = None
+    return left, right
+
+
+
+# 非字母（数字、标点、符号）的前进量与墨心：母版对这一类是**逐个手调**的，三档模型
+# 量不准（中位差 48 单位、`+` 差 194、`[` 被 200 的下限夹住）。表由
+# `tools/side_measure.py` 从母版量出：目标前进量 + 墨心，构建期把本字的墨按墨心摆好、
+# 前进量照表——两边留白随本字墨宽自己分（母版自己也有两侧都负的，`—` 的 lsb/rsb 都是 −20）。
+SIDE_MAGIC = b"SFS2"
+_SIDE: dict[int, tuple[int, int]] | None = None
+
+
+def side_target(codepoint: int) -> tuple[int, int] | None:
+    """母版给这个非字母的前进量与墨心；没有数据返回 None（字母、全角、母版缺字）。"""
+    global _SIDE
+    if _SIDE is None:
+        import struct
+        raw = Path(__file__).with_name("side_targets.bin").read_bytes()
+        if raw[:4] != SIDE_MAGIC:
+            raise ValueError("side_targets.bin 头不对，重跑 tools/side_measure.py")
+        _SIDE = {}
+        for off in range(4, len(raw), 8):
+            cp, advance, center = struct.unpack_from("<IHh", raw, off)
+            _SIDE[cp] = (advance, center)
+    return _SIDE.get(codepoint)
+
+
 def _coverage(edges, side):
     """贴边覆盖率：这一侧有墨的带里，有多少比例的带贴在极值 `BEARING_COV_TOL` 以内。
 
@@ -251,8 +301,31 @@ def advance_of(codepoint: int, rings: dict) -> int:
     if not xs:
         return BLANK_WIDTH
     left, right = sides_of(rings, codepoint)
-    width = max(xs) - min(xs)
-    return max(200, int(round(width)) + left + right)
+    ink_left, ink_right = min(xs), max(xs)
+    if codepoint is not None and _is_letter(codepoint):
+        # 字母的宽度按**字身**算：伸到字身外的钩、尾是「借用邻居的空间」（母版 `j` 的钩
+        # 伸到 xMin −63，字宽仍然只有 235），算进字宽会让 `j` 宽出 100 单位。
+        body_left = _body_ink(rings, "left", ink_left)
+        body_right = _body_ink(rings, "right", ink_right)
+        width = body_right - body_left
+    else:
+        # 标点、符号的「字身」不在 band 里（`[` `{` 的横臂在 baseline 下与 cap 上），
+        # 按字身带取会把 78 单位的横臂判成「伸出去的东西」，整字左移 130（实测 `]`
+        # 的 xMin 变成 −85）。这一类按整字墨宽算。
+        width = ink_right - ink_left
+    return max(120, int(round(width)) + left + right)
+
+
+
+def _body_ink(rings: dict, side: str, fallback: float) -> float:
+    """字身带内这一侧最外的那条墨（没有就退回整字的边）。"""
+    edges = _band_edges(rings)
+    if edges is None:
+        return fallback
+    vals = [v for v in _body_edges(edges)[0 if side == "left" else 1] if v is not None]
+    if not vals:
+        return fallback
+    return min(vals) if side == "left" else max(vals)
 
 
 def sides_of(rings: dict, codepoint: int | None = None) -> tuple[int, int]:
@@ -265,7 +338,8 @@ def sides_of(rings: dict, codepoint: int | None = None) -> tuple[int, int]:
     if edges is None:
         return 0, 0
     if codepoint is not None and _is_letter(codepoint):
-        return _bearing_letter(edges, "left"), _bearing_letter(edges, "right")
+        body = _body_edges(edges)
+        return _bearing_letter(body, "left"), _bearing_letter(body, "right")
     return _bearing(_side_class(edges, "left")), _bearing(_side_class(edges, "right"))
 
 
@@ -560,15 +634,27 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         # 非全角字形（拉丁、数字、标点）的侧距按边缘形状给，并把轮廓平移到该侧距上。
         # 汉字不动：它自带全角框，墨迹位置属于字面的一部分（2026-10-28 主人定）。
         if not any(low <= codepoint <= high for low, high in FULL_WIDTH) and rings.get(WEIGHT_DEFAULT):
-            left, right = sides_of(rings, codepoint)
             ink_left = min(pt[0] for ring in rings[WEIGHT_DEFAULT] for pt in ring)
-            shift = left - ink_left
+            ink_right = max(pt[0] for ring in rings[WEIGHT_DEFAULT] for pt in ring)
+            target = None if _is_letter(codepoint) else side_target(codepoint)
+            if target is not None:
+                # 非字母：前进量与墨心照母版（母版这一类逐个手调，没有可拟合的公式）。
+                # 本字的墨宽与母版差着几个单位，按墨心摆，两侧留白随本字自己分。
+                shift = target[1] - (ink_left + ink_right) / 2
+                fixed_advance = target[0]
+            else:
+                left, right = sides_of(rings, codepoint)
+                # 字母只把**字身**对齐到侧距；钩、尾这些伸到字身之外的墨按母版的做法
+                # 留在原点左边（母版 `j` 的 lsb 是 −63：钩本来就该挂到前一个字下面）。
+                anchor = _body_ink(rings, "left", ink_left) if _is_letter(codepoint) else ink_left
+                shift = left - anchor
+                fixed_advance = None
             if abs(shift) > 0.5:
                 rings = {w: [[(x + shift, y) for x, y in ring] for ring in rr]
                          for w, rr in rings.items()}
         else:
-            left = right = 0
-        advance = advance_of(codepoint, rings)
+            fixed_advance = None
+        advance = fixed_advance if fixed_advance is not None else advance_of(codepoint, rings)
         # 字身框闸门：越界的汉字不进字体（宁可缺字也不发顶行的字）。越界不是靠平移
         # 糊过去——`align_face_height` 把三档压到同一副字面之后，全库 0 个汉字越框；
         # 真出现越界，说明取笔或校准有一处错了，要修那处，不是把字挪进框里。

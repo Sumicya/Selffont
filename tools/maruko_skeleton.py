@@ -159,7 +159,11 @@ def rasterize(path: Path, cp: int, box=None):
         bx1 = max(max(x for x, _ in q) for q in polys) + 30
         by0 = min(min(y for _, y in q) for q in polys) - 30
         by1 = max(max(y for _, y in q) for q in polys) + 30
-        box = (max(BOX[0], bx0), max(BOX[1], by0), min(BOX[2], bx1), min(BOX[3], by1))
+        # 只能往**外**扩，不能裁：母版的西文下伸部到 −216、`v` 的尖角到 −1，
+        # 都在汉字的字身框 BOX（−160 起）之外。裁掉那一段的后果不是「少一点墨」，
+        # 而是骨架在那条边上提前收尾——`p` 的竖笔中线停在 −129，母版的墨底是 −208，
+        # 画出来整串西文的 y 下伸比母版短 40–49 单位（`g` `j` `p` `q` `y` 全中招）。
+        box = (min(BOX[0], bx0), min(BOX[1], by0), max(BOX[2], bx1), max(BOX[3], by1))
     x0, y0, x1, y1 = box
     img = Image.new("L", (max(1, int(round((x1 - x0) * SS))), max(1, int(round((y1 - y0) * SS)))), 0)
     d = ImageDraw.Draw(img)
@@ -983,6 +987,7 @@ def bezier_strokes(path: Path, cp: int, hw=None, dot_r=None, probe=True, r=None)
     if not out:
         return None
     return dict(half_width=half, strokes=out)
+
 
 
 def split_ring_tail(strokes, tol=45.0, min_arm=150.0, min_loop=500.0):

@@ -1904,12 +1904,12 @@ def runtime_scripts():
             "keep 没写进配置副本"
         assert sh([str(web), "keep"], env).returncode == 0 and \
             state.read_text().strip() == "keep", "keep 不幂等"
-        result = sh([str(action)], env)  # 管理器按钮 = toggle：keep → block
+        result = sh([str(action), "web"], env)  # 网页字体那条：keep → block
         assert result.returncode == 0 and state.read_text().strip() == "block", result
         assert re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", bridge.read_text(encoding="utf-8"), re.M), \
             "toggle 没变回压"
         # 模块更新（customize.sh）刷新副本时按状态走：先在管理器里选 keep，再跑一次安装脚本。
-        assert sh([str(action)], env).returncode == 0 and state.read_text().strip() == "keep"
+        assert sh([str(action), "web"], env).returncode == 0 and state.read_text().strip() == "keep"
         result = sh([str(harness)], env)
         assert result.returncode == 0 and "保留网页字体开关状态" in result.stdout, result.stdout
         assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", bridge.read_text(encoding="utf-8"), re.M), \
@@ -1925,6 +1925,13 @@ def runtime_scripts():
         shutil.copy(web, broken / "web-fonts.sh")
         result = sh([str(broken / "web-fonts.sh"), "keep"], {**env, "FIREFOX_DATA_DIR": str(broken)})
         assert result.returncode != 0 and "找不到网页字体开关行" in result.stderr, result
+        # 管理器按钮的默认动作 = 字体热切换（不是网页字体）：干跑一遍，只验接线与输出。
+        dry = {**env, "SELFFONT_DRY_RUN": "1", "SELFFONT_STATE": str(tmp / "hot.state"),
+               "SELFFONT_SYSTEM_ROOT": str(tmp), "SELFFONT_RELOAD": "none"}
+        result = sh([str(action)], dry)
+        assert result.returncode == 0 and "dry-run" in result.stdout and "现在状态" in result.stdout, result
+        status_out = sh([str(action), "status"], dry).stdout
+        assert "状态 off" in status_out, status_out
         (modpath / "harness.sh").unlink()
 
 
@@ -1990,6 +1997,24 @@ def run_checks() -> None:
 
 
 @check
+def module_hotswap():
+    """热切换脚本：语法过关 + 状态机每条路都在沙箱里走过一遍。
+
+    真机上「挂了一半」「摘了别人的挂载」这类错，脚本层面全是可判定的：把 `mount`
+    换成记账的假命令，几秒就能跑完 off→on→partial→off 全部路径（`tools/hotswap_test.py`）。
+    """
+    scripts = sorted((ROOT / "module").glob("*.sh"))
+    assert scripts, "module/ 里没有脚本"
+    for script in scripts:
+        result = subprocess.run(["sh", "-n", str(script)], capture_output=True, text=True)
+        assert result.returncode == 0, f"{script.name} 语法错误：{result.stderr.strip()}"
+    harness = ROOT / "tools" / "hotswap_test.py"
+    assert harness.exists(), "缺少热切换的沙箱验收脚本 tools/hotswap_test.py"
+    result = subprocess.run([sys.executable, str(harness)], capture_output=True, text=True)
+    assert result.returncode == 0, f"热切换验收失败：\n{result.stdout[-800:]}"
+
+
+@check
 def cjk_font():
     """二创汉字字库：数据能读、能编成 OTF、在配置里单独成族且排在主字体之前。
 
@@ -2018,7 +2043,8 @@ def _cjk_font_check():
     # `A` `H` `o` `y` 是给字偶距自检用的：母版真排的 `Ay` 是咬进去的（最小白 44），
     # `HH`/`oo` 没压过（168/96）。四个字两组对照，正好能判「有没有压错对象」。
     sample = {cp: glyphs[cp] for cp in
-              (0x4E00, 0x53E3, 0x9F98, 0x31, 0x20, 0x41, 0x48, 0x6F, 0x79) if cp in glyphs}
+              (0x4E00, 0x53E3, 0x9F98, 0x31, 0x20, 0x41, 0x48, 0x6F, 0x79,
+               0x6A, 0x5B, 0x7B, 0x2B) if cp in glyphs}
     data = build_cjk_font(dict(sample))          # build_vf 会消费传入的字典，这里给副本
     carrier = layout_metrics(TTFont(_io.BytesIO(make_carrier())))
     calibrated = build_cjk_font(dict(sample), carrier)
@@ -2043,6 +2069,16 @@ def _cjk_font_check():
         assert hmtx[cmap_here[0x31]][0] < 600, f"数字字宽没自算：{hmtx[cmap_here[0x31]][0]}"
         assert 0x20 in cmap_here, "空格没有补进 cmap：它在母版里没有轮廓，必须补空字形"
         assert hmtx[cmap_here[0x20]][0] == 250, f"空格字宽 {hmtx[cmap_here[0x20]][0]} 不等于四分之一 em"
+        # 非字母的前进量取自母版逐字量出来的表（`tools/side_targets.bin`）：三档模型对它们
+        # 量不准，`+` 曾差 194 单位、`[` `{` 被 200 的下限夹住。这里挡住「表丢了/没接上」。
+        assert cjk_vf.side_target(0x2B)[0] > 850, "side_targets.bin 没接上：`+` 的前进量又被压扁了"
+        assert hmtx[cmap_here[0x2B]][0] > 850, f"`+` 前进量 {hmtx[cmap_here[0x2B]][0]}，母版是 922"
+        assert hmtx[cmap_here[0x5B]][0] > 280, f"`[` 前进量 {hmtx[cmap_here[0x5B]][0]}，母版是 317"
+        assert hmtx[cmap_here[0x7B]][0] > 350, f"`{{` 前进量 {hmtx[cmap_here[0x7B]][0]}，母版是 389"
+        # 负 LSB 的字必须留着负左边距：母版 `j` 的 lsb 是 −63，钩本来就伸到前一个字下面。
+        # 这一条挡的是「按整字墨迹反推侧距」那个 bug——`j` 曾被整体右移 92 单位。
+        assert hmtx[cmap_here[0x6A]][1] < 0, f"`j` 的左边距变成了 {hmtx[cmap_here[0x6A]][1]}，负 LSB 丢了"
+        assert hmtx[cmap_here[0x6A]][0] < 260, f"`j` 的字宽 {hmtx[cmap_here[0x6A]][0]}，母版是 235"
         # 字偶距：目标是母版**真排**出来的白（tools/kern_targets.bin），不是一把固定尺。
         # 母版压过的 `Ay` 必须咬进去；母版没压过的 `HH`、只压 2 个单位的 `oo` 不许跟着压。
         assert "GPOS" in font, "字偶距没有写进 GPOS：母版里 Ay 靠字对咬合，缺了就散架"
