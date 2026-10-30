@@ -31,11 +31,22 @@ FULL_WIDTH = ((0x2E80, 0x303F), (0x3040, 0x9FFF), (0xF900, 0xFAFF),
 EM = 1000
 BLANK_WIDTH = 250
 
-# 侧距不是常数，按**边缘的形状**分三类（主人 2026-10-30「t 和 e 疑似有点远」「全部间距优化」）。
+# 侧距不是常数（主人 2026-10-30「t 和 e 疑似有点远」「全部间距优化」「y 怎么没插进 A 里面」）。
 # 一刀切 0.06 em 的后果是：竖笔（`l` `H`）嫌松、斜边（`A` `V` `W`）和圆底（`o` `e`）嫌紧，
 # 因为斜边与圆弧在视觉上已经自带空白，不需要再给同样宽的物理空隙。
-# 三档数值取母版自己聚出来的三个簇（母版 84 组拉丁字形：平边 84、圆边 47、斜边 26），
-# 学的是它的**规则**，不是抄某一组字宽。
+#
+# **字母**：一个连续量就够了——「贴边覆盖率」cov（这一侧有墨的带里，有多少比例的带贴在
+# 极值 30 单位以内）。竖笔 cov≈1（整条边都贴着 xMin）、圆弧 cov≈0.2（只有中段贴边）、
+# 斜边 cov≈0.2 但后退快。母版 52 个字 104 个侧面最小二乘：侧距 = 24 + 58·cov，
+# 中位误差 5.5 单位、87% 的侧面落在 ±10 内（旧的「平/圆/斜」三档：中位 9.0、77% 在 ±12 内，
+# 且把 `h` 的肩、`C` 的开口、`U` 的竖笔全判错）。学的是母版的**规则**，不是抄某一组字宽。
+BEARING_COV_BASE, BEARING_COV_GAIN = 24, 58
+BEARING_COV_TOL = 30      # 「贴着极值」的容差：字体的笔画本身就是整数网格，±30 是半个 x-height 的 6%
+BEARING_MIN, BEARING_MAX = 16, 88
+
+# **非字母**（数字、标点、符号）仍按边缘形状分三类：母版给数字与标点的是另一套手调的
+# 数值（`1` 的左距 11、右距 140；括号两侧 85；句点 66），连续式套上去中位误差 37 单位，
+# 不能一把尺用到底。三档取母版自己聚出来的三个簇（母版 84 组拉丁字形：平边 84、圆边 47、斜边 26）。
 BEARING_FLAT, BEARING_ROUND, BEARING_DIAG = 84, 47, 26
 
 
@@ -49,10 +60,12 @@ def _band_edges(rings, bands=48):
     只读 400 档：侧距是排版节奏，三档共用一套，字重不该改变字距。
     """
     # 一笔一环：一个字的轮廓是好几个环，只看第一个环会把整字量成一条笔画。
+    # 环与环之间**不能连成一条边**：首尾相连会凭空多出一条穿过字心的假边
+    # （`i` 的点与竖笔连起来、`A` 的三角孔连到外框），每带的极值就被这条假边带跑，
+    # 侧距会按不存在的那半边墨算——实测 `i` 的贴边覆盖率因此从 0.86 掉到 0.07。
     allrings = rings.get(400) or (next(iter(rings.values())) if rings else [])
-    pts = [pt for ring in allrings for pt in ring]
-    n = len(pts)
-    if n < 3:
+    allrings = [ring for ring in allrings if len(ring) >= 2]
+    if sum(len(ring) for ring in allrings) < 3:
         return None
     # 带必须切在**全字库共用的 y 网格**上：字与字之间的「第 k 带」要对得齐，
     # 否则算出来的字偶距比的是两个不同高度（实测会把 S+t 算成 -80 的撞墨值）。
@@ -62,12 +75,14 @@ def _band_edges(rings, bands=48):
         lo = y0 + (y1 - y0) * k / bands
         hi = y0 + (y1 - y0) * (k + 1) / bands
         xs = []
-        for i in range(n):
-            a, b = pts[i], pts[(i + 1) % n]
-            for yy in (lo, hi):
-                if (a[1] - yy) * (b[1] - yy) <= 0 and abs(a[1] - b[1]) > 1e-9:
-                    t = (yy - a[1]) / (b[1] - a[1])
-                    xs.append(a[0] + t * (b[0] - a[0]))
+        for ring in allrings:
+            n = len(ring)
+            for i in range(n):
+                a, b = ring[i], ring[(i + 1) % n]
+                for yy in (lo, hi):
+                    if (a[1] - yy) * (b[1] - yy) <= 0 and abs(a[1] - b[1]) > 1e-9:
+                        t = (yy - a[1]) / (b[1] - a[1])
+                        xs.append(a[0] + t * (b[0] - a[0]))
         if xs:
             xs.sort()
             left.append(xs[0])
@@ -79,8 +94,88 @@ def _band_edges(rings, bands=48):
     return left, right
 
 
+def _coverage(edges, side):
+    """贴边覆盖率：这一侧有墨的带里，有多少比例的带贴在极值 `BEARING_COV_TOL` 以内。
+
+    竖笔处处贴边 → 1.0；圆弧只有中段贴边 → 0.3 上下；斜边只有一端贴边 → 0.2 上下。
+    只数**有墨**的带：字腔里的空带不参与，否则 `o` 会按孔洞的高度被摊薄。
+    """
+    edge = [v for v in (edges[0] if side == "left" else edges[1]) if v is not None]
+    if not edge:
+        return 1.0
+    ext = min(edge) if side == "left" else max(edge)
+    return sum(1 for v in edge if abs(v - ext) < BEARING_COV_TOL) / len(edge)
+
+
+def _bearing_letter(edges, side):
+    """字母的侧距：`24 + 58·cov`，夹在 [16, 88]。系数在母版 104 个字母侧面上拟合。"""
+    raw = BEARING_COV_BASE + BEARING_COV_GAIN * _coverage(edges, side)
+    return int(min(BEARING_MAX, max(BEARING_MIN, round(raw))))
+
+
+def _is_letter(codepoint: int) -> bool:
+    import unicodedata
+    return unicodedata.category(chr(codepoint))[0] == "L"
+
+
+
+def rings_from_pen(value) -> list:
+    """把一条 RecordingPen 的点列拆成若干环，曲线按 10/12 段折线展开（只用标准库）。
+
+    构建期与 `tools/kern_measure.py` 必须走**同一个**展开器：字偶距是两边各自量同一个
+    「最小墨迹白」再相减，两边展开方式只要差一点，量出来的就不是同一个高度上的白。
+    """
+    rings, ring, cur, start = [], None, None, None
+    for op, args in value:
+        if op == "moveTo":
+            cur = start = (float(args[0][0]), float(args[0][1]))
+            ring = [cur]
+            rings.append(ring)
+        elif op == "lineTo":
+            cur = (float(args[0][0]), float(args[0][1]))
+            ring.append(cur)
+        elif op in ("qCurveTo", "curveTo"):
+            pts = [None if p is None else (float(p[0]), float(p[1])) for p in args]
+            if op == "qCurveTo":
+                end = pts[-1] if pts[-1] is not None else (start if start is not None else cur)
+                for c in [p for p in pts[:-1] if p is not None]:
+                    for i in range(10):
+                        t = i / 10.0
+                        u = 1 - t
+                        ring.append((u * u * cur[0] + 2 * u * t * c[0] + t * t * end[0],
+                                     u * u * cur[1] + 2 * u * t * c[1] + t * t * end[1]))
+            else:
+                c1, c2, end = pts
+                for i in range(12):
+                    t = i / 12.0
+                    u = 1 - t
+                    x = (u ** 3 * cur[0] + 3 * u ** 2 * t * c1[0]
+                         + 3 * u * t ** 2 * c2[0] + t ** 3 * end[0])
+                    y = (u ** 3 * cur[1] + 3 * u ** 2 * t * c1[1]
+                         + 3 * u * t ** 2 * c2[1] + t ** 3 * end[1])
+                    ring.append((x, y))
+            cur = end
+            ring.append(end)
+        elif op in ("closePath", "endPath"):
+            cur = start
+    return [r for r in rings if len(r) >= 3]
+
+
+def outline_edges(glyph):
+    """一个字形**画出来之后**的每带最左/最右 x。
+
+    不能拿 `rings`（描边出来的理想中线）去量：字形还要过 `curve_fit` 拟合与整数网格，
+    拟合完 `o` 的墨宽会比描边时窄 16 单位——拿理想轮廓量字偶距，压下去的是不存在的那点墨。
+    """
+    from fontTools.pens.recordingPen import RecordingPen
+
+    pen = RecordingPen()
+    glyph.draw(pen, None)
+    return _band_edges({400: rings_from_pen(pen.value)})
+
+
 def _side_class(edges, side):
-    """一侧的形状类别：`flat` 竖边、`round` 圆弧、`diag` 斜边。
+    """一侧的形状类别：`flat` 竖边、`round` 圆弧、`diag` 斜边（只给非字母用）。
 
     判据是**边缘随高度后退多少**（悬空量）：竖边处处贴着 xMin，悬空约 0；圆弧只在
     中间贴边、两端后退，悬空中等；斜边整条斜着走，悬空最大。W/V 这类字悬空不大但
@@ -155,17 +250,126 @@ def advance_of(codepoint: int, rings: dict) -> int:
     xs = [pt[0] for ring in base for pt in ring]
     if not xs:
         return BLANK_WIDTH
-    left, right = sides_of(rings)
+    left, right = sides_of(rings, codepoint)
     width = max(xs) - min(xs)
     return max(200, int(round(width)) + left + right)
 
 
-def sides_of(rings: dict) -> tuple[int, int]:
-    """左右侧距（字体单位）。汉字与非汉字的区别只在这里：汉字留 0（字面自带全角框）。"""
+def sides_of(rings: dict, codepoint: int | None = None) -> tuple[int, int]:
+    """左右侧距（字体单位）。汉字与非汉字的区别只在这里：汉字留 0（字面自带全角框）。
+
+    字母走连续式（`_bearing_letter`），数字/标点/符号走三档（`_side_class`）——两套不是
+    为了好看，是母版自己就分两套给：字母的侧距随贴边覆盖率单调走，标点却是逐个手调的。
+    """
     edges = _band_edges(rings)
     if edges is None:
         return 0, 0
+    if codepoint is not None and _is_letter(codepoint):
+        return _bearing_letter(edges, "left"), _bearing_letter(edges, "right")
     return _bearing(_side_class(edges, "left")), _bearing(_side_class(edges, "right"))
+
+
+
+# ── 字偶距 ──────────────────────────────────────────────────────────────
+# 目标不是「一个绝对间隙」，而是母版**真排**出来的每一对的墨迹白（`tools/kern_targets.bin`，
+# 由 `tools/kern_measure.py` 量）。上一版失败就失败在用同一个目标值对所有组合：`HH`、`oo`
+# 这种本来该留 168/96 的组合也被压到 −30。这一版目标逐对取自母版渲染，母版自己压过的对
+# （`Ay` 44、`AT` −3）才压，没压过的对（`HH` 168、`oo` 96）不动。
+#
+# 构建期只用本字自己的轮廓算同一个「最小墨迹白」，与目标相减就是这一对该给的 `pos` 值：
+# 轮廓本身已经和母版差着 ±1%，字宽也是自算的，所以字偶距必须**逐对反解**，
+# 抄母版表里的 −180 只会既不够也不对。
+KERN_LOW, KERN_HIGH = 0x20, 0x7E     # 只给 ASCII 可打印区做字偶距
+KERN_NONE = -32768
+KERN_MIN = 12                        # 小于 1.2% em 的差不写：肉眼不到 1.5 px（140 px 字号），
+                                     # 写了只会让 GPOS 变成「每对都调」的噪声表
+KERN_FLOOR, KERN_CEIL = -320, 60     # 挡掉母版里几个坏对的离谱值（`W` + `` ` `` 是 −529）
+
+_KERN_GRID: list | None = None
+
+
+def _kern_grid() -> list:
+    """读 `tools/kern_targets.bin`：4 字节 magic + 95×95 个 int16 目标白（小端）。"""
+    global _KERN_GRID
+    if _KERN_GRID is None:
+        import array
+        import sys as _sys
+        raw = Path(__file__).with_name("kern_targets.bin").read_bytes()
+        if raw[:4] != b"SFK1":
+            raise ValueError("kern_targets.bin 头不对，重跑 tools/kern_measure.py")
+        cells = array.array("h")
+        cells.frombytes(raw[4:])
+        if _sys.byteorder != "little":
+            cells.byteswap()
+        _KERN_GRID = cells
+    return _KERN_GRID
+
+
+def kern_target(a: int, b: int) -> int | None:
+    """母版真排时这一对的最小墨迹白；没有数据（空格、母版缺字）返回 None。"""
+    if not (KERN_LOW <= a <= KERN_HIGH and KERN_LOW <= b <= KERN_HIGH):
+        return None
+    span = KERN_HIGH - KERN_LOW + 1
+    value = _kern_grid()[(a - KERN_LOW) * span + (b - KERN_LOW)]
+    return None if value == KERN_NONE else int(value)
+
+
+def kern_features(profiles: dict) -> str:
+    """`profiles`: {码位: (字宽, 每带最左 x, 每带最右 x)}（轮廓已平移到侧距上）。
+
+    逐对反解：目标白 − 本字最小白 = 该给的 `pos`。只在两字**都有墨**的带上量，
+    少于 6 条带的组合不量（.notdef 与空白之外，正常字形不会这么少）。
+    """
+    rules = []
+    for a, (adv, _, right) in profiles.items():
+        for b, (_, left, _) in profiles.items():
+            target = kern_target(a, b)
+            if target is None:
+                continue
+            whites = [adv + left[k] - right[k] for k in range(len(left))
+                      if left[k] is not None and right[k] is not None]
+            if len(whites) < 6:
+                continue
+            value = int(min(KERN_CEIL, max(KERN_FLOOR, target - int(round(min(whites))))))
+            if abs(value) < KERN_MIN:
+                continue
+            rules.append(f"    pos uni{a:04X} uni{b:04X} {value};")
+    if not rules:
+        return ""
+    return ("languagesystem DFLT dflt;\n"
+            "languagesystem latn dflt;\n"
+            "feature kern {\n" + "\n".join(rules) + "\n} kern;\n")
+
+
+def kern_value(font, a: int, b: int) -> int:
+    """从 GPOS 里读一对字的字偶距（给自己加的自检用，不进构建路径）。"""
+    from fontTools.ttLib.tables import otTables as ot
+    if "GPOS" not in font:
+        return 0
+    name_a = font.getBestCmap().get(a)
+    name_b = font.getBestCmap().get(b)
+    if name_a is None or name_b is None:
+        return 0
+    total = 0
+    for lookup in font["GPOS"].table.LookupList.Lookup:
+        subs = []
+        for sub in lookup.SubTable:
+            subs.extend(sub.ExtSubTable if isinstance(sub, ot.ExtensionSubst) else [sub])
+        for sub in subs:
+            if not isinstance(sub, ot.PairPos) or name_a not in sub.Coverage.glyphs:
+                continue
+            i = sub.Coverage.glyphs.index(name_a)
+            if sub.Format == 1:
+                for record in sub.PairSet[i].PairValueRecord:
+                    if record.SecondGlyph == name_b and record.Value1:
+                        total += getattr(record.Value1, "XAdvance", 0) or 0
+            else:
+                klass1 = sub.ClassDef1.classDefs.get(name_a, 0)
+                klass2 = sub.ClassDef2.classDefs.get(name_b, 0)
+                value = sub.Class1Record[klass1].Class2Record[klass2].Value1
+                if value:
+                    total += getattr(value, "XAdvance", 0) or 0
+    return total
 
 
 def is_han(codepoint: int) -> bool:
@@ -338,6 +542,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
     order = [".notdef"]
     cmap: dict[int, str] = {}
     advance_by_name: dict[str, int] = {}
+    kern_profiles: dict[int, tuple] = {}
     REJECTS.clear()
 
     def draw(rings, flags):
@@ -355,7 +560,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         # 非全角字形（拉丁、数字、标点）的侧距按边缘形状给，并把轮廓平移到该侧距上。
         # 汉字不动：它自带全角框，墨迹位置属于字面的一部分（2026-10-28 主人定）。
         if not any(low <= codepoint <= high for low, high in FULL_WIDTH) and rings.get(WEIGHT_DEFAULT):
-            left, right = sides_of(rings)
+            left, right = sides_of(rings, codepoint)
             ink_left = min(pt[0] for ring in rings[WEIGHT_DEFAULT] for pt in ring)
             shift = left - ink_left
             if abs(shift) > 0.5:
@@ -379,6 +584,12 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         if not (counts[WEIGHT_MIN] == counts[WEIGHT_DEFAULT] == counts[WEIGHT_MAX]):
             raise ValueError(f"U+{codepoint:04X} 三档轮廓点数不一致，无法做可变：{counts}")
         default_glyphs[name] = draw(rings[WEIGHT_DEFAULT], flags[WEIGHT_DEFAULT])
+        if KERN_LOW <= codepoint <= KERN_HIGH:
+            # 量的是**画出来之后**的那个字形：拟合与整数网格都会改墨宽，拿描边的理想轮廓
+            # 去量，压下去的是不存在的那点墨（实测 `o` 差 16 单位）。
+            edges = outline_edges(default_glyphs[name])
+            if edges is not None:
+                kern_profiles[codepoint] = (advance, edges[0], edges[1])
         base = [pt for ring in rings[WEIGHT_DEFAULT] for pt in ring]
         if len(base) < 2:
             continue
@@ -440,7 +651,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
                      sxHeight=500, sCapHeight=700, achVendID="SLFF",
                      usWeightClass=WEIGHT_DEFAULT)
     builder.setupPost()
-    builder.addOpenTypeFeatures("")
+    builder.addOpenTypeFeatures(kern_features(kern_profiles))
 
     font = builder.font
     axis = newTable("fvar")

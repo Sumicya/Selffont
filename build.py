@@ -2009,9 +2009,16 @@ def cjk_font():
 
 def _cjk_font_check():
     import io as _io
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import cjk_vf                                   # 读 GPOS 里的字偶距给自己验
     glyphs = cjk_glyphs()
     assert len(glyphs) >= 19000, f"二创汉字只读到 {len(glyphs)} 字"
-    sample = {cp: glyphs[cp] for cp in (0x4E00, 0x53E3, 0x9F98, 0x31, 0x20) if cp in glyphs}
+    # `A` `H` `o` `y` 是给字偶距自检用的：母版真排的 `Ay` 是咬进去的（最小白 44），
+    # `HH`/`oo` 没压过（168/96）。四个字两组对照，正好能判「有没有压错对象」。
+    sample = {cp: glyphs[cp] for cp in
+              (0x4E00, 0x53E3, 0x9F98, 0x31, 0x20, 0x41, 0x48, 0x6F, 0x79) if cp in glyphs}
     data = build_cjk_font(dict(sample))          # build_vf 会消费传入的字典，这里给副本
     carrier = layout_metrics(TTFont(_io.BytesIO(make_carrier())))
     calibrated = build_cjk_font(dict(sample), carrier)
@@ -2036,6 +2043,15 @@ def _cjk_font_check():
         assert hmtx[cmap_here[0x31]][0] < 600, f"数字字宽没自算：{hmtx[cmap_here[0x31]][0]}"
         assert 0x20 in cmap_here, "空格没有补进 cmap：它在母版里没有轮廓，必须补空字形"
         assert hmtx[cmap_here[0x20]][0] == 250, f"空格字宽 {hmtx[cmap_here[0x20]][0]} 不等于四分之一 em"
+        # 字偶距：目标是母版**真排**出来的白（tools/kern_targets.bin），不是一把固定尺。
+        # 母版压过的 `Ay` 必须咬进去；母版没压过的 `HH`、只压 2 个单位的 `oo` 不许跟着压。
+        assert "GPOS" in font, "字偶距没有写进 GPOS：母版里 Ay 靠字对咬合，缺了就散架"
+        ay = cjk_vf.kern_value(font, 0x41, 0x79)
+        hh = cjk_vf.kern_value(font, 0x48, 0x48)
+        oo = cjk_vf.kern_value(font, 0x6F, 0x6F)
+        assert ay <= -150, f"Ay 没有咬进去：{ay}（母版真排的笔距是 473，最小白 44）"
+        assert abs(hh) < 12, f"HH 被压了：{hh}（母版 HH 的最小白 168，不该动）"
+        assert -40 <= oo <= 0, f"oo 的字偶距越界：{oo}（母版 oo 最小白 96，本字件自然白是 111）"
         glyph_set = font.getGlyphSet()
         blanks = {f"uni{cp:04X}" for cp in (0x20,) if cp in sample}
         for name in font.getGlyphOrder()[1:]:

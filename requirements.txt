@@ -1,5 +1,8 @@
 # 构建（build.py --cjk-font）只需要 fontTools；版本锁在实测通过的那一版。
 fonttools==4.68.0
+# 字偶距目标表（tools/kern_measure.py）用 HarfBuzz 真排母版来量「白」——PIL 不吃 GPOS，
+# 量不出母版自己压过的对（`Ay`）。只重算那张表时用，构建时不 import。
+uharfbuzz==0.57.0
 # 取笔管线（tools/maruko_skeleton.py）独立于构建运行：栅格化用 Pillow、骨架化用 scikit-image、
 # 布尔求并用 skia-pathops。只在重新从母版量中线时用到，构建本身不 import 它们。
 pillow==13.0.0
