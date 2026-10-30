@@ -29,8 +29,82 @@ FULL_WIDTH = ((0x2E80, 0x303F), (0x3040, 0x9FFF), (0xF900, 0xFAFF),
               (0xFE30, 0xFE4F), (0xFF00, 0xFF60), (0xFFE0, 0xFFE6),
               (0x20000, 0x2FA1F))
 EM = 1000
-SIDE_BEARING = 60
 BLANK_WIDTH = 250
+
+# 侧距不是常数，按**边缘的形状**分三类（主人 2026-10-30「t 和 e 疑似有点远」「全部间距优化」）。
+# 一刀切 0.06 em 的后果是：竖笔（`l` `H`）嫌松、斜边（`A` `V` `W`）和圆底（`o` `e`）嫌紧，
+# 因为斜边与圆弧在视觉上已经自带空白，不需要再给同样宽的物理空隙。
+# 三档数值取母版自己聚出来的三个簇（母版 84 组拉丁字形：平边 84、圆边 47、斜边 26），
+# 学的是它的**规则**，不是抄某一组字宽。
+BEARING_FLAT, BEARING_ROUND, BEARING_DIAG = 84, 47, 26
+
+
+
+BAND_Y = (-260, 960)      # 横带网格的上下界（字体单位）：汉字墨迹包络之外，留足余量
+
+
+def _band_edges(rings, bands=48):
+    """把一圈轮廓按水平带切，取每一带墨迹的最左/最右 x。
+
+    只读 400 档：侧距是排版节奏，三档共用一套，字重不该改变字距。
+    """
+    # 一笔一环：一个字的轮廓是好几个环，只看第一个环会把整字量成一条笔画。
+    allrings = rings.get(400) or (next(iter(rings.values())) if rings else [])
+    pts = [pt for ring in allrings for pt in ring]
+    n = len(pts)
+    if n < 3:
+        return None
+    # 带必须切在**全字库共用的 y 网格**上：字与字之间的「第 k 带」要对得齐，
+    # 否则算出来的字偶距比的是两个不同高度（实测会把 S+t 算成 -80 的撞墨值）。
+    y0, y1 = BAND_Y
+    left, right = [], []
+    for k in range(bands):
+        lo = y0 + (y1 - y0) * k / bands
+        hi = y0 + (y1 - y0) * (k + 1) / bands
+        xs = []
+        for i in range(n):
+            a, b = pts[i], pts[(i + 1) % n]
+            for yy in (lo, hi):
+                if (a[1] - yy) * (b[1] - yy) <= 0 and abs(a[1] - b[1]) > 1e-9:
+                    t = (yy - a[1]) / (b[1] - a[1])
+                    xs.append(a[0] + t * (b[0] - a[0]))
+        if xs:
+            xs.sort()
+            left.append(xs[0])
+            right.append(xs[-1])
+        else:
+            # 空带必须占位（None），否则第 k 个元素对不上「全字库第 k 带」
+            left.append(None)
+            right.append(None)
+    return left, right
+
+
+def _side_class(edges, side):
+    """一侧的形状类别：`flat` 竖边、`round` 圆弧、`diag` 斜边。
+
+    判据是**边缘随高度后退多少**（悬空量）：竖边处处贴着 xMin，悬空约 0；圆弧只在
+    中间贴边、两端后退，悬空中等；斜边整条斜着走，悬空最大。W/V 这类字悬空不大但
+    斜率很陡，额外用「边缘与高度是否单调」补判，否则会被误判成圆边。
+    """
+    if not edges:
+        return "round"
+    edge = [v for v in (edges[0] if side == "left" else edges[1]) if v is not None]
+    if len(edge) < 3:
+        return "round"
+    lo, hi = (min(edge), max(edge)) if side == "left" else (max(edge), min(edge))
+    span = abs(edge[int(len(edge) * 0.9) - 1] - edge[int(len(edge) * 0.1)]) if len(edge) > 5 else 0.0
+    overhang = float(sum(abs(v - (min(edge) if side == "left" else max(edge))) for v in edge)) / len(edge)
+    # 两个阈值是**在母版自己的 52 个拉丁字母上拟合**出来的（最小化逐侧侧距误差）：
+    # 平均每侧 10.5 单位，52 个字母里 46 个落在同一类。换字库要重拟，不是普适常数。
+    if overhang < 20:
+        return "flat"
+    if overhang > 160 or span > 120:
+        return "diag"
+    return "round"
+
+
+def _bearing(cls):
+    return {"flat": BEARING_FLAT, "round": BEARING_ROUND, "diag": BEARING_DIAG}[cls]
 REJECTS: list[tuple[int, str]] = []      # 每次 build_vf 重置，构建期报出来
 
 
@@ -70,14 +144,28 @@ CJK_RANGES = ((0x2E80, 0x2FDF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF),
 
 
 def advance_of(codepoint: int, rings: dict) -> int:
-    """这一笔字该占多宽：全角一个 em，半角按墨宽加侧距，空白四分之一 em。"""
+    """这一笔字该占多宽：全角一个 em，半角按墨宽加两侧**按边缘形状**给的侧距，空白四分之一 em。"""
     if any(low <= codepoint <= high for low, high in FULL_WIDTH):
         return EM
-    points = [pt for weight_rings in rings.values() for ring in weight_rings for pt in ring]
-    if not points:
+    # 字宽按 **400 档**算：侧距是 400 档的设计量，三档共用同一个字宽，
+    # 500 档变粗时自己吃掉一点侧距（这是排版里的常态），不靠加宽字身来让位。
+    base = rings.get(WEIGHT_DEFAULT)
+    if not base:
         return BLANK_WIDTH
-    width = max(pt[0] for pt in points) - min(pt[0] for pt in points)
-    return max(200, int(round(width)) + 2 * SIDE_BEARING)
+    xs = [pt[0] for ring in base for pt in ring]
+    if not xs:
+        return BLANK_WIDTH
+    left, right = sides_of(rings)
+    width = max(xs) - min(xs)
+    return max(200, int(round(width)) + left + right)
+
+
+def sides_of(rings: dict) -> tuple[int, int]:
+    """左右侧距（字体单位）。汉字与非汉字的区别只在这里：汉字留 0（字面自带全角框）。"""
+    edges = _band_edges(rings)
+    if edges is None:
+        return 0, 0
+    return _bearing(_side_class(edges, "left")), _bearing(_side_class(edges, "right"))
 
 
 def is_han(codepoint: int) -> bool:
@@ -229,7 +317,8 @@ def _glyph_from_rings(rings, flags):
 
 
 def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
-             style: str = "Regular", ps_name: str = "SelfroundsCJK") -> bytes:
+             style: str = "Regular", ps_name: str = "SelfroundsCJK",
+             version: str | None = None) -> bytes:
     """码位 → 可变 OTF（TrueType 轮廓 + gvar），单一 wght 轴 300–500。
 
     **会消费传入的字典**：每建一个字就 pop 掉，三万字全摊成 Python 对象要 500 MB 以上，
@@ -263,6 +352,17 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
             settle_junction_widths(data)
         rings, flags = _glyph_rings_all(data)
         rings = align_face_height(rings)
+        # 非全角字形（拉丁、数字、标点）的侧距按边缘形状给，并把轮廓平移到该侧距上。
+        # 汉字不动：它自带全角框，墨迹位置属于字面的一部分（2026-10-28 主人定）。
+        if not any(low <= codepoint <= high for low, high in FULL_WIDTH) and rings.get(WEIGHT_DEFAULT):
+            left, right = sides_of(rings)
+            ink_left = min(pt[0] for ring in rings[WEIGHT_DEFAULT] for pt in ring)
+            shift = left - ink_left
+            if abs(shift) > 0.5:
+                rings = {w: [[(x + shift, y) for x, y in ring] for ring in rr]
+                         for w, rr in rings.items()}
+        else:
+            left = right = 0
         advance = advance_of(codepoint, rings)
         # 字身框闸门：越界的汉字不进字体（宁可缺字也不发顶行的字）。越界不是靠平移
         # 糊过去——`align_face_height` 把三档压到同一副字面之后，全库 0 个汉字越框；
@@ -331,7 +431,8 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         "familyName": family, "styleName": style,
         "uniqueFontIdentifier": f"{family} {style} 1.000",
         "fullName": f"{family} {style}", "psName": ps_name,
-        "version": "Version 1.000",
+        # nameID 5 也跟版本号同一套：正式发布写 yy.m.d.当日序号.总序号，迭代版只写 1.000。
+        "version": f"Version {version}" if version else "Version 1.000",
         "copyright": "Derived from Maruko Gothic (max32002/maruko-gothic, SIL OFL 1.1).",
         "licenseDescription": "SIL Open Font License 1.1",
     })

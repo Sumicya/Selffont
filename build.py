@@ -178,8 +178,21 @@ SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE, NEW_UNICODE_18, NEW_UNICODE_17,
 # 单独成族是硬要求：configure_fonts 的注释里记着真机结论——同一个 family 里混
 # supportedAxes 可变字体与静态字体会让 ColorOS 16 开机卡第一屏。
 CJK_DATA = ROOT / "tools" / "design_cjk.bin"
-CJK_FONT_NAME = "SelfroundsCJK-VF.ttf"   # 可变字体（wght 300–500），一份顶三档
+CJK_FONT_NAME = "SelfroundsCJK-VF.ttf"   # 可变字体（wght 300–500），一份顶三档；正式发布带版本
 CJK_FAMILY = "Selfrounds CJK"
+
+# 命名跟版本号同一套规矩（主人 2026-10-30）：迭代快，**展示名不带日期**；
+# 正式发布带 yy.m.d.当日序号.总序号。两处一致——文件名与家族名要么同时带、要么同时不带，
+# 否则「装的是哪一版」看名字说不清。
+CJK_RELEASE_VERSION: str | None = None
+
+
+def cjk_naming(version: str | None = None) -> tuple[str, str]:
+    """（家族名, 字体文件名）。version 为空 = 迭代版，只留稳定的名字。"""
+    tag = version if version and version != DEV_VERSION else None
+    family = CJK_FAMILY if tag is None else f"{CJK_FAMILY} {tag}"
+    name = CJK_FONT_NAME if tag is None else f"SelfroundsCJK-VF-{tag}.ttf"
+    return family, name
 CJK_AXES = "wght"                      # 可变轴：安装配置里写成 supportedAxes
 CJK_LICENSE = ROOT / "LICENSES" / "MarukoGothic-OFL.txt"
 CJK_LICENSE_NAME = "MarukoGothic-OFL.txt"
@@ -611,8 +624,8 @@ def build_cjk_font(glyphs: dict[int, dict], carrier: dict | None = None) -> byte
 
     _sys.path.insert(0, str(ROOT / "tools"))
     import cjk_vf
-    data = cjk_vf.build_vf(glyphs, family=CJK_FAMILY, style="Regular",
-                           ps_name="SelfroundsCJK-VF")
+    data = cjk_vf.build_vf(glyphs, family=cjk_naming(CJK_RELEASE_VERSION)[0], style="Regular",
+                           ps_name="SelfroundsCJK-VF", version=CJK_RELEASE_VERSION)
     rejected = list(cjk_vf.REJECTS)
     if rejected:
         print(f"  越出字身框未收 {len(rejected)} 字（例 {', '.join(chr(cp) for cp, _ in rejected[:6])}）")
@@ -727,7 +740,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
         own = ET.Element("family")
         # 可变字件：写 supportedAxes，不写 weight（运行时按 wght 实例化）。
         node = ET.SubElement(own, "font", style="normal", supportedAxes=CJK_AXES)
-        node.text = CJK_FONT_NAME
+        node.text = cjk_naming(CJK_RELEASE_VERSION)[1]
         root.insert(index, own)
         index += 1
     fallback = ET.Element("family")
@@ -933,6 +946,9 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         date, day, build_num = query_ci_version()  # 取数失败直接抛：不编数、不出非发行包；day 恒为数字串
     prop = stamp_version((ROOT / "module/module.prop").read_text(encoding="utf-8"),
                          build_num, day=day, date=date)
+    # 命名跟版本号同一套：正式发布带 yy.m.d.当日序号.总序号，迭代版只留稳定名字。
+    global CJK_RELEASE_VERSION
+    CJK_RELEASE_VERSION = re.search(r"^version=(.*)$", prop, flags=re.M).group(1).strip()
     output = Path(output) if output else default_output(prop)
     base_path = source(base, BASE_URL, BASE_SHA256, cache / "base.zip")
     if output.resolve() == Path(base_path).resolve():
@@ -974,7 +990,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         xml = configure_fonts(template, name, ladder, cjk=bool(glyph_count))
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
-        faces = ([(CJK_FONT_NAME, 400)] if glyphs else []) + [(name, 400)]
+        faces = ([(cjk_naming(CJK_RELEASE_VERSION)[1], 400)] if glyphs else []) + [(name, 400)]
         legacy = legacy_rows(faces)
         xml_root = ET.fromstring(xml)
         references = [(node.text or "").strip() for node in xml_root.iter("font")]
@@ -1035,7 +1051,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     print(f"  主字体 {face['family']!r} → {RENAME}（{name},{len(ladder)} 档）")
     print(f"  补充字库 {len(bundled)} 个基础字体 + {len(supplementals)} 个固定许可外部字体；"
           "fonts.xml 其余引用由设备自带（Noto/OEM，不打包）")
-    print(f"  二创汉字 {glyph_count} 字 / {len(cjk_font) / 1e6:.1f} MB（{CJK_FAMILY}，排在主字体之前）"
+    print(f"  二创汉字 {glyph_count} 字 / {len(cjk_font) / 1e6:.1f} MB"
+          f"（{cjk_naming(CJK_RELEASE_VERSION)[0]}，排在主字体之前）"
           if glyph_count else "  二创汉字：无数据，跳过")
     print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成文渊")
     for message in warnings:
@@ -1072,7 +1089,7 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
             destination.writestr(f"licenses/{license_name}", supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
         if cjk_font:
-            destination.writestr(f"system/fonts/{CJK_FONT_NAME}", cjk_font)
+            destination.writestr(f"system/fonts/{cjk_naming(CJK_RELEASE_VERSION)[1]}", cjk_font)
             destination.writestr(f"licenses/{CJK_LICENSE_NAME}", CJK_LICENSE.read_bytes())
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("fonts-insert.xml", legacy)
@@ -1585,6 +1602,19 @@ def version_stamp():
     assert "version=26.9.30.0.42" in zero_day, zero_day
     assert VERSION_RE.fullmatch("26.9.30.0.42")
     # 四段只在本地手工省略 --day 时退化；CI 的 --query-ci 自动取数恒有当日序号，不走这条路径。
+    # 命名跟版本号同一套：迭代版不带日期，正式发布带 yy.m.d.当日序号.总序号。
+    global CJK_RELEASE_VERSION
+    old = CJK_RELEASE_VERSION
+    try:
+        CJK_RELEASE_VERSION = None
+        assert cjk_naming(None) == (CJK_FAMILY, CJK_FONT_NAME), cjk_naming(None)
+        CJK_RELEASE_VERSION = "26.10.30.1.42"
+        assert cjk_naming(CJK_RELEASE_VERSION) == ("Selfrounds CJK 26.10.30.1.42",
+                                                   "SelfroundsCJK-VF-26.10.30.1.42.ttf"), cjk_naming(CJK_RELEASE_VERSION)
+        CJK_RELEASE_VERSION = "dev"
+        assert cjk_naming(CJK_RELEASE_VERSION) == (CJK_FAMILY, CJK_FONT_NAME), "dev 不该带日期"
+    finally:
+        CJK_RELEASE_VERSION = old
     degraded = stamp_version(prop, "42", day=None, date="26.9.30")
     assert "version=26.9.30.42" in degraded and "versionCode=42" in degraded, degraded
     assert VERSION_RE4.fullmatch("26.9.30.42")
@@ -1969,6 +1999,16 @@ def cjk_font():
     assert CJK_DATA.exists(), f"缺少二创汉字数据：{CJK_DATA}"
     assert CJK_LICENSE.exists() and b"SIL OPEN FONT LICENSE" in CJK_LICENSE.read_bytes(), \
         "二创字体必须随包带 OFL 文本（母版 Maruko 是 SIL OFL 1.1）"
+    global CJK_RELEASE_VERSION
+    saved, CJK_RELEASE_VERSION = CJK_RELEASE_VERSION, None   # 检查固定用迭代版的命名
+    try:
+        return _cjk_font_check()
+    finally:
+        CJK_RELEASE_VERSION = saved
+
+
+def _cjk_font_check():
+    import io as _io
     glyphs = cjk_glyphs()
     assert len(glyphs) >= 19000, f"二创汉字只读到 {len(glyphs)} 字"
     sample = {cp: glyphs[cp] for cp in (0x4E00, 0x53E3, 0x9F98, 0x31, 0x20) if cp in glyphs}
@@ -1987,7 +2027,7 @@ def cjk_font():
             f"汉字字件裁剪包络切墨：ink={low}..{high} win={os2.usWinDescent}/{os2.usWinAscent}"
     with TTFont(_io.BytesIO(data)) as font:
         assert font["head"].unitsPerEm == 1000
-        assert font["name"].getDebugName(1) == CJK_FAMILY
+        assert font["name"].getDebugName(1) == cjk_naming(None)[0]
         assert set(font.getBestCmap()) == set(sample), "码位没有一对一落进 cmap"
         # 字宽是构建期自算的：全角占一个 em，半角按本字墨宽加侧距。
         # 全写成 1000 的话，这个字件（排在主字体之前）会把拉丁和数字摊成方块。
@@ -2009,7 +2049,7 @@ def cjk_font():
                           [{"axes": [("wght", 400)]}], cjk=True)
     root = ET.fromstring(xml)
     holders = [family for family in root.findall("family")
-               if any((node.text or "").strip() == CJK_FONT_NAME for node in family.findall("font"))]
+               if any((node.text or "").strip() == cjk_naming(None)[1] for node in family.findall("font"))]
     assert len(holders) == 1, "二创字件必须恰好出现在一个 family 里"
     alone = holders[0]
     assert len(alone.findall("font")) == 1, "二创字件不能与别的字件同族（真机会卡开机）"
@@ -2046,7 +2086,7 @@ def emit_cjk_font(out_dir: Path) -> None:
     start = time.time()
     data = build_cjk_font(glyphs, carrier)
     print(f"编字体并校准 {len(data) / 1e6:.1f} MB {time.time() - start:.1f}s", flush=True)
-    (out_dir / CJK_FONT_NAME).write_bytes(data)
+    (out_dir / cjk_naming(CJK_RELEASE_VERSION)[1]).write_bytes(data)
 
     font = TTFont(io.BytesIO(data), recalcBBoxes=False)
     hhea, os2 = font["hhea"], font["OS/2"]

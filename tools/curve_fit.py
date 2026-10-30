@@ -25,15 +25,15 @@ from __future__ import annotations
 
 import math
 
-FIT_TOL = 0.40        # 三次贝塞尔拟合容差（字体单位）：实测 0.8 会让形状整体走样（XOR +90%），
-                      # 0.4 是「贴合」与「段数」之间的实测甜点
-QUAD_TOL = 2.2        # 三次 → 二次的弦高容差（字体单位）：母版 90° 圆角就是两段二次（误差 2.1 单位），
+FIT_TOL = 0.80        # 三次贝塞尔拟合容差（字体单位）。0.4 会把每个 90° 圆角切成两段
+                      # （R≈200 的弧单段三次误差 1.0），段数翻倍；0.8 与母版自身的
+                      # 曲线误差（圆角两段二次、2.1 单位）同量级
+QUAD_TOL = 1.5        # 三次 → 二次的弦高容差（字体单位）：母版 90° 圆角就是两段二次（误差 2.1 单位），
                       # 段越碎接点越多，接点上曲率不连续，放大看就是一圈棱
-LINE_TOL = 0.30       # 段内点到弦线的最大距离不超过它 → 当直线，一个点都不多给
+LINE_TOL = 0.80       # 段内点到弦线的最大距离不超过它 → 当直线，一个点都不多给。
+                      # 0.3 会把剖面上 0.2 单位的正常起伏判成弯，直边被拆成两三条曲线
 MAX_QUAD = 5          # 单段三次最多拆成几条二次
 MAX_DEPTH = 12        # 递归切分深度上限
-SEED_SPAN = 110.0     # 初始预分割的弧长（字体单位）：先把环切成几段再各自拟合切分，
-                      # 免得每次拟合都从整环开始算
 
 
 # ---------------------------------------------------------------- 小几何
@@ -53,6 +53,34 @@ def _bez(p0, p1, p2, p3, t):
     a, b, c, d = u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t
     return (a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
             a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1])
+
+
+def _tangent_at(pts, i, step, toward):
+    """i 处的切向：用邻域三点定圆，圆的切线对粗采样也准。
+
+    为什么不用弦方向：弦 u(p0,pk) 与真实切向差半个步角。圆角处的采样步长是 3–15°，
+    半个步角就是 1.5–7.5°——起点方向一错，最小二乘解出来的控制柄整段偏，一个本来
+    0.05 单位就能拟合的 90° 弧会被量出几单位误差，然后切成一串小段。fix7 点数暴涨、
+    边上看得出棱，主因就是这里。
+    """
+    n = len(pts)
+    idx = [(i + step * k) % n for k in (0, 1, 2)]
+    (ax, ay), (bx, by), (cx, cy) = (pts[j] for j in idx)
+    d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    if abs(d) > 1e-7:
+        ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay)
+              + (cx * cx + cy * cy) * (ay - by)) / d
+        uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx)
+              + (cx * cx + cy * cy) * (bx - ax)) / d
+        tx, ty = -(ay - uy), (ax - ux)          # 半径转 90°
+    else:
+        tx, ty = bx - ax, by - ay               # 三点共线：退回弦方向
+    if tx * toward[0] + ty * toward[1] < 0:     # 朝向行进方向
+        tx, ty = -tx, -ty
+    nn = math.hypot(tx, ty)
+    if nn < 1e-12:
+        return _unit(pts[i], pts[idx[1]])
+    return (tx / nn, ty / nn)
 
 
 def _local_dir(points, i, forward=True):
@@ -77,9 +105,14 @@ def _fit_one(pts, u):
     P = np.asarray(pts, float)
     T = np.asarray(u, float)
     p0, p3 = P[0], P[-1]
-    k = min(3, len(pts) - 1)
-    t0 = _unit(pts[0], pts[k]) if k > 0 else (1.0, 0.0)
-    t3 = _unit(pts[-1 - k], pts[-1]) if k > 0 else (1.0, 0.0)
+    if len(pts) >= 6:
+        # 端点切向：正向取前三点、反向取末三点各做一次三点圆（端点附近曲率最可靠）
+        t0 = _tangent_at(pts, 0, +1, (pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]))
+        t3 = _tangent_at(pts, len(pts) - 1, -1,
+                         (pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1]))
+    else:
+        t0 = _unit(pts[0], pts[-1])
+        t3 = t0
     t0 = np.asarray(t0, float)
     t3 = np.asarray(t3, float)
     U = 1.0 - T
@@ -130,20 +163,6 @@ def _max_off_line(pts):
     return max(abs(dx * (p[1] - a[1]) - dy * (p[0] - a[0])) / L for p in pts)
 
 
-def _seed(ring, far, span=SEED_SPAN):
-    """按弧长把环切成若干段，返回预分割索引（含 0 与 far，保证覆盖整环）。"""
-    n = len(ring)
-    acc = 0.0
-    out, nxt = [0], span
-    for i in range(1, n + 1):
-        acc += _dist(ring[i - 1], ring[i % n])
-        if acc >= nxt and i < n:
-            out.append(i)
-            nxt += span
-    out.append(far % n)
-    return out
-
-
 def _sub(points, a, b):
     """闭合环上 a..b（含两端，b 可回绕）的点列。"""
     n = len(points)
@@ -187,8 +206,11 @@ def _segment(points_by_weight, a, b, depth, ref=None):
         mid = (a + max(1, span // 2)) % n
         if mid == a % n or mid == b % n:
             return [(a, b, "curve")]
-    out.extend(_segment(points_by_weight, a, mid, depth + 1))
-    out.extend(_segment(points_by_weight, mid, b, depth + 1))
+    # ref 必须一路传下去：切分判据只能看参考档（400）。丢了这个参数，递归里的子段会
+    # 退回 points_by_weight 的第一档（300），拿 300 档的几何去判「是不是直线」，
+    # 400 档上弯 4 单位的弧会被当成直线放过去——实测最大偏差 4.1 单位，肉眼就是棱。
+    out.extend(_segment(points_by_weight, a, mid, depth + 1, ref))
+    out.extend(_segment(points_by_weight, mid, b, depth + 1, ref))
     return out
 
 
@@ -284,8 +306,11 @@ def fit_rings(dense, anchors):
         # 只用两个起始点（首点 + 离它最远的点），其余交给拟合自己按误差切。
         idx = sorted(anchors[ri]) if anchors[ri] else []
         if len(idx) < 2:
+            # 只用两个起始点（首点 + 离它最远的点），其余交给递归按误差切。
+            # 按弧长每 110 单位预分割会在光滑弧上硬插分界，每插一处就多一个 on 点，
+            # 实测那一条让点数多 7%。
             far = max(range(n), key=lambda i: _dist(ring[i], ring[0]))
-            idx = sorted(set(_seed(ring, far)))
+            idx = sorted({0, far})
         if len(idx) < 2:                    # 退化环：退回密点，宁可多几个点也不许走形
             for w in weights:
                 out_pts[w].append(list(dense[w][ri]))
