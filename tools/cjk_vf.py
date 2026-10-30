@@ -195,9 +195,37 @@ def _outside_frame(rings) -> str:
 
 
 def _glyph_rings_all(glyph: dict):
-    """三档轮廓，共用一套已合并共线点的点集。"""
+    """三档轮廓（真二次曲线），三档点数与 on/off 标志逐一对应。"""
     import design_cjk
-    return design_cjk.outline_points_all(glyph)
+    return design_cjk.outline_curves(glyph)
+
+
+def _glyph_from_rings(rings, flags):
+    """按 TrueType 的点序直接造字形：on/off 标志与 gvar 的增量必须逐点对齐。
+
+    为什么不用 TTGlyphPen：它只会 lineTo，输出的是折线（设计原则 2026-10-24
+    「全是直线的输出无论 IoU 多高都是多边形字体」）。手写 Glyph 才能把二次曲线的
+    控制点放进去，而且点序与 `base` 完全一致，gvar 的增量不会错位。
+    """
+    from array import array
+
+    from fontTools.ttLib.tables import ttProgram
+    from fontTools.ttLib.tables._g_l_y_f import Glyph, GlyphCoordinates, flagOnCurve
+
+    coords, values, ends = [], [], []
+    for ring, f in zip(rings, flags):
+        for (x, y), on in zip(ring, f):
+            coords.append((x, y))
+            values.append(flagOnCurve if on else 0)
+        ends.append(len(coords) - 1)
+    glyph = Glyph()
+    glyph.numberOfContours = len(rings)
+    glyph.coordinates = GlyphCoordinates(coords)
+    glyph.flags = array("B", values)
+    glyph.endPtsOfContours = ends
+    glyph.program = ttProgram.Program()
+    glyph.program.fromBytecode(b"")
+    return glyph
 
 
 def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
@@ -223,13 +251,8 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
     advance_by_name: dict[str, int] = {}
     REJECTS.clear()
 
-    def draw(rings, pen):
-        for ring in rings:
-            pen.moveTo(ring[0])
-            for point in ring[1:]:
-                pen.lineTo(point)
-            pen.closePath()
-        return pen
+    def draw(rings, flags):
+        return _glyph_from_rings(rings, flags)
 
     default_glyphs, variation_blobs = {}, {}
     empty = TTGlyphPen(None).glyph()
@@ -238,7 +261,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         data = glyphs.pop(codepoint)
         if is_han(codepoint):
             settle_junction_widths(data)
-        rings = _glyph_rings_all(data)
+        rings, flags = _glyph_rings_all(data)
         rings = align_face_height(rings)
         advance = advance_of(codepoint, rings)
         # 字身框闸门：越界的汉字不进字体（宁可缺字也不发顶行的字）。越界不是靠平移
@@ -255,9 +278,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         counts = {w: [len(r) for r in rings[w]] for w in rings}
         if not (counts[WEIGHT_MIN] == counts[WEIGHT_DEFAULT] == counts[WEIGHT_MAX]):
             raise ValueError(f"U+{codepoint:04X} 三档轮廓点数不一致，无法做可变：{counts}")
-        pen = TTGlyphPen(None)
-        draw(rings[WEIGHT_DEFAULT], pen)
-        default_glyphs[name] = pen.glyph()
+        default_glyphs[name] = draw(rings[WEIGHT_DEFAULT], flags[WEIGHT_DEFAULT])
         base = [pt for ring in rings[WEIGHT_DEFAULT] for pt in ring]
         if len(base) < 2:
             continue

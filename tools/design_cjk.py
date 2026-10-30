@@ -370,8 +370,12 @@ def glyph(codepoint: int) -> dict | None:
 
 # ---------------------------------------------------------------- 可变字体用的固定拓扑描边
 
-SAMPLE_PER_SEG = 6      # 每段贝塞尔取几个中线点（三档共用，只有偏移量不同）
-ARC_STEPS = 6           # 圆端头半圆取几个点
+SAMPLE_PER_SEG = 6      # 数据里每段贝塞尔存几个剖面值（SFCJ5；与描边采样无关）
+ARC_STEPS = 9           # 圆端头半圆取几个点（半径 28 时弦高 0.55 单位，6 点时是 1.9）
+CHORD_TOL = 0.10        # 描边的中间点弦高误差（字体单位）；这是**拟合用的密点**，不是输出点
+STATION_STEP = 8.0      # 中间点最大弧长间距（字体单位）：间距太大就估不出曲率
+FAIR_UNITS = 18.0       # 半宽剖面的低通尺度（字体单位）：比它更短的起伏判为栅格噪声
+PROFILE_TOL = 0.015     # 剖面（相对半宽）一维 DP 容差：1.5% ≈ 半宽 28 上的 0.42 单位
 
 
 def _seg_point(seg, t):
@@ -397,6 +401,134 @@ def _centerline(segs):
             pts.append(_seg_point(seg, k / SAMPLE_PER_SEG))
     pts.append(_seg_point(segs[-1], 1.0))
     return pts
+
+
+
+def _seg_d(seg, t):
+    """三次贝塞尔在 t 处的切向（解析导数）。"""
+    p0, p1, p2, p3 = seg
+    u = 1.0 - t
+    dx = 3 * u * u * (p1[0] - p0[0]) + 6 * u * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0])
+    dy = 3 * u * u * (p1[1] - p0[1]) + 6 * u * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1])
+    n = (dx * dx + dy * dy) ** 0.5
+    return (1.0, 0.0) if n < 1e-9 else (dx / n, dy / n)
+
+
+def _stations(segs):
+    """每段按「弦高误差 ≤ CHORD_TOL」定采样数。只由几何决定，三档共用。"""
+    import math
+
+    counts = []
+    for seg in segs:
+        p0, p1, p2, p3 = seg
+        d = max(_off_line(p0, p3, p1), _off_line(p0, p3, p2))
+        L = 0.0
+        for a, b in zip(seg, seg[1:]):
+            L += math.hypot(a[0] - b[0], a[1] - b[1])
+        by_len = int(math.ceil(L / STATION_STEP))
+        by_curve = int(math.ceil(math.sqrt(max(d, 1e-9) * 0.75 / CHORD_TOL)))
+        counts.append(min(max(by_len, by_curve), 48))
+    return counts
+
+
+def _dense_axis(stroke):
+    """中线密采样（按弦高误差），返回 (点列, (段号, 参数) 列, 切向列)。结果缓存在笔画上。
+
+    缓存的意义：三档要画同一笔画三次，采样只需算一次；而且**三档必须用同一套采样点**，
+    否则 gvar 的点对不上。
+    """
+    cached = stroke.get("_dense")
+    if cached is not None:
+        return cached
+    segs = stroke["segs"]
+    pts, ts, tans = [], [], []
+    for j, (seg, n) in enumerate(zip(segs, _stations(segs))):
+        for k in range(n):
+            t = k / n
+            pts.append(_seg_point(seg, t))
+            ts.append((j, t))
+            tans.append(_seg_d(seg, t))
+    pts.append(_seg_point(segs[-1], 1.0))
+    ts.append((len(segs) - 1, 1.0))
+    tans.append(_seg_d(segs[-1], 1.0))
+    # 段与段之间是 G1：交界处把两侧切向平均一次，去掉浮点差造成的抖动
+    for i in range(1, len(ts)):
+        if ts[i][1] == 0.0 and ts[i - 1][0] == ts[i][0] - 1:
+            ax, ay = tans[i - 1]
+            bx, by = tans[i]
+            vx, vy = ax + bx, ay + by
+            nn = (vx * vx + vy * vy) ** 0.5 or 1.0
+            tans[i - 1] = tans[i] = (vx / nn, vy / nn)
+    stroke["_dense"] = (pts, ts, tans)
+    return stroke["_dense"]
+
+
+def _fair(values, spacing, sigma_units, closed=False):
+    """沿弧长做高斯低通：把骨架与距离变换带来的 1–2 单位起伏压掉。
+
+    `spacing` 是**点与点之间的弧长**（不是坐标差），剖面是一维序列也能用。
+    开放曲线的首末点原样保留：端头位置是量出来的，不能被抹动。
+    """
+    import numpy as _np
+    from scipy.ndimage import gaussian_filter1d
+
+    v = _np.asarray(values, float)
+    if len(v) < 5 or spacing <= 0:
+        return v
+    sigma = sigma_units / spacing
+    if sigma < 0.45:
+        return v
+    mode = "wrap" if closed else "nearest"
+    out = gaussian_filter1d(v, sigma, axis=0, mode=mode)
+    if not closed:
+        out[0], out[-1] = v[0], v[-1]
+    return out
+
+
+def _polyline1d(values, tol):
+    """一维 Douglas–Peucker：把剖面压成少数几个节点，再线性插值回来。
+
+    剖面的抖动是「量出来的噪声」（距离变换 + u8 量化），不是设计。高斯低通会把真拐点
+    一起削弱（`暑` 长撇 30.6→24.0 会被抹成缓坡），一维 DP 只删「离弦不到 tol 的点」，
+    真的趋势拐点离弦远，删不掉。
+    """
+    n = len(values)
+    if n < 3:
+        return list(values)
+    keep = [False] * n
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
+            continue
+        va, vb = values[a], values[b]
+        span = b - a
+        best, bi = 0.0, None
+        for k in range(a + 1, b):
+            v = va + (vb - va) * (k - a) / span
+            d = abs(values[k] - v)
+            if d > best:
+                best, bi = d, k
+        if bi is not None and best > tol:
+            keep[bi] = True
+            stack.append((a, bi))
+            stack.append((bi, b))
+    idx = [i for i in range(n) if keep[i]]
+    import numpy as _np
+    return list(_np.interp(range(n), idx, [values[i] for i in idx]))
+
+
+def _spacing(points):
+    """点列的中位间距（去掉重合点）。"""
+    import numpy as _np
+
+    p = _np.asarray(points, float)
+    if len(p) < 2:
+        return 0.0
+    seg = _np.hypot(*_np.diff(p, axis=0).T)
+    seg = seg[seg > 1e-9]
+    return float(_np.median(seg)) if len(seg) else 0.0
 
 
 def _round_cap(center, angle_from, half, steps):
@@ -428,21 +560,17 @@ def _as_ccw(ring):
     return ring if _area(ring) >= 0 else ring[::-1]
 
 
-def _offset_ring(axis, normals, half, side):
-    """轴线一侧的偏移环；`half` 可以是定值，也可以是逐点半宽。
+def _offset_ring(axis, normals, halves, side, ref_half=None):
+    """轴线一侧的偏移环。`halves` 是逐点半宽。
 
-    **外角补圆角**，内角不补。不补时，一笔在拐点处的外轮廓是两条偏移线直接相交的尖楔，
-    拐得越急楔伸得越长；母版的笔画是「中线与半径 half 的圆的闵可夫斯基和」，拐点外侧
-    应当是半径 half 的圆弧（和端头同一个圆）。内侧不能补：弧会朝笔画里凹，等于把拐角
-    内侧挖掉一块；内侧让两段偏移线相交，nonzero 规则下交点以里仍是实心。
-
-    补弧的点数只由转角决定、与 half 无关，所以 300/400/500 三档点数仍然一一对应
-    （可变字体的硬约束）。
+    **外角补圆弧**：偏移线在凸侧会自交出一个尖楔，母版是「中线与半径 half 的圆的
+    闵可夫斯基和」，那里应当是半径 half 的圆弧。圆弧按弦高误差采样，不用固定角度
+    ——固定 9° 在半径 28 上仍有 0.3 单位的折面，放大就是一圈小棱。
+    内侧不补：弧会朝笔画里凹，等于把里角挖掉一块；让两段偏移线相交即可。
     """
     import math
 
     n = len(axis)
-    halves = [float(half)] * n if isinstance(half, (int, float)) else list(half)
     out = []
     for i in range(n):
         x, y = axis[i]
@@ -452,19 +580,22 @@ def _offset_ring(axis, normals, half, side):
             continue
         mx, my = normals[i + 1]
         cross = nx * my - ny * mx
-        if side * cross >= 0.0:          # 内侧：两段偏移线相交即止
+        if side * cross >= 0.0:
             continue
         dot = max(-1.0, min(1.0, nx * mx + ny * my))
         turn = abs(math.atan2(cross, dot))
-        if turn < math.radians(10.0):
+        if turn < math.radians(6.0):
             continue
-        steps = max(1, int(math.ceil(turn / math.radians(9.0))))
+        # 补弧的点数必须与字重无关（三档点数要一一对应），半径用 400 档的参考值
+        r = ref_half if ref_half else 0.5 * (halves[i] + halves[i + 1])
+        step = 2.0 * math.acos(max(-1.0, min(1.0, 1.0 - CHORD_TOL / max(r, CHORD_TOL))))
+        steps = max(1, min(24, int(math.ceil(turn / max(step, 1e-3)))))
         d = math.atan2(cross, dot)
         a0 = math.atan2(ny, nx)
         for k in range(1, steps):
             a = a0 + d * k / steps
-            r = halves[i] + (halves[i + 1] - halves[i]) * k / steps
-            out.append((x + side * r * math.cos(a), y + side * r * math.sin(a)))
+            h = halves[i] + (halves[i + 1] - halves[i]) * k / steps
+            out.append((x + side * h * math.cos(a), y + side * h * math.sin(a)))
     return out
 
 
@@ -543,43 +674,40 @@ def stroke_contours(stroke, weight, glyph=None):
         if _covered(center, glyph, 400, stroke):
             return []
         return [_dot_contour(center, half)]
-    axis = _centerline(segs)
+    # 中线按弦高误差密采样（三档共用同一套点），再沿弧长短程低通：
+    # 栅格骨架带来的 1–2 单位起伏不抹掉，放大就是边上的「凹凸」。
+    pts, ts, tans = _dense_axis(stroke)
+    closed = bool(stroke.get("closed"))
+    # 中线**不做低通**：它本来就是 splprep 拟合出的三次贝塞尔，在贝塞尔上按弦高采样
+    # 得到的就是精确曲线。再抹一遍只会把钩、撇的曲率改掉（实测 XOR 反涨 15%）。
+    # 抖动在剖面里，只低通剖面。
+    axis = pts
     if len(axis) < 2:
         return []
     n = len(axis)
-    # 切向必须平滑：笔画末端常有一小段急转，前后切线一翻向，偏移环就在内侧自交，
-    # 交点处 winding 变成 0，描出来是一个白色月牙（自测图里一眼可见）。
-    # 这里只改「方向」不改点数——切向只由轴线决定，与半宽无关，三档仍然同构。
-    tangents = []
-    for i in range(n):
-        tx, ty = _tangent(axis, i)
-        if tangents:
-            px, py = tangents[-1]
-            if tx * px + ty * py < 0.5:      # 夹角超过 60°：判为抖动，沿用前一个方向
-                tx, ty = px, py
-        tangents.append((tx, ty))
-    normals = [(-ty, tx) for tx, ty in tangents]   # 左法向
-    # 逐点半宽剖面（SFCJ5）：值是相对该笔 400 档半宽的倍数，这里乘上本档的 half。
-    # 剖面长度与中线点数一一对应；对不上就退回等宽，宁可不变形也不画出错点。
+    normals = [(-ty, tx) for tx, ty in tans]
+    # 逐点半宽剖面（SFCJ5）：值是相对该笔 400 档半宽的倍数。剖面本身也是量出来的，
+    # 同样带栅格噪声，先按弧长低通再乘本档半宽。
     prof = stroke.get("prof")
-    halves = [v * half for v in prof] if prof and len(prof) == n else half
-    left = _offset_ring(axis, normals, halves, 1.0)
-    right = _offset_ring(axis, normals, halves, -1.0)
-    if stroke.get("closed"):
-        # 闭合环（口/日/田 的外圈）：**两条**轮廓——外圈顺时针、内圈逆时针，
-        # nonzero 下内圈正好抵消成空心。
-        # 不能拼成「一条带缝的环」：那样缝上的两个点在三档共线合并时会被当成多余点删掉，
-        # 一环就退化成顺着外圈跑完再顺着内圈跑的环，孔被填实（回/目 实测如此）。
-        # 也不能假定 left 一定是外圈：骨架环的方向取决于分段顺序，回 的内口就是反着走的，
-        # 于是内口的外环成了 +1，孔被填成一小团墨。按面积大小定内外，再按面积正负定方向。
+    if prof and len(prof) == len(segs) * SAMPLE_PER_SEG + 1:
+        raw = [prof[min(int((j + t) * SAMPLE_PER_SEG), len(prof) - 2)] * (1 - ((j + t) * SAMPLE_PER_SEG - int((j + t) * SAMPLE_PER_SEG)))
+               + prof[min(int((j + t) * SAMPLE_PER_SEG) + 1, len(prof) - 1)] * ((j + t) * SAMPLE_PER_SEG - int((j + t) * SAMPLE_PER_SEG))
+               for j, t in ts]
+        faired = _fair(raw, _spacing(axis), FAIR_UNITS, closed)
+        faired = _polyline1d(list(faired), PROFILE_TOL)
+        halves = [float(v) * half for v in faired]
+    else:
+        halves = [half] * n
+    ref_half = stroke_half(stroke, glyph or {}, 400)
+    left = _offset_ring(axis, normals, halves, 1.0, ref_half)
+    right = _offset_ring(axis, normals, halves, -1.0, ref_half)
+    if closed:
         outer, inner = (left, right) if abs(_area(left)) >= abs(_area(right)) else (right, left)
         return [_as_cw(outer), _as_ccw(inner)]
     import math
-    h_end = halves[-1] if isinstance(halves, list) else half
-    h_start = halves[0] if isinstance(halves, list) else half
-    # 终点端头：从 left[-1]（左法向角）顺时针扫到 right[-1]（右法向角），凸向笔画前方。
+    h_end = halves[-1]
+    h_start = halves[0]
     end = _round_cap(axis[-1], math.atan2(normals[-1][1], normals[-1][0]), h_end, ARC_STEPS)
-    # 起点端头：从 right[0]（左法向 +180°）顺时针扫到 left[0]，凸向笔画后方。
     start = _round_cap(axis[0], math.atan2(normals[0][1], normals[0][0]) + math.pi, h_start, ARC_STEPS)
     return [_as_cw(left + end + right[::-1] + start)]
 
@@ -614,7 +742,7 @@ def outline_points(glyph, weight):
 
 # ---------------------------------------------------------------- 共线点合并
 
-SIMPLIFY_TOL = 1.0      # 字身单位：1000 单位 em 的千分之一，任何字号都看不出来（400 字实测形状面积差 <0.1%）
+SIMPLIFY_TOL = 6.0      # 字身单位：只是「曲线从哪起笔」的粗锚点；真拐角离弦几十单位，削不掉
 
 
 def _off_line(a, b, c):
@@ -652,6 +780,22 @@ def _dp_keep(pts, tol):
             stack.append((a, bi))
             stack.append((bi, b))
     return keep
+
+
+def outline_curves(glyph, weights=None):
+    """一个字 → ({档: [环点列]}, {档: [环 on/off 标志]})，是**真二次曲线**。
+
+    与 `outline_points_all` 的区别只在最后一步：那个把点直接连成折线，这个把点拟合回
+    曲线。三档点列同索引，拟合的段划分由 400 档的误差决定，所以三档点数与 on/off
+    标志逐一相同——gvar 需要这个。
+    """
+    import curve_fit
+
+    weights = tuple(weights or WEIGHTS)
+    dense = {w: outline_points(glyph, w) for w in weights}
+    if len({len(dense[w]) for w in weights}) != 1:
+        return dense, {w: [[1] * len(r) for r in dense[w]] for w in weights}
+    return curve_fit.fit_rings(dense, [[] for _ in dense[weights[0]]])
 
 
 def outline_points_all(glyph, weights=None):
