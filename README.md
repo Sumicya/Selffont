@@ -56,78 +56,74 @@ su -c reboot                                            # 或手动重启
 ### 热切换（不重启）
 
 **要解决的问题**：模块平时靠 KernelSU 的 magic mount 在**开机时**把字件叠到只读分区上，
-改一次字体就要重启一次；系统设置里换字体是当场生效的。`hotswap.sh` 把「叠上去」搬到运行时。
+改一次字体就要重启一次；系统设置里换字体是当场生效的。
 
-**两种挂法，别混**：
+**四条硬规矩**（2026-10-31 真机事故之后定的，脚本里逐条守）：
 
-1. **字体目录一次 overlayfs**。`mount --bind` 只能覆盖**已存在**的路径；`Selffont-*.ttf`、
-   `SelfroundsCJK-VF-*.ttf` 是系统里没有的新名字。上一版为了 bind 成功先去
-   `/system/fonts/新名字` 建空文件，只读分区当场拒绝（`can't create …: Read-only file system`），
-   30 个文件全挂。现在是一条：
-   `mount -t overlay overlay -o lowerdir=/system/fonts,upperdir=/data/adb/selffont/upper,workdir=/data/adb/selffont/work /system/fonts`。
-   模块里的字件**硬链接**进 upper（模块在 `/data/adb/modules`、upper 在 `/data/adb/selffont`，
-   同一块盘，零拷贝），新名字就从 upper 里长出来；系统原有的字件也在 upper 里，被同一份盖住。
-2. **已存在的配置文件照旧 bind**：`/system/etc` 那几份 `fonts*.xml` 设备上本来就有，逐个
-   `mount --bind`；**不**整目录 overlay——`/system/etc` 底下可能还压着别的挂载（hosts 之类），
-   overlayfs 会把它们从视图里盖掉。
-3. **进 init 的挂载命名空间，而且 nsenter 后面只能跟 `sh`**：
-   `nsenter -t 1 -m sh /data/adb/modules/MFGA/hotswap.sh __ns apply <计划文件>`。
-   `nsenter -t 1 -m mount --bind …` 会被 nsenter 的 getopt 把 `--bind` 当成它自己的选项
-   （2026-10-31 真机原样输出：`nsenter: Unknown option 'bind'` ×30）。脚本启动时按
-   `-t 1 -m` → `-t 1 --mount` → `--target 1 --mount` → `--target=1 --mount` 探一遍；
-   全不成就把每次的原样报错打出来，并提示贴 `nsenter --help`。探测命令是 `true`，不带任何
-   `-` 开头的参数——Android 的 toybox nsenter 会把命令行里任何 `-x` 都当成自己的选项。
-4. **记账与反序摘**：`/data/adb/selffont-hotswap.state` 一行一个文件（`verify` 按它逐个数），
-   同目录 `.state.units` 一行一个挂载单元（`dir|` / `file|`）；`off` 反序摘，只摘挂载表里认得出来的。
-   账上写着**上一次开机的 `boot_id`** 就判 `off`：重启之后挂载早没了，账不能当现状。
-5. **让读字体的人重读**：`cmd font update`（Android 12+ 的框架接口，返回 0 只代表请求被受理）
-   → 软重启 `system_server`（15–20 秒）→ `--reload=app`（只影响新进程）。
+1. **挂之前先记账，失败一定回滚**。计划先落盘（`/data/adb/selffont-hotswap.journal`），
+   每挂成功一个再追加到 `.done`；任何一个单元失败、或者 `on` 结束时数出我们的 overlay
+   不是恰好一条，就按 `.done` 反序 `umount`，把账清空并报「已回滚到挂之前」。
+   上一次挂到一半被打断（journal 还在）时，`on` 会先跑一次 `panic` 再挂。
+2. **`/system/fonts` 上只许一次目录级 overlay**，一个字体名都不单独挂。计划生成阶段就
+   把「字体目录 → 一条 overlay」写死；执行阶段再断言一次「我们的 overlay 恰好 1 条」，
+   不是 1 条就按失败回滚。
+3. **任何情况下不许把 /data 下的目录 bind 到 /system 路径**。目录只能 overlay；
+   `mount --bind` 只用于**文件**，而且只用于系统里**已经存在**的配置文件
+   （`/system/etc/fonts_base.xml` 这类）。守卫写在唯一一处 `guard_mount()` 里，谁绕都得先过它。
+4. **`panic`**：`su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'` —— 摘掉本脚本挂过的
+   全部挂载点（按挂载表认 `upperdir=` 与 `/data/adb/selffont/` 前缀，不靠账），删
+   `merged/`、`upper/`、`work/` 与全部账，最后打印 `/proc/mounts` 里与 `fonts` 相关的剩余行。
 
-**命令与用法**（`su -c` 里跑；管理器里点模块的「操作」按钮等于第一条）：
+**具体怎么挂**：
 
 ```sh
-su -c 'sh /data/adb/modules/MFGA/action.sh'                  # 切换：off→on / on→off，打印新状态
-su -c 'sh /data/adb/modules/MFGA/action.sh status'           # 只打印 on / off / partial
-su -c 'sh /data/adb/modules/MFGA/action.sh verify'           # 逐文件 sha256 对比，返回 0=一致
-su -c 'sh /data/adb/modules/MFGA/action.sh web'              # 老功能：网页自带字体 压/放行
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh on --reload=none' # 只挂，不惊动任何进程
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh off --dry-run'   # 只打印将执行的命令，不改系统
+mount -t overlay overlay -o lowerdir=/system/fonts,upperdir=/data/adb/selffont/upper,workdir=/data/adb/selffont/work /system/fonts
 ```
 
-每条命令的输出与判读：
+upper 里放模块字件的**副本**（不硬链接——upper 里的文件不能有指向外面的第二个链接，
+否则挂载阶段就可能 `EINVAL`）。26 个文件约 147 MB，一次几秒；workdir 每次挂之前清空。
+`SelfroundsCJK-VF-<版本>.ttf` 这类新名字从 upper 长出来，系统原有的字件仍从 lower 读到。
+
+进 init 的挂载命名空间：`nsenter -t 1 -m sh <本脚本> __ns apply <计划文件>`。
+nsenter 后面只许跟 `sh`——`nsenter -t 1 -m mount --bind …` 会被它的 getopt 把 `--bind`
+当成自己的选项（真机原样输出：`nsenter: Unknown option 'bind'`）。
+
+**命令**（`su -c` 里跑；管理器里点模块的「操作」按钮等于第一条）：
+
+```sh
+su -c 'sh /data/adb/modules/MFGA/action.sh'                  # 切换：off→on / on→off
+su -c 'sh /data/adb/modules/MFGA/action.sh status'           # on / off / partial
+su -c 'sh /data/adb/modules/MFGA/action.sh verify'           # 逐文件 sha256，0=一致
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'           # 出事时的清场
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh on --dry-run'    # 只打印计划
+```
 
 | 命令 | 正常输出 | 不对时看什么 |
 | --- | --- | --- |
-| `action.sh` | `挂上 5 个单元、30 个文件（字体目录一次 overlay，已存在的配置逐个 bind）` + `现在状态 on` | `部分失败：a 个单元挂上、b 个没挂上`：上面每个单元都有一行 `挂载失败：…（mount: …）` 原样报错；一个都没挂上会把账清掉 |
-| `action.sh status` | `on` / `off` / `partial` | `partial` = init 挂载表里认得出的单元不够数，再跑一次 `action.sh` 补齐或 `off` 摘干净 |
-| `action.sh verify` | `verify：一致 N，不一致 0`，退出码 0 | 退出码 1 且列 `不一致：路径` / `缺：路径` / `没挂：单元`——空账也返回 1 |
-| `hotswap.sh on --reload=none` | `挂上 …`，不重启任何进程 | 新开的程序能看到新字体，已开的看不到（预期） |
+| `action.sh` | `挂上 N 个单元、M 个文件（字体目录一次 overlay，配置逐个 bind）` | `挂载失败：…（mount: …）` 后必须跟 `回滚：…` + `已回滚到挂之前`，否则跑 `panic` |
+| `action.sh status` | `on` / `off` / `partial` | `partial` = 挂载表里认得出的单元不够数 |
+| `action.sh verify` | `verify：一致 N，不一致 0`，退出码 0 | 退出码 1 且列 `不一致：`/`缺：`/`没挂：`；空账也返回 1 |
+| `hotswap.sh panic` | `摘下：…` 若干、`删掉了 …`、`---- /proc/mounts 里与 fonts 相关的剩余行 ----` | 剩下 `umount` 不掉的会注明「重启后会消失」 |
 
-**边界**：已开的程序不会自己重画（Typeface 是进程内缓存），除 `--reload=system` 外都要重开
-那个程序；挂进去的是 **init 的挂载命名空间**——你的 `su` 若带命名空间隔离（KernelSU 的 `su`
-会摘掉模块外的挂载），`ls /system/fonts` 看不到属正常，用 `ls /proc/1/root/system/fonts`
-从 init 的视角看；`off` 只摘这一次运行时的挂载，**重启后** magic mount 按模块状态重新叠上，
-要长期关闭请停用模块。
+**边界**：已开的程序不会自己重画（Typeface 是进程内缓存），除 `--reload=system` 外都要
+重开那个程序；挂进去的是 **init 的挂载命名空间**，你的 `su` 若带命名空间隔离，
+`ls /system/fonts` 看不到属正常，用 `ls /proc/1/root/system/fonts`；`off` 只摘这一次运行时的
+挂载，重启后 magic mount 按模块状态重新叠上。
 
-**没验的部分照实说**：overlayfs 能不能在这台 ROM 的 init 命名空间里挂成功、SELinux 放不放行
-（字件从 `/data/adb/selffont/upper` 长出来时带的是模块文件自己的标签）、toybox 的 `nsenter`
-认不认 `-m`、`cmd font update` 会不会真把新 Typeface 推给应用、软重启后是否全局重读——全是
-真机事实，沙箱里没有 Android，**一次都没跑过**。能判的只有三件，`build.py --check` 每次都跑：
-语法与接线；nsenter 收到的 argv（`sh` 之后不许有 `-` 开头的参数）；记账规则（空账返回 1、
-一致数等于账的行数、上次开机的账不算数、内容一致但挂载表里没有也不算数）。
+**没验的部分照实说**：overlay 能不能在这台 ROM 的 init 命名空间里一次挂成功、
+SELinux 放不放行、`cmd font update` 会不会真推新 Typeface、软重启后是否全局重读——都是
+真机事实。`build.py --check` 每次只验我自己的部分：计划形状（恰好一条 overlay、没有逐字体
+bind）、守卫（目录 bind 被拒）、记账与回滚（overlay 失败时把已挂的摘回去）、`panic` 清场。
 
-**真机验收四条**（原样贴回来，四条都对才算过）：
+**真机验收**（原样贴回来）：
 
 ```sh
 su -c 'sh /data/adb/modules/MFGA/hotswap.sh on'
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh status'                       # on
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh verify'; echo "退出码 $?"     # 0，且「一致 N」= wc -l < /data/adb/selffont-hotswap.state
-su -c 'ls /proc/1/root/system/fonts | grep Selfrounds'                    # 列出新字体名（ls /system/fonts 看不到见上面「边界」）
-su -c 'cat /proc/uptime'                                                  # 切换前后不归零
+su -c 'awk "\$2 == \"/system/fonts\"" /proc/1/mountinfo | wc -l'   # 我们挂完应当比开机多 1 层
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh verify'; echo "退出码 $?"
+su -c 'ls /proc/1/root/system/fonts | grep -c .'
+su -c 'cat /proc/uptime'
 ```
-
-upper 里的字件默认用硬链接。如果 overlay 挂载报 `Invalid argument`，先试复制这条退路：
-`SELFFONT_COPY=1 sh /data/adb/modules/MFGA/hotswap.sh on`，原样报错一并贴回来。
 
 ### 火狐
 
@@ -330,11 +326,11 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 - **`A` 尖 `y −16..673`（母 0..700）、`V` 起点 `29..709`（母 −1..700）、`4` 高 `−4..666`（母 0..704）**：
   取笔与字面校准的差，不是间距。
 - **空格 250 vs 母版 280**：四分之一 em 是 2026-10-28 定的规则，不是量错。
-- **热切换**：2026-10-31 真机第一次跑，30 个文件全挂（`nsenter: Unknown option 'bind'`、
-  `can't create …: Read-only file system`、`verify` 空账退回 0）；已按 overlayfs + `sh __ns` +
-  假根守卫 + 空账返回 1 改过，改后的四条验收仍未收到。真机四件（overlayfs 能否在 init
-  命名空间挂上、`nsenter` 的 SELinux 策略、`cmd font update` 是否真推新 Typeface、
-  软重启后是否全局重读）仍一次未跑。
+- **热切换**：2026-10-31 真机两轮都失败——第一轮 30 个文件全挂；第二轮我给的命令把
+  `/data` 下的合并目录 `mount --bind` 到 `/system/fonts`（`mount` 输出里成了
+  `/dev/block/dm-76 … f2fs`），并在 init 里留下 per-file overlay 残渣。已改成「一次目录级
+  overlay + 失败回滚 + 目录 bind 守卫 + `panic`」四条硬规矩，并写进 `build.py --check`。
+  **真机仍未验证**：overlay 能否一次挂成功、SELinux 策略、`cmd font update`、软重启重读。
 
 ### 未验证项的真机清单
 

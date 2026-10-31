@@ -1,5 +1,37 @@
 # 更新日志
 
+## 2026-10-31（九）· 热切换把 /data 的目录 bind 到了 /system/fonts（事故），四条硬规矩重写
+
+**事故原样**：真机 `/system/fonts` 上叠了三层——① KernelSU 的开机 overlay（正常那层）；
+② 几百条 `KSU on /data/adb/selffont/merged/<字体名> type overlay`（残渣）；③
+`/dev/block/dm-76 on /system/fonts type f2fs (rw,…)`，`dm-76` 就是 `/data` 的块设备。
+第③层是**我上一轮给的那条命令**造的：`mount --bind $B /system/fonts`，`$B` 在 `/data` 下，
+bind 挂载在 `mount` 输出里继承源文件系统的设备与类型，于是系统字体目录指向了数据分区。
+第②层是它带出来的连锁反应。**这是我的实现错误，不是设备问题。**
+
+**四条硬规矩，写进脚本也写进 `build.py --check`**：
+
+1. **挂之前先记账，失败一定回滚**：计划先落 `$BASE.journal`，每挂成一个追加 `.done`；
+   任何单元失败、或结束时数出我们的 overlay 不是恰好 1 条，就按 `.done` 反序 `umount`，
+   清账并打印「已回滚到挂之前」。上次挂到一半被打断（journal 还在）时，`on` 先跑 `panic`。
+2. **只许一次目录级 overlay**：计划生成阶段写死「字体目录 → 一条 overlay」，执行阶段再断言
+   「我们的 overlay 恰好 1 条」，`__ns apply` 内部对 overlay 条数再校一遍（2 条、0 条都拒）。
+   逐字体 bind 在计划里就不可能存在。
+3. **不许把 /data 的目录 bind 到 /system 路径**：唯一入口 `guard_mount()`，目录只走 overlay；
+   `mount --bind` 只许用于文件、且只用于系统里已存在的配置。往只读分区建占位文件的分支
+   整个删掉（上一版 `: > /system/fonts/新名字` 是 `Read-only file system` 的来源）。
+4. **`panic`**：按挂载表（`upperdir=/data/adb/selffont/…` 与 `/data/adb/selffont/` 前缀，
+   不靠账）反序摘掉本脚本挂过的一切，删 `merged/`、`upper/`、`work/` 与全部账，
+   最后打印 `/proc/mounts` 里与 `fonts` 相关的剩余行与 `/system/fonts` 的层数。
+
+**upper 改成复制**：硬链接会让 upper 里的文件带上指向模块目录的第二个链接，overlay 挂载阶段
+可能 `EINVAL`；26 个文件约 147 MB，复制几秒，workdir 每次挂前清空。
+
+**能自证的**（`module_hotswap` 里，用假根 + 只记录 argv 的 `mount`/`umount`/`nsenter` 壳跑真脚本）：
+计划恰好一条 overlay、失败时把已挂的摘回去且账清空、两条或零条 overlay 与目录 bind 都在
+`mount` 之前被拒、`panic` 删目录并打出剩余行。三条变异（overlay 换成目录 bind、去掉回滚、
+`panic` 不删目录）都能被抓到。**真机事实一条没验**。
+
 ## 2026-10-31（八）· 热切换真机全挂，改成 init 命名空间里一次 overlayfs
 
 **主人贴的原样输出**（30 个文件、0 个挂上）：
