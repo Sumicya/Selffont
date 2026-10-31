@@ -1,5 +1,39 @@
 # 更新日志
 
+## 2026-10-31（十）· 真机证据落定：merged 里 246 个 0 字节文件 + dm-76 挂在 /system/fonts
+
+**主人给的真机证据**：`/data/adb/selffont/merged/` 里 **246 个 0 字节文件**（`du` 15 KB、
+`ls` 246 条），`/proc/mounts` 里 `/dev/block/dm-76`（就是 `/data`）挂在 `/system/fonts` 之上。
+两样都指向同一段代码形状：先给每个字体名建空占位、再把整个目录 bind 进 `/system`。
+
+**改法（三条要求，逐条可判）**：
+
+- **① 整目录 bind 到 /system 路径，彻底删掉**。`guard_mount()` 是唯一入口：bind 的源必须
+  是**常规文件**（`[ -f ]`），源落在 `upper/ work/ merged/` 里直接拒；目录只走 overlay。
+  `__ns apply` 里再校一遍「overlay 恰好 1 条」。
+- **② 空文件占位只在 `SELFFONT_SYSTEM_ROOT` 假根下建**：全文件只有一处 `: > "$abs"`，
+  前面是 `[ -n "$ROOT" ] && [ ! -e "$abs" ]`；真机路径上遇到系统里没有的配置文件是
+  「跳过并说明」，不再造 0 字节文件。
+- **③ 挂之前记 mnt_id，摘的时候认 mnt_id**：`__ns apply` 在每个单元挂之前把目标顶层
+  `mnt_id` 记进 `<计划>.pre`，挂完把**我们这一层**的 mnt_id 记进账（`kind|相对路径|mnt_id`）。
+  `off`/`panic` 只摘「顶层 mnt_id 等于我们记的那个」的层；被盖住时打印
+  「我们这层 mnt_id X 上面还压着 mnt_id Y」，**不按路径猜、不摘别人的层**。
+  `ns_undo` 里再验一次，防止计划里混进被盖住的单元。
+- **⑤ `panic` 加两条安全阀**：孤儿只扫「`upperdir=` 是我们的」与「挂载点落在我自己的
+  `upper/work/merged` 里」，不再按 `/data/adb/selffont` 前缀乱认（上一版会把别人的挂载
+  算成自己的）；还有层摘不掉时**不删 `upper/`**（正挂着的 overlay 还在用它），报
+  「重启后再跑一次 panic」并退 1；旧账（上一次开机）清理时顺手删 upper/work/merged。
+
+**能自证的部分**（`module_hotswap`，假根 + 只改挂载表的 `mount`/`umount` 桩跑真脚本）：
+dry-run 只有一条 overlay、无逐字体 bind；`on` 后账里每条都带数字 mnt_id、`.pre` 里能看到
+挂之前那层的 100；假根里缺的配置会建占位文件；在字体目录上盖一层外来挂载（900）时
+`status` 变 `partial`、`off` 退 1 且**一条 umount 都没对那个路径发**、外来层原样在；
+`__ns undo` 遇到被盖住的层也拒；撤掉外来层后 `off` 精确摘掉我们的三层、开机那层留着；
+overlay 挂失败时已挂的配置被摘回、账与 pre 全清；目录 bind 在 `mount` 之前就被拒；
+`panic` 在被盖住时不删 upper、清干净后删 merged/upper/work 并打出剩余 fonts 行。
+五条变异（不记 mnt_id、被盖住照摘、去掉假根守卫、允许目录 bind、panic 不删目录）都能抓到。
+**真机事实一条没验**：overlay 能否在这台 ROM 的 init 命名空间挂成功、SELinux 是否放行。
+
 ## 2026-10-31（九）· 热切换把 /data 的目录 bind 到了 /system/fonts（事故），四条硬规矩重写
 
 **事故原样**：真机 `/system/fonts` 上叠了三层——① KernelSU 的开机 overlay（正常那层）；

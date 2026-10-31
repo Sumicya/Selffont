@@ -6,6 +6,7 @@
 #   sh action.sh            切换字体（on ⇄ off），切完打印状态
 #   sh action.sh status     只打印状态（on / off / partial）
 #   sh action.sh verify     逐文件比对 sha256，证明系统里看到的就是模块里这份
+#   sh action.sh panic      出事时的清场：摘掉本脚本挂过的一切，删 merged/upper/work
 #   sh action.sh web        老行为：切换「网页自带字体」压 / 放行
 #
 # 为什么会失败、失败了怎么办：见 README「热切换」一节。
@@ -19,6 +20,12 @@ case ${1:-toggle} in
     verify)
         out=$(sh "$MODDIR/hotswap.sh" verify 2>&1) || { ui_print "Selffont: $out"; exit 1; }
         ui_print "Selffont: $out"
+        ;;
+    panic)
+        out=$(sh "$MODDIR/hotswap.sh" panic 2>&1)
+        rc=$?
+        ui_print "Selffont: $out"
+        exit $rc
         ;;
     web)
         out=$(sh "$MODDIR/web-fonts.sh" toggle) || { ui_print "Selffont: 切换失败——$out"; exit 1; }

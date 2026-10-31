@@ -58,21 +58,29 @@ su -c reboot                                            # 或手动重启
 **要解决的问题**：模块平时靠 KernelSU 的 magic mount 在**开机时**把字件叠到只读分区上，
 改一次字体就要重启一次；系统设置里换字体是当场生效的。
 
-**四条硬规矩**（2026-10-31 真机事故之后定的，脚本里逐条守）：
+**五条硬规矩**（2026-10-31 两次真机事故之后定的，脚本里逐条守，`build.py --check` 逐条验）：
 
-1. **挂之前先记账，失败一定回滚**。计划先落盘（`/data/adb/selffont-hotswap.journal`），
-   每挂成功一个再追加到 `.done`；任何一个单元失败、或者 `on` 结束时数出我们的 overlay
-   不是恰好一条，就按 `.done` 反序 `umount`，把账清空并报「已回滚到挂之前」。
-   上一次挂到一半被打断（journal 还在）时，`on` 会先跑一次 `panic` 再挂。
-2. **`/system/fonts` 上只许一次目录级 overlay**，一个字体名都不单独挂。计划生成阶段就
-   把「字体目录 → 一条 overlay」写死；执行阶段再断言一次「我们的 overlay 恰好 1 条」，
-   不是 1 条就按失败回滚。
-3. **任何情况下不许把 /data 下的目录 bind 到 /system 路径**。目录只能 overlay；
-   `mount --bind` 只用于**文件**，而且只用于系统里**已经存在**的配置文件
-   （`/system/etc/fonts_base.xml` 这类）。守卫写在唯一一处 `guard_mount()` 里，谁绕都得先过它。
-4. **`panic`**：`su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'` —— 摘掉本脚本挂过的
-   全部挂载点（按挂载表认 `upperdir=` 与 `/data/adb/selffont/` 前缀，不靠账），删
+1. **不许任何形式的整目录 bind 到 /system 路径**。目录只走 overlay；`mount --bind` 只收
+   **常规文件**，而且目标必须是系统里已经存在的文件。事故现场：`mount --bind
+   /data/adb/selffont/merged /system/fonts` → `/proc/mounts` 里成了
+   `/dev/block/dm-76 on /system/fonts type f2fs`（bind 继承源文件系统的设备与类型）。
+   守卫只有一处 `guard_mount()`：源不是常规文件、或源落在 `upper/ work/ merged/` 里，直接拒。
+2. **空文件占位只在 `SELFFONT_SYSTEM_ROOT` 假根下建**。真机上 `/system` 只读，建了也是
+   `Read-only file system`；而且会在 `/data` 里留下成排 0 字节文件（事故现场：
+   `merged/` 246 个 0 字节、`du` 15 KB）。真机路径上遇到系统里没有的配置文件是**跳过并说明**。
+3. **挂之前记录 mnt_id，摘的时候认 mnt_id**。每个单元挂之前把目标当前顶层 mnt_id 记进
+   `/data/adb/selffont-hotswap.pre`，挂完再记我们这一层的 mnt_id 进账（
+   `kind|相对路径|mnt_id`）。`off`/`panic` 只摘「顶层 mnt_id 等于我们记的那个」的挂载点；
+   被别的东西盖住就打印「我们这层 mnt_id X 上面还压着 Y」，**不猜、不摘别人的层**。
+   路径相同不是证据，mnt_id 才是。
+4. **失败一定回滚**：计划先落 `journal`，每挂成功一个追加 `done`；任何单元失败、或结束时
+   数出我们的 overlay 不是恰好一条，就按 `done` 反序摘回去、清账，打印「已回滚到挂之前」。
+   上一次挂到一半被打断（`journal` 还在）时，`on` 先跑一次 `panic` 再挂。
+5. **`panic`**：摘掉本脚本挂过的全部挂载点（认账里的 mnt_id + 只扫「`upperdir=` 是我们的」
+   或「挂载点就在 `upper/work/merged` 里」的孤儿，**不按 `/data` 前缀乱认**），删
    `merged/`、`upper/`、`work/` 与全部账，最后打印 `/proc/mounts` 里与 `fonts` 相关的剩余行。
+   还有层摘不掉时**不删 `upper/`**——正挂着的 overlay 还在用它，删了 `/system/fonts` 会读失败；
+   这时报「重启后再跑一次 panic」，退出码 1。
 
 **具体怎么挂**：
 
@@ -94,7 +102,7 @@ nsenter 后面只许跟 `sh`——`nsenter -t 1 -m mount --bind …` 会被它�
 su -c 'sh /data/adb/modules/MFGA/action.sh'                  # 切换：off→on / on→off
 su -c 'sh /data/adb/modules/MFGA/action.sh status'           # on / off / partial
 su -c 'sh /data/adb/modules/MFGA/action.sh verify'           # 逐文件 sha256，0=一致
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'           # 出事时的清场
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'           # 出事时的清场（认 mnt_id，不摘别人的层）
 su -c 'sh /data/adb/modules/MFGA/hotswap.sh on --dry-run'    # 只打印计划
 ```
 
