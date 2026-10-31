@@ -3,6 +3,12 @@ name: Build
 
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'bad/**'
+      - 'LICENSE'
+      - '.gitignore'
   workflow_dispatch:
 
 env:

@@ -225,8 +225,10 @@ CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
 PROJECT = "Selffont"  # 产物名与 artifact 名的项目段：<项目名>-<版本>
 DEV_VERSION = "dev"     # 仓库里的非发行默认：没盖戳就不假装有正式序号
-VERSION_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+\.\d+$")   # 五段：日期.当日序号.总序号
-VERSION_RE4 = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{1,2}\.\d+$")       # 四段：本地手工省略 --day 时用（CI 自动取数不走这条路径）
+# 规范 2026-10-31 定的版本串：yy.m.d 两位年、月/日/序号一律不补零、序号 ≥1。
+DATE_RE = r"\d{2}\.(1[0-2]|[1-9])\.(3[01]|[12][0-9]|[1-9])"
+VERSION_RE = re.compile(rf"^{DATE_RE}\.([1-9]\d*)\.([1-9]\d*)$")       # 五段：日期.当日序号.总序号
+VERSION_RE4 = re.compile(rf"^{DATE_RE}\.([1-9]\d*)$")                   # 四段：本地手工省略 --day 时用（CI 自动取数不走这条路径）
 
 # 网页自带字体开关：模板默认压掉（全系统同一副面孔）；--keep-web-fonts 放开（图标字体等要它）。
 # 表示法与 module/web-fonts.sh 完全一致：生效 = pref 行原样，放行 = 该行加 Selffont:keep 标记注释。
@@ -781,8 +783,8 @@ def check_number(value: str, label: str, minimum: int = 0) -> str:
 
 
 def check_date(value: str) -> str:
-    if not re.fullmatch(r"\d{1,2}\.\d{1,2}\.\d{1,2}", value):
-        raise ValueError(f"日期必须是 YY.M.D（m/d 不补零），收到 {value!r}")
+    if not re.fullmatch(DATE_RE, value):
+        raise ValueError(f"日期必须是 YY.M.D（两位年，月/日不补零，例 26.11.1），收到 {value!r}")
     return value
 
 
@@ -799,7 +801,7 @@ def stamp_version(prop: str, build: str | None, day: str | None = None, date: st
                          "或显式传 --build/--date（这两段不可豁免，不出非发行包）")
     check_number(build, "总序号", 1)
     if day is not None:
-        check_number(day, "当日序号", 0)
+        check_number(day, "当日序号", 1)
     check_date(date)
     prop = re.sub(r"^version=.*$", f"version={version_core(date, build, day)}", prop, flags=re.M)
     return re.sub(r"^versionCode=.*$", f"versionCode={build}", prop, flags=re.M)
@@ -1597,10 +1599,16 @@ def version_stamp():
     assert VERSION_RE.fullmatch("26.9.30.3.42")
     for bad in ("26.9.30", "26.9.30.3.42.7", "dev"):
         assert not VERSION_RE.fullmatch(bad), bad
-    # 当日序号 0 合法（head 提交不是今天推的，表示重出旧提交的包），不是「缺数据」。
-    zero_day = stamp_version(prop, "42", day="0", date="26.9.30")
-    assert "version=26.9.30.0.42" in zero_day, zero_day
-    assert VERSION_RE.fullmatch("26.9.30.0.42")
+    # 当日序号从 1 起（规范 2026-10-31：版本串里 `0` 不是合法段），0 必须被拒。
+    for zero in ("0", "00"):
+        try:
+            stamp_version(prop, "42", day=zero, date="26.9.30")
+            raise AssertionError(f"当日序号 {zero!r} 未被拒绝")
+        except ValueError:
+            pass
+    # 补零的日期同样是非法产物：26.11.01 不是 26.11.1。
+    for padded in ("26.11.01", "26.09.30", "26.9.30.0.42"):
+        assert not VERSION_RE.fullmatch(padded), padded
     # 四段只在本地手工省略 --day 时退化；CI 的 --query-ci 自动取数恒有当日序号，不走这条路径。
     # 命名跟版本号同一套：迭代版不带日期，正式发布带 yy.m.d.当日序号.总序号。
     global CJK_RELEASE_VERSION
@@ -1666,18 +1674,18 @@ def ci_version_numbering():
     # 1) 今天第一次运行：无历史运行、无产物，R_first 就是当前号，当日序号 1。
     assert ci_version_numbers([], [], 210, now) == (today, 1, 210, 210)
     # 2) 今天已有两条运行（含一次失败）：按最小 run_number 锚定，失败运行同样占号。
-    runs = [run(207, "2026-10-27T00:10:00Z"), run(209, "2026-10-27T00:30:00Z")]
+    runs = [run(207, "2026-10-27T00:10:00+00:00"), run(209, "2026-10-27T00:30:00+00:00")]
     assert ci_version_numbers(runs, [], 210, now) == (today, 4, 210, 207)
     # 3) 昨天的运行不算今天：仍按今天首条起算。
-    assert ci_version_numbers([run(200, "2026-10-26T12:00:00Z")], [], 210, now) == (today, 1, 210, 210)
+    assert ci_version_numbers([run(200, "2026-10-26T12:00:00+00:00")], [], 210, now) == (today, 1, 210, 210)
     # 4) pull_request 运行永不计入。
-    assert ci_version_numbers([run(205, "2026-10-27T00:05:00Z", "pull_request")], [], 210, now) \
+    assert ci_version_numbers([run(205, "2026-10-27T00:05:00+00:00", "pull_request")], [], 210, now) \
         == (today, 1, 210, 210)
     # 5) 产物反推锚点：26.10.27.3.500 → R_first=498，当前 503 就是当日第 6 条。
     assert ci_version_numbers([], [art(f"Selffont-{today}.3.500", 1)], 503, now) \
         == (today, 6, 503, 498)
     # 6) 两个锚点取小：运行最小号 496 比产物反推的 498 更早。
-    assert ci_version_numbers([run(496, "2026-10-27T00:01:00Z")],
+    assert ci_version_numbers([run(496, "2026-10-27T00:01:00+00:00")],
                               [art(f"Selffont-{today}.3.500", 1)], 503, now) == (today, 8, 503, 496)
     # 7) 段数不是五段、或日期不是今天的产物不参与锚定。
     assert ci_version_numbers([], [art(f"Selffont-{today}.3", 1),
@@ -1690,10 +1698,10 @@ def ci_version_numbering():
     assert ci_version_numbers([], [art(f"Selffont-{today}.3.600", 1)], 210, now) == (today, 1, 210, 210)
     # 10) 日界按 UTC+8：UTC 10-27 16:30 = UTC+8 10-28 00:30，日期跨到 28 号，前一条 23:00 的运行不算。
     late = datetime(2026, 10, 27, 16, 30, tzinfo=timezone.utc)
-    assert ci_version_numbers([run(300, "2026-10-27T15:00:00Z")], [], 301, late) \
+    assert ci_version_numbers([run(300, "2026-10-27T15:00:00+00:00")], [], 301, late) \
         == ("26.10.28", 1, 301, 301)
     # 日期段格式：yy.m.d，月日不补零。
-    assert re.fullmatch(r"\d{2}\.\d{1,2}\.\d{1,2}", ci_version_numbers([], [], 1, now)[0])
+    assert re.fullmatch(r"\d{2}\.(1[0-2]|[1-9])\.(3[01]|[12][0-9]|[1-9])", ci_version_numbers([], [], 1, now)[0])
     # 产物名反推的边界：day=1 时 R_first 就是总序号本身。
     assert artifact_anchor(f"Selffont-{today}.1.700", today) == 700
     assert artifact_anchor(f"Selffont-{today}.2.700", today) == 699
@@ -2161,11 +2169,91 @@ def emit_cjk_font(out_dir: Path) -> None:
     print("完成", flush=True)
 
 
+def preview_chars(chars: str, glyphs: dict[int, dict]) -> dict[int, dict]:
+    """预览选字：按输入顺序去重、跳过数据里没有的码位，返回按码位排序的子集。
+
+    不做全量构建，是为了「改一笔、几秒钟看见」：数据改完直接跑
+    `.venv/bin/python build.py --preview 鬱響鬢`，不必等 50 分钟的全量出件。
+    """
+    order = list(dict.fromkeys(cp for cp in map(ord, chars) if cp in glyphs))
+    if not order:
+        raise ValueError(f"这些字都不在 {CJK_DATA.name} 里：{chars!r}")
+    return {cp: glyphs[cp] for cp in sorted(order)}
+
+
+def emit_preview(chars: str, out_dir: Path, compare: Path | None = None, size: int = 200) -> None:
+    """预览路径（规范「设计取向记录」要求的热重载）：只编选中的字，出小字体 + 母版对照图。
+
+    `--compare` 给母版 TTF 时，用同一套 FreeType 渲染（`tools/freetype_iou.py`）出上下两排
+    对照图，并打印每字 IoU；不给就只出 `preview.ttf`。产物写在 out_dir（默认 `work/preview/`），
+    不入库。
+    """
+    import time
+
+    start = time.time()
+    glyphs = cjk_glyphs()
+    print(f"读数据 {len(glyphs)} 字 {time.time() - start:.1f}s", flush=True)
+    subset = preview_chars(chars, glyphs)
+    start = time.time()
+    data = build_cjk_font(dict(subset))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / "preview.ttf"
+    target.write_bytes(data)
+    print(f"编 {len(subset)} 字 → {target} {len(data) / 1024:.0f} KB {time.time() - start:.1f}s",
+          flush=True)
+    if compare is None:
+        return
+
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tools"))
+    from PIL import Image, ImageDraw, ImageFont
+    import freetype_iou
+
+    chars_sorted = [chr(cp) for cp in subset]
+    cell_w = size + 60
+    cell_h = size + 50
+    gutter = 56
+    width = gutter + cell_w * len(chars_sorted) + 20
+    height = cell_h * 2 + 60
+    canvas = Image.new("L", (width, height), 255)
+    pen = ImageDraw.Draw(canvas)
+    label_font = ImageFont.truetype(str(compare), 34)
+    pen.text((8, 30), "母", font=label_font, fill=0)
+    pen.text((8, cell_h + 30), "本", font=label_font, fill=0)
+    values = []
+    for index, char in enumerate(chars_sorted):
+        x = gutter + index * cell_w
+        pair = None
+        for row, path in enumerate((compare, target)):
+            ink, (dx, dy) = freetype_iou.bitmap(path, char, size)
+            top = 30 + row * cell_h
+            if ink.size:
+                glyph = Image.new("L", (ink.shape[1], ink.shape[0]), 255)
+                glyph.paste(0, mask=Image.fromarray((ink * 255).astype("uint8")))
+                left = x + max((cell_w - ink.shape[1]) // 2 + dx, 0)
+                canvas.paste(glyph, (left, top + size + dy))
+        values.append(freetype_iou.compare(compare, target, char, size))
+        pen.text((x + 4, 30 + 2 * cell_h - 40), f"{values[-1]:.3f}", font=label_font, fill=0)
+    png = out_dir / "preview.png"
+    canvas.save(png)
+    print(f"对照图 {png}（上排母版、下排本版；每格下方是该字 IoU）", flush=True)
+    ordered = sorted(values)
+    print(f"IoU 中位 {ordered[len(ordered) // 2]:.3f}  最低 {ordered[0]:.3f}  "
+          f"（{len(values)} 字，{size} px 同基线）", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true", help="跑内建自检：不下载、不打包")
     parser.add_argument("--cjk-font", type=Path, metavar="DIR",
                         help="只出二创汉字字件（可变 + 三个静态实例）到 DIR，不下载、不打包")
+    parser.add_argument("--preview", metavar="字…",
+                        help="只编这几个字出预览小字体（几秒），配合 --compare 出母版对照图")
+    parser.add_argument("--preview-out", type=Path, metavar="DIR", default=ROOT / "work" / "preview",
+                        help="预览产物目录（默认 work/preview/，不入库）")
+    parser.add_argument("--compare", type=Path, metavar="TTF",
+                        help="预览对照用的母版字体（不给就只出 preview.ttf）")
     parser.add_argument("--base", help="基础包 ZIP：本地路径或 URL（默认下载并缓存）")
     parser.add_argument("--font", metavar="PATH|URL", help="主字体：本地文件或 URL（默认用内置来源）")
     parser.add_argument("--output", type=Path,
@@ -2180,7 +2268,9 @@ def main() -> None:
     parser.add_argument("--keep-web-fonts", action="store_true",
                         help="放行网页自带字体（图标字体等）；默认压成文渊")
     args = parser.parse_args()
-    if args.cjk_font:
+    if args.preview:
+        emit_preview(args.preview, args.preview_out, args.compare)
+    elif args.cjk_font:
         emit_cjk_font(args.cjk_font)
     elif args.check:
         run_checks()

@@ -5,7 +5,7 @@ CLEANUP_SCOPE=actions 处理 artifact 与 run；CLEANUP_SCOPE=releases 处理 Re
 读取 GH_TOKEN、REPO、RUN_ID、SEGMENTS、CLEANUP_APPLY；项目名前缀由 REPO 推导（Selffont-）。
 动作先收齐并打印完整清单，再按 CLEANUP_APPLY 预演或执行；只动本项目对象。
 
-artifact 五判据依次执行：命名口径（版本段数 != SEGMENTS）→ 来源（workflow_run.event 是
+artifact 五判据依次执行：命名口径（版本段数 != SEGMENTS 或任一段带前导零）→ 来源（workflow_run.event 是
 pull_request）→ 重复当日序号（同日同序号按来源运行的 run_started_at 删旧留新）→ 号源口径
 （末段总序号必须等于来源运行的 run_number；切换号源过渡期、全仓还没有任何新口径产物时暂留
 最新 1 个旧产物）→ 数量（全仓按 created_at 保留最新 5 个，且来源运行必须仍在所属工作流保留的
@@ -109,6 +109,18 @@ def version_parts(name: str):
 def segments_of(name: str) -> int:
     version = name[len(PREFIX):] if name.startswith(PREFIX) else name
     return len([part for part in version.split(".") if part])
+
+
+def zero_padded(name: str) -> str | None:
+    """补零段（`26.11.01`、`26.11.1.01.7`）返回该段，合规返回 None。
+
+    规范 2026-10-31：月、日、当日序号、总序号都不带前导零；`00` 这类段也不合法。
+    """
+    version = name[len(PREFIX):] if name.startswith(PREFIX) else name
+    for part in version.split("."):
+        if len(part) > 1 and part.startswith("0"):
+            return part
+    return None
 
 
 def plan(kind: str, endpoint: str, label: str, method: str = "DELETE", verb: str = "删除",
@@ -235,9 +247,13 @@ def clean_actions() -> None:
             print(f"保留[artifact] {source_label(row)}（本次运行刚产出，不判定）")
             survivors.append(row)
             continue
-        # 判据一：命名口径。
+        # 判据一：命名口径（段数 + 不带前导零）。
         if segments_of(row["name"]) != SEGMENTS:
             victims.append((row, f"命名口径（{segments_of(row['name'])} 段 != SEGMENTS {SEGMENTS}）"))
+            continue
+        padded = zero_padded(row["name"])
+        if padded:
+            victims.append((row, f"命名口径（补零段 {padded!r}，规范只收 26.11.1 这种写法）"))
             continue
         run = source_run(row)
         # 判据二：来源。

@@ -98,14 +98,103 @@ def measure(master: Path) -> np.ndarray:
     return grid
 
 
+def _rendered_rows(path: Path, size: int = 600) -> tuple[dict, object]:
+    """FreeType 出像素、逐行取左右缘；返回（码位 → {行: (左, 右)}，HarfBuzz 字体）。
+
+    这是**独立尺**：不经过 `cjk_vf.rings_from_pen`／`row_profile`，只信屏幕上的位图。
+    """
+    import uharfbuzz as hb
+    from PIL import ImageFont
+
+    blob = hb.Blob.from_file_path(str(path))
+    face = hb.Face(blob)
+    font = hb.Font(face)
+    font.scale = (face.upem, face.upem)
+    pil = ImageFont.truetype(str(path), size)
+    scale = size / face.upem
+    rows: dict = {}
+    for cp in range(LOW, HIGH + 1):
+        mask, offset = pil.getmask2(chr(cp), mode="L", anchor="ls")
+        if mask is None or not mask.size[0]:
+            continue
+        array = np.frombuffer(bytes(mask), dtype=np.uint8).reshape(mask.size[1], mask.size[0]) > 127
+        profile = {}
+        for r in range(array.shape[0]):
+            cols = np.nonzero(array[r])[0]
+            if not len(cols):
+                continue
+            y = int(round(-(offset[1] + r) / scale))
+            low = (offset[0] + cols.min()) / scale
+            high = (offset[0] + cols.max() + 1) / scale
+            if y in profile:
+                prev_low, prev_high = profile[y]
+                profile[y] = (min(low, prev_low), max(high, prev_high))
+            else:
+                profile[y] = (low, high)
+        rows[cp] = profile
+    return rows, font
+
+
+def _pair_white(rows: dict, font, a: int, b: int) -> float | None:
+    import uharfbuzz as hb
+
+    buf = hb.Buffer()
+    buf.add_str(chr(a) + chr(b))
+    buf.guess_segment_properties()
+    hb.shape(font, buf, {"kern": True, "liga": False})
+    if len(buf.glyph_positions) != 2:
+        return None
+    pen = buf.glyph_positions[0].x_advance + buf.glyph_positions[1].x_offset
+    left, right = rows.get(a), rows.get(b)
+    if not left or not right:
+        return None
+    common = set(left) & set(right)
+    if len(common) < 20:
+        return None
+    return min(right[y][0] + pen - left[y][1] for y in common)
+
+
+def verify(master: Path, other: Path) -> int:
+    """同一把独立尺量两边：ASCII 全部字对的「最小墨迹白」差。"""
+    master_rows, master_font = _rendered_rows(master)
+    other_rows, other_font = _rendered_rows(other)
+    diffs = []
+    for a in range(LOW, HIGH + 1):
+        for b in range(LOW, HIGH + 1):
+            if "`" in chr(a) + chr(b):
+                continue                       # 母版这几个对是坏数据（白 −533），不是设计
+            one = _pair_white(master_rows, master_font, a, b)
+            two = _pair_white(other_rows, other_font, a, b)
+            if one is None or two is None:
+                continue
+            diffs.append((abs(two - one), chr(a) + chr(b), one, two))
+    if not diffs:
+        print("没有可比的字对", file=sys.stderr)
+        return 1
+    values = np.array([row[0] for row in diffs])
+    worst = sorted(diffs, reverse=True)[:10]
+    print(f"对数 {len(values):,}  Δ白 中位 {np.median(values):.1f}  p90 {np.percentile(values, 90):.1f}  "
+          f"最大 {values.max():.1f}")
+    print(f"  ≤5 单位 {np.mean(values <= 5) * 100:.1f}%  ≤10 单位 {np.mean(values <= 10) * 100:.1f}%")
+    print("  最差 10：" + "、".join(f"{pair} {a:.0f}/{b:.0f}" for _, pair, a, b in worst))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="量母版真排的邻字白 → tools/kern_targets.bin")
     ap.add_argument("--master", required=True, type=Path, help="母版字体（Maruko Gothic）")
     ap.add_argument("--out", type=Path, default=ROOT / "kern_targets.bin")
+    ap.add_argument("--verify", type=Path, metavar="OTHER",
+                    help="不写表，改用 FreeType 独立尺比较母版与本字体的全部 ASCII 字对白")
     args = ap.parse_args()
     if not args.master.exists():
         print(f"母版不存在：{args.master}", file=sys.stderr)
         return 1
+    if args.verify is not None:
+        if not args.verify.exists():
+            print(f"本版不存在：{args.verify}", file=sys.stderr)
+            return 1
+        return verify(args.master, args.verify)
     grid = measure(args.master)
     data = grid.tobytes() if grid.dtype.byteorder in ("<", "=") else grid.byteswap().tobytes()
     args.out.write_bytes(MAGIC + data)
