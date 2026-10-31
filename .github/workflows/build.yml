@@ -10,6 +10,11 @@ on:
       - 'LICENSE'
       - '.gitignore'
   workflow_dispatch:
+    inputs:
+      full:
+        description: '跑全量构建（默认 true；push 时一律只出预览子集）'
+        type: boolean
+        default: true
 
 env:
   SEGMENTS: '5'
@@ -29,11 +34,37 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
+      - name: 恢复 pip 缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-
+      - name: 恢复字体缓存
+        uses: actions/cache@v4
+        with:
+          path: build/cache
+          key: fonts-v1-${{ runner.os }}
+          restore-keys: fonts-v1-
       - name: 安装字体工具
         run: python -m pip install -r requirements.txt
       - name: 内建自检
         run: python build.py --check
+      - name: 判断构建模式
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full }}" = "true" ]; then
+            echo "full=1" >> "$GITHUB_OUTPUT"
+            echo "全量构建（正式版本）"
+          else
+            echo "full=0" >> "$GITHUB_OUTPUT"
+            echo "预览子集构建（改字形用，不跑 53 分钟的全量）"
+          fi
+      - name: 预览出包
+        if: steps.mode.outputs.full != '1'
+        run: python build.py --preview '鬱響鬢Ay?' --preview-out build/preview
       - name: 取号并出包
+        if: steps.mode.outputs.full == '1'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -50,6 +81,7 @@ jobs:
           retention-days: 2
           if-no-files-found: ignore
       - name: 确认产物名
+        if: steps.mode.outputs.full == '1'
         run: |
           zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont-*.zip' -print -quit)")
           test -n "$zip_file"
@@ -60,17 +92,28 @@ jobs:
           }
           echo "ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
       - name: 解包为可直刷目录
+        if: steps.mode.outputs.full == '1'
         run: |
           rm -rf build/root
           unzip -oq "build/${ARTIFACT_NAME}.zip" -d build/root
           test -f build/root/module.prop
           test -f build/root/customize.sh
-      - name: 上传产物
+      - name: 上传正式产物
+        if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: build/root
           retention-days: 5
+          if-no-files-found: error
+          overwrite: true
+      - name: 上传预览产物
+        if: steps.mode.outputs.full != '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Selffont-preview-${{ github.sha }}
+          path: build/preview
+          retention-days: 3
           if-no-files-found: error
           overwrite: true
 

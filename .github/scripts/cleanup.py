@@ -51,6 +51,8 @@ if SCOPE not in ("actions", "releases"):
 REPO = env_value("REPO")
 PROJECT = REPO.rsplit("/", 1)[-1]
 PREFIX = f"{PROJECT}-"
+PREVIEW_PREFIX = f"{PROJECT}-preview-"
+PREVIEW_KEEP = 3
 RUN_ID = env_int("RUN_ID")
 SEGMENTS = env_int("SEGMENTS")
 
@@ -242,6 +244,19 @@ def clean_actions() -> None:
 
     survivors: list[dict] = []
     victims: list[tuple[dict, str]] = []
+
+    # 预览产物（`Selffont-preview-<sha>`）不套五段命名判据，单列一条保留规则：
+    # 只留最新 PREVIEW_KEEP 个，本次运行刚产出的永不判定。
+    previews = [row for row in candidates if row["name"].startswith(PREVIEW_PREFIX)]
+    candidates = [row for row in candidates if not row["name"].startswith(PREVIEW_PREFIX)]
+    previews.sort(key=lambda row: row["created_at"], reverse=True)
+    for index, row in enumerate(previews):
+        if index < PREVIEW_KEEP or (row.get("workflow_run") or {}).get("id") == RUN_ID:
+            survivors.append(row)
+            print(f"保留[预览] {row['created_at']} {row['name']} id={row['id']}")
+        else:
+            victims.append((row, f"预览产物（只留最新 {PREVIEW_KEEP} 个）"))
+
     for row in candidates:
         if (row.get("workflow_run") or {}).get("id") == RUN_ID:
             print(f"保留[artifact] {source_label(row)}（本次运行刚产出，不判定）")
