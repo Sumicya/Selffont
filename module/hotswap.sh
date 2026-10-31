@@ -177,14 +177,15 @@ guard_mount() {   # $1=类型 $2=源 $3=目的
             [ -d "$2" ] || die "拒绝：overlay 的源不是目录：$2"
             return 0 ;;
         file)
-            [ -f "$2" ] || die "拒绝：bind 的源不是常规文件：$2（目录一律 overlay，第①条）"
+            if [ -d "$2" ]; then
+                # 整目录 bind 到 /system 路径：事故就是这个形状（dm-76 挂上 /system/fonts）
+                die "拒绝：不许把目录 bind 到 $3（源 $2；目录一律 overlay，第①条）"
+            fi
+            [ -f "$2" ] || die "拒绝：bind 的源不是常规文件：$2"
             case "$2" in
                 "$UPPER"/*|"$UPPER"|"$WORK"/*|"$WORK"|"$MERGED"/*|"$MERGED")
-                    die "拒绝：不许把工作目录里的东西挂进系统：$2 → $3" ;;
+                    die "拒绝：不许把工作目录里的东西挂进系统：$2 → $3（第①条）" ;;
             esac
-            if is_system_path "$3" && [ -d "$2" ]; then
-                die "拒绝：不许把目录 bind 到 /system 路径：$2 → $3（第①条）"
-            fi
             return 0 ;;
         *)
             die "拒绝：未知挂载类型 $1" ;;

@@ -2186,7 +2186,7 @@ def module_hotswap():
         bad.write_text("overlay|system/fonts\nfile|system/fonts\n", encoding="utf-8")
         log.write_text("", encoding="utf-8")
         result = run(mod / "hotswap.sh", "__ns", "apply", str(bad), extra_env=env)
-        assert result.returncode != 0 and "不是常规文件" in result.stdout, result.stdout
+        assert result.returncode != 0 and "第①条" in result.stdout, result.stdout
         assert not [c for c in log.read_text().splitlines() if "--bind" in c], "目录 bind 被放行（①）"
         bad.write_text("overlay|system/fonts\noverlay|system/fonts\n", encoding="utf-8")
         result = run(mod / "hotswap.sh", "__ns", "apply", str(bad), extra_env=env)
