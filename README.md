@@ -58,21 +58,30 @@ su -c reboot                                            # 或手动重启
 **要解决的问题**：模块平时靠 KernelSU 的 magic mount 在**开机时**把字件叠到只读分区上，
 改一次字体就要重启一次；系统设置里换字体是当场生效的。`hotswap.sh` 把「叠上去」搬到运行时。
 
-**原理，四步**：
+**两种挂法，别混**：
 
-1. **bind mount 不是复制**。`mount --bind 模块里的字件 系统里的同名路径` 只改**挂载表**里的一行：
-   这个路径从此指向模块那份文件，`/system` 一个字节都不写。只读分区照样能挂，因为改的是 VFS 的
-   dentry 指向，不是磁盘。
-2. **必须进 init 的挂载命名空间**。挂载表是**每个命名空间一份**；我们在自己的 shell 里挂，
-   只有这个 shell 看得见，zygote 起的应用看不见。Android 的 init 是 PID 1，`nsenter -t 1 -m`
-   就是用 `setns(2)` 进它的挂载命名空间——这一步不做，现象就是「命令查着换了、屏幕没变」。
-3. **记账与反序摘**。挂一个记一个（`/data/adb/selffont-hotswap.state`），`off` 时反序 `umount`，
-   而且**只摘账上的路径**：开机 magic mount 的挂载不在账上，一行不碰。挂到第 3 个失败就停成
-   `partial`，这时再点一次是补齐，点 `off` 是摘干净——三态（`on`/`off`/`partial`）不是装饰，
-   是为了「半路失败还能回到已知状态」。
-4. **让读字体的人重读**。文件换了不代表屏幕变了：Typeface 在进程内缓存，FontManagerService 也有
-   自己的缓存。三级手段：`cmd font update`（Android 12+ 的框架接口，返回 0 只代表请求被受理）
-   → 软重启 `system_server`（约 15–20 秒，不是整机重启，挂载都还在）→ `--reload=app`（只影响新进程）。
+1. **字体目录一次 overlayfs**。`mount --bind` 只能覆盖**已存在**的路径；`Selffont-*.ttf`、
+   `SelfroundsCJK-VF-*.ttf` 是系统里没有的新名字。上一版为了 bind 成功先去
+   `/system/fonts/新名字` 建空文件，只读分区当场拒绝（`can't create …: Read-only file system`），
+   30 个文件全挂。现在是一条：
+   `mount -t overlay overlay -o lowerdir=/system/fonts,upperdir=/data/adb/selffont/upper,workdir=/data/adb/selffont/work /system/fonts`。
+   模块里的字件**硬链接**进 upper（模块在 `/data/adb/modules`、upper 在 `/data/adb/selffont`，
+   同一块盘，零拷贝），新名字就从 upper 里长出来；系统原有的字件也在 upper 里，被同一份盖住。
+2. **已存在的配置文件照旧 bind**：`/system/etc` 那几份 `fonts*.xml` 设备上本来就有，逐个
+   `mount --bind`；**不**整目录 overlay——`/system/etc` 底下可能还压着别的挂载（hosts 之类），
+   overlayfs 会把它们从视图里盖掉。
+3. **进 init 的挂载命名空间，而且 nsenter 后面只能跟 `sh`**：
+   `nsenter -t 1 -m sh /data/adb/modules/MFGA/hotswap.sh __ns apply <计划文件>`。
+   `nsenter -t 1 -m mount --bind …` 会被 nsenter 的 getopt 把 `--bind` 当成它自己的选项
+   （2026-10-31 真机原样输出：`nsenter: Unknown option 'bind'` ×30）。脚本启动时按
+   `-t 1 -m` → `-t 1 --mount` → `--target 1 --mount` → `--target=1 --mount` 探一遍；
+   全不成就把每次的原样报错打出来，并提示贴 `nsenter --help`。探测命令是 `true`，不带任何
+   `-` 开头的参数——Android 的 toybox nsenter 会把命令行里任何 `-x` 都当成自己的选项。
+4. **记账与反序摘**：`/data/adb/selffont-hotswap.state` 一行一个文件（`verify` 按它逐个数），
+   同目录 `.state.units` 一行一个挂载单元（`dir|` / `file|`）；`off` 反序摘，只摘挂载表里认得出来的。
+   账上写着**上一次开机的 `boot_id`** 就判 `off`：重启之后挂载早没了，账不能当现状。
+5. **让读字体的人重读**：`cmd font update`（Android 12+ 的框架接口，返回 0 只代表请求被受理）
+   → 软重启 `system_server`（15–20 秒）→ `--reload=app`（只影响新进程）。
 
 **命令与用法**（`su -c` 里跑；管理器里点模块的「操作」按钮等于第一条）：
 
@@ -85,30 +94,40 @@ su -c 'sh /data/adb/modules/MFGA/hotswap.sh on --reload=none' # 只挂，不惊�
 su -c 'sh /data/adb/modules/MFGA/hotswap.sh off --dry-run'   # 只打印将执行的命令，不改系统
 ```
 
-每条命令的输出是什么、怎么判读：
+每条命令的输出与判读：
 
 | 命令 | 正常输出 | 不对时看什么 |
 | --- | --- | --- |
-| `action.sh` | `挂上 N 个文件` + `现在状态 on` | 报 `部分失败：a 挂上、b 没挂上` 时状态是 `partial`，再跑一次 `action.sh` 补齐 |
-| `action.sh status` | `on` / `off` / `partial` | `partial` = 账上有、`/proc/mounts` 里不够数，跑 `action.sh` 补齐或 `hotswap.sh off` 摘干净 |
-| `action.sh verify` | `verify：一致 N，不一致 0`，退出码 0 | 退出码 1 且列 `不一致：路径` = 系统里那份不是模块这份 |
-| `hotswap.sh on --reload=none` | `挂上 N 个文件`，不重启任何进程 | 新开的程序能看到新字体，已开的看不到（预期） |
+| `action.sh` | `挂上 5 个单元、30 个文件（字体目录一次 overlay，已存在的配置逐个 bind）` + `现在状态 on` | `部分失败：a 个单元挂上、b 个没挂上`：上面每个单元都有一行 `挂载失败：…（mount: …）` 原样报错；一个都没挂上会把账清掉 |
+| `action.sh status` | `on` / `off` / `partial` | `partial` = init 挂载表里认得出的单元不够数，再跑一次 `action.sh` 补齐或 `off` 摘干净 |
+| `action.sh verify` | `verify：一致 N，不一致 0`，退出码 0 | 退出码 1 且列 `不一致：路径` / `缺：路径` / `没挂：单元`——空账也返回 1 |
+| `hotswap.sh on --reload=none` | `挂上 …`，不重启任何进程 | 新开的程序能看到新字体，已开的看不到（预期） |
 
-**边界**（写在这里，不等到你撞上）：已开的程序不会自己重画（Typeface 是进程内缓存），
-除 `--reload=system` 外都要重开那个程序；`off` 只摘这一次运行时的挂载，**重启后** magic mount
-按模块状态重新叠上，要长期关闭请停用模块。
+**边界**：已开的程序不会自己重画（Typeface 是进程内缓存），除 `--reload=system` 外都要重开
+那个程序；挂进去的是 **init 的挂载命名空间**——你的 `su` 若带命名空间隔离（KernelSU 的 `su`
+会摘掉模块外的挂载），`ls /system/fonts` 看不到属正常，用 `ls /proc/1/root/system/fonts`
+从 init 的视角看；`off` 只摘这一次运行时的挂载，**重启后** magic mount 按模块状态重新叠上，
+要长期关闭请停用模块。
 
-**没验的部分照实说**：`mount --bind`、`nsenter`、SELinux 是否放行、`cmd font update` 是否真把新
-Typeface 推给应用、软重启后是否全局重读——这四件都是真机事实，沙箱里没有 Android，**一次都没跑过**，
-记在「未验证项」里。仓库里也不放「假 mount 跑状态机」那种自嗨测试：GLOBAL.md 工具准入禁止假宿主替身，
-它只能证明我的记账代码自洽，不能证明挂载成功。真机验收跑下面四条，四条都对才算过：
+**没验的部分照实说**：overlayfs 能不能在这台 ROM 的 init 命名空间里挂成功、SELinux 放不放行
+（字件从 `/data/adb/selffont/upper` 长出来时带的是模块文件自己的标签）、toybox 的 `nsenter`
+认不认 `-m`、`cmd font update` 会不会真把新 Typeface 推给应用、软重启后是否全局重读——全是
+真机事实，沙箱里没有 Android，**一次都没跑过**。能判的只有三件，`build.py --check` 每次都跑：
+语法与接线；nsenter 收到的 argv（`sh` 之后不许有 `-` 开头的参数）；记账规则（空账返回 1、
+一致数等于账的行数、上次开机的账不算数、内容一致但挂载表里没有也不算数）。
+
+**真机验收四条**（原样贴回来，四条都对才算过）：
 
 ```sh
 su -c 'sh /data/adb/modules/MFGA/hotswap.sh on'
-su -c 'grep -c MFGA /proc/mounts'                  # 应等于模块 system/ 下的文件数
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh verify'  # 退出码 0
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh off' && su -c 'sh /data/adb/modules/MFGA/hotswap.sh status'   # 应打印 off
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh status'                       # on
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh verify'; echo "退出码 $?"     # 0，且「一致 N」= wc -l < /data/adb/selffont-hotswap.state
+su -c 'ls /proc/1/root/system/fonts | grep Selfrounds'                    # 列出新字体名（ls /system/fonts 看不到见上面「边界」）
+su -c 'cat /proc/uptime'                                                  # 切换前后不归零
 ```
+
+upper 里的字件默认用硬链接。如果 overlay 挂载报 `Invalid argument`，先试复制这条退路：
+`SELFFONT_COPY=1 sh /data/adb/modules/MFGA/hotswap.sh on`，原样报错一并贴回来。
 
 ### 火狐
 
@@ -311,12 +330,15 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
 - **`A` 尖 `y −16..673`（母 0..700）、`V` 起点 `29..709`（母 −1..700）、`4` 高 `−4..666`（母 0..704）**：
   取笔与字面校准的差，不是间距。
 - **空格 250 vs 母版 280**：四分之一 em 是 2026-10-28 定的规则，不是量错。
-- **热切换**：逻辑与语法可验，真机四件（`nsenter` 的 SELinux 策略、`mount --bind` 到只读分区、
-  `cmd font update` 是否真推新 Typeface、软重启后是否全局重读）一次未跑。
+- **热切换**：2026-10-31 真机第一次跑，30 个文件全挂（`nsenter: Unknown option 'bind'`、
+  `can't create …: Read-only file system`、`verify` 空账退回 0）；已按 overlayfs + `sh __ns` +
+  假根守卫 + 空账返回 1 改过，改后的四条验收仍未收到。真机四件（overlayfs 能否在 init
+  命名空间挂上、`nsenter` 的 SELinux 策略、`cmd font update` 是否真推新 Typeface、
+  软重启后是否全局重读）仍一次未跑。
 
 ### 未验证项的真机清单
 
-**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见「火狐」一节「泛型与家族名的坑」）。**2026-10-07 装机核对（配置层已核对，渲染层未验证）**（同一台设备）：装「清掉 MiSans 引用（10-06）+ 卡开机修复 + 语言区改法 + 五个命名族恢复本来字体（10-07）」之后的构建，**正常开机、不再重启循环**，三条自查 **8 / 0 / 3** —— `grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」逐项吻合）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。**这三条只覆盖配置层**：证明设备上那份配置的内容符合构建预期、模块挂上了；**渲染层没有任何证据**——字形是否变圆、角标数字是否被切、等宽是否回到 Droid Sans Mono，都不在这三条命令的射程里，需要设备截图，取证命令与存放位置见 `docs/evidence/`。**仍无真机数据**：⓪ **热切换（`action.sh` / `hotswap.sh`）在真机上一次都没跑过**——没有可用的沙箱替身（GLOBAL.md 禁止假宿主引擎），`nsenter -t 1 -m` 是否被 SELinux 放行、`cmd font update` 是否真推新 Typeface、软重启 system_server 后是否全局重读，三件都等真机；① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 三项只影响观感、不影响开机的观察——生僻字是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）、终端 / 代码类 App 的等宽字体是否回到 Droid Sans Mono（不该是圆体）、WebView 的 `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps`；③ artifact「包直出」格式实测用的是哪个包未记录（`.102` 旧格式解一层、`.103` 起直接刷，两者字体配置相同）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见「火狐」一节「泛型与家族名的坑」）。**2026-10-07 装机核对（配置层已核对，渲染层未验证）**（同一台设备）：装「清掉 MiSans 引用（10-06）+ 卡开机修复 + 语言区改法 + 五个命名族恢复本来字体（10-07）」之后的构建，**正常开机、不再重启循环**，三条自查 **8 / 0 / 3** —— `grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」逐项吻合）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。**这三条只覆盖配置层**：证明设备上那份配置的内容符合构建预期、模块挂上了；**渲染层没有任何证据**——字形是否变圆、角标数字是否被切、等宽是否回到 Droid Sans Mono，都不在这三条命令的射程里，需要设备截图，取证命令与存放位置见 `docs/evidence/`。**仍无真机数据**：⓪ **热切换（`action.sh` / `hotswap.sh`）2026-10-31 在真机上第一次跑就全挂**（30 个文件没挂上、`nsenter: Unknown option 'bind'`、`verify` 空账判过），已改成 init 命名空间里一次 overlayfs + `nsenter … sh __ns`；改后的状态是**真机未验证**：overlayfs 能不能在这个 init 命名空间挂上、`nsenter` 是否被 SELinux 放行、`cmd font update` 是否真推新 Typeface、软重启 system_server 后是否全局重读，四件都等真机原样输出；① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 三项只影响观感、不影响开机的观察——生僻字是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）、终端 / 代码类 App 的等宽字体是否回到 Droid Sans Mono（不该是圆体）、WebView 的 `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps`；③ artifact「包直出」格式实测用的是哪个包未记录（`.102` 旧格式解一层、`.103` 起直接刷，两者字体配置相同）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。

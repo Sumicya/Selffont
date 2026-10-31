@@ -1431,7 +1431,7 @@ def build_end_to_end():
         with zipfile.ZipFile(output) as archive:
             members = set(archive.namelist())
             for expected in ("module.prop", "LICENSES.md", "customize.sh",
-                             "firefox.sh", "web-fonts.sh", "action.sh", "geckoview-config.yaml",
+                             "firefox.sh", "web-fonts.sh", "action.sh", "hotswap.sh", "geckoview-config.yaml",
                              "font_fallback.xml", "fonts-insert.xml", "licenses/WenYuan-OFL.txt",
                              "system/fonts/NotoMusic-Regular.ttf", "licenses/NotoMusic-OFL.txt",
                              "system/fonts/P-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
@@ -1443,6 +1443,8 @@ def build_end_to_end():
             installed_prop = archive.read("module.prop").decode()
             assert "version=26.9.30.2.9" in installed_prop and "\nversionCode=9\n" in installed_prop, installed_prop
             assert (archive.getinfo("customize.sh").external_attr >> 16) == stat.S_IFREG | 0o755
+            assert (archive.getinfo("hotswap.sh").external_attr >> 16) == stat.S_IFREG | 0o755, \
+                "热切换脚本没进包或没有可执行位"
             assert (archive.getinfo("system/fonts/P-Regular.ttf").external_attr >> 16) == stat.S_IFREG | 0o644
             packaged = archive.read("system/fonts/P-Regular.ttf")
             xml = archive.read("font_fallback.xml").decode()
@@ -2006,23 +2008,147 @@ def run_checks() -> None:
 
 @check
 def module_hotswap():
-    """热切换脚本：只做语法与入口接线检查，**不假装验过真机行为**。
+    """热切换脚本：语法、接线，以及**在一台没装 Android 的机器上也判得出来的那几条**。
 
-    为什么不在仓库里放假 mount 跑状态机：GLOBAL.md「工具准入」第 3 条禁止手写假宿主引擎
-    替身入库。`mount --bind`、`nsenter -t 1 -m`、SELinux 策略、`cmd font` 的返回码，全是
-    真机事实，沙箱里用假命令跑「18 项通过」只能证明我自己的记账代码自洽，不能证明挂载
-    成功——上一轮把它当证据是错的。这里只留能判定的：脚本语法与默认动作的接线。
+    2026-10-31 真机把上一版打回来了：`nsenter: Unknown option 'bind'` ×30、
+    `can't create /system/fonts/…: Read-only file system`、`verify：一致 0，不一致 0` 退回 0。
+    三条都变成了这里能判的检查：
+
+    ① nsenter 收到的 argv——真机那次是把 `mount --bind …` 整个交给 nsenter，它的
+       getopt 把 `--bind` 当成自己的选项。现在永远传 `sh 本脚本 __ns …`；用一个只记录
+       argv、不模拟挂载的壳脚本就能验「`sh` 之后没有一个 `-` 开头的参数」。
+    ② 占位文件只在 `SELFFONT_SYSTEM_ROOT` 假根下建——真设备上 `/system` 只读。
+    ③ 记账：假根里跑真脚本，verify 空账返回 1、对得上返回 0 且一致数等于账的行数、
+       对不上返回 1、上次开机的账不算数、账上一致但挂载表里没有也不算数。
+
+    判不了、也一条都不假装：overlayfs 能不能在这台 ROM 的 init 挂载命名空间里挂上、
+    SELinux 放不放行、`cmd font update` 会不会真把新 Typeface 推给应用。这些要真机原样输出。
     """
-    scripts = sorted((ROOT / "module").glob("*.sh"))
+    module = ROOT / "module"
+    scripts = sorted(module.glob("*.sh"))
     assert scripts, "module/ 里没有脚本"
     for script in scripts:
         result = subprocess.run(["sh", "-n", str(script)], capture_output=True, text=True)
         assert result.returncode == 0, f"{script.name} 语法错误：{result.stderr.strip()}"
-    hotswap = (ROOT / "module/hotswap.sh").read_text(encoding="utf-8")
-    for needed in ("nsenter", "mount --bind", "umount", "sha256sum", "cmd font"):
-        assert needed in hotswap, f"hotswap.sh 少了关键一步：{needed}"
-    action = (ROOT / "module/action.sh").read_text(encoding="utf-8")
+    hotswap = module / "hotswap.sh"
+    text = hotswap.read_text(encoding="utf-8")
+    for needed in ("mount -t overlay", "upperdir=", "mount --bind", "umount", "sha256sum", "cmd font"):
+        assert needed in text, f"hotswap.sh 少了关键一步：{needed}"
+    assert 'ns_run sh "$SELF" __ns' in text, "命名空间里的第二趟没有走 `sh 本脚本`，mount 的选项会漏给 nsenter"
+    # 往只读分区建占位文件：只许在假根下，而且只此一处。
+    assert text.count(': > "$abs"') == 1, "占位文件的写法变了，检查要跟着改"
+    guard = 'if [ -n "$ROOT" ] && [ ! -e "$abs" ]'
+    assert guard in text, "建空文件的代码没有假根守卫：真设备上 /system 是只读的"
+    assert text.index(guard) < text.index(': > "$abs"'), \
+        "建空文件的代码没有假根守卫：真设备上 /system 是只读的"
+    action = (module / "action.sh").read_text(encoding="utf-8")
     assert "hotswap.sh" in action, "action.sh 的默认动作没有接到热切换"
+
+    def run(script: Path, *args: str, extra_env=None, cwd=None):
+        env = {**os.environ, "PATH": os.environ["PATH"], **(extra_env or {})}
+        return subprocess.run(["sh", str(script), *args], cwd=cwd, env=env,
+                              capture_output=True, text=True)
+
+    def recorder(tmp: Path, log: Path) -> Path:
+        """只记录 argv 的 `nsenter`：不模拟挂载，只证明我们递进去的是什么。"""
+        bin_dir = tmp / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        path = bin_dir / "nsenter"
+        path.write_text('#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a" >> "$NS_LOG"; done\n'
+                        'printf -- "--END--\\n" >> "$NS_LOG"\nexit 1\n', encoding="utf-8")
+        path.chmod(0o755)
+        return bin_dir
+
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = Path(tmp_name)
+        mod = tmp / "mod"
+        (mod / "system/fonts").mkdir(parents=True)
+        (mod / "system/etc").mkdir(parents=True)
+        shutil.copy2(hotswap, mod / "hotswap.sh")
+        (mod / "system/fonts/Roboto-Regular.ttf").write_bytes(b"font-a")
+        (mod / "system/fonts/Selffont-26.10.31.5.249.ttf").write_bytes(b"font-new")
+        (mod / "system/etc/fonts_base.xml").write_bytes(b"xml-a")
+        sysroot = tmp / "sys"
+        (sysroot / "system/fonts").mkdir(parents=True)
+        (sysroot / "system/etc").mkdir(parents=True)
+        (sysroot / "system/fonts/Roboto-Regular.ttf").write_bytes(b"font-a")
+        (sysroot / "system/etc/fonts_base.xml").write_bytes(b"xml-old")
+        state = tmp / "state"
+        base_env = {"SELFFONT_SYSTEM_ROOT": str(sysroot), "SELFFONT_STATE": str(state),
+                    "SELFFONT_UPPER": str(tmp / "upper"), "SELFFONT_WORK": str(tmp / "work")}
+
+        # 计划：字体目录一次 overlay（排在前面），配置逐个 bind；不建占位文件。
+        result = run(mod / "hotswap.sh", "on", "--dry-run", extra_env=base_env)
+        assert result.returncode == 0, result.stderr
+        overlay = [line for line in result.stdout.splitlines() if "mount -t overlay" in line]
+        binds = [line for line in result.stdout.splitlines() if "mount --bind" in line]
+        assert overlay and binds, result.stdout
+        assert f"upperdir={tmp / 'upper'}" in overlay[0], overlay[0]
+        assert result.stdout.index(overlay[0]) < result.stdout.index(binds[0]), \
+            "目录单元必须排在文件单元前面，否则 overlay 一挂就把先前的 bind 盖掉"
+        assert not (sysroot / "system/fonts/Selffont-26.10.31.5.249.ttf").exists(), \
+            "dry-run 不该改动系统（假根里也一样）"
+
+        # verify 的五种账：没有账、空账、对得上、对不上、上次开机留下的。
+        assert run(mod / "hotswap.sh", "verify", extra_env=base_env).returncode == 1
+        state.write_text("", encoding="utf-8")     # 真机那次「一致 0，不一致 0」退回 0 的现场
+        result = run(mod / "hotswap.sh", "verify", extra_env=base_env)
+        assert result.returncode == 1 and "空账不算通过" in result.stdout, result.stdout
+        state.write_text("system/fonts/Roboto-Regular.ttf\n", encoding="utf-8")
+        result = run(mod / "hotswap.sh", "verify", extra_env=base_env)
+        assert result.returncode == 0 and "一致 1，不一致 0" in result.stdout, result.stdout
+        (sysroot / "system/fonts/Roboto-Regular.ttf").write_bytes(b"font-b")
+        result = run(mod / "hotswap.sh", "verify", extra_env=base_env)
+        assert result.returncode == 1 and "不一致 1" in result.stdout, result.stdout
+        (sysroot / "system/fonts/Roboto-Regular.ttf").write_bytes(b"font-a")
+        state.write_text("system/fonts/Roboto-Regular.ttf\n", encoding="utf-8")
+        Path(str(state) + ".units").write_text(
+            f"#boot {'0' * 32}\nfile|system/etc/fonts_base.xml\n", encoding="utf-8")
+        result = run(mod / "hotswap.sh", "verify", extra_env=base_env)
+        assert result.returncode == 1 and "上一次开机" in result.stdout, result.stdout
+        assert run(mod / "hotswap.sh", "off", extra_env=base_env).returncode == 0
+        assert not state.exists() and not Path(str(state) + ".units").exists(), "旧账没清"
+
+        # 账上内容一致、但挂载表里没有 → 也不算通过（开机 magic mount 的巧合要挡掉）。
+        sysroot.joinpath("system/etc/fonts_base.xml").write_bytes(b"xml-a")
+        state.write_text("system/etc/fonts_base.xml\n", encoding="utf-8")
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        Path(str(state) + ".units").write_text(
+            f"#boot {boot}\nfile|system/etc/fonts_base.xml\n", encoding="utf-8")
+        result = run(mod / "hotswap.sh", "verify", extra_env=base_env)
+        assert result.returncode == 1 and "没挂 1" in result.stdout, result.stdout
+
+        # nsenter 的 argv 契约：sh 之后不许有 `-` 开头的参数。
+        log = tmp / "ns.log"
+        bin_dir = recorder(tmp, log)
+        env = {**base_env, "PATH": f"{bin_dir}:{os.environ['PATH']}", "NS_LOG": str(log),
+               "SELFFONT_NSENTER": "nsenter -t 1 -m"}
+        result = run(mod / "hotswap.sh", "on", extra_env=env)
+        assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+        argv = [block.splitlines() for block in log.read_text().split("--END--\n") if block.strip()]
+        assert len(argv) == 1, argv
+        argv = argv[0]
+        assert argv[:4] == ["-t", "1", "-m", "sh"], argv
+        assert argv[4].endswith("hotswap.sh") and argv[5:7] == ["__ns", "apply"], argv
+        for token in argv[4:]:
+            assert not token.startswith("-"), f"nsenter 后面出现了 `-` 开头的参数：{token}"
+
+        # 探测写法也不许把 `-c` 之类喂给 nsenter（Android 的 toybox nsenter 会当场报
+        # `Unknown option`）；四种候选全失败时要给出可直接照做的提示。
+        log.unlink()
+        env = {**base_env, "PATH": f"{bin_dir}:{os.environ['PATH']}", "NS_LOG": str(log),
+               "SELFFONT_SYSTEM_ROOT": ""}
+        env.pop("SELFFONT_SYSTEM_ROOT")
+        env["SELFFONT_UPPER"] = str(tmp / "upper2")
+        env["SELFFONT_WORK"] = str(tmp / "work2")
+        result = run(mod / "hotswap.sh", "on", extra_env=env)
+        assert result.returncode == 2 and "nsenter --help" in result.stderr, result.stderr
+        blocks = [block.splitlines() for block in log.read_text().split("--END--\n") if block.strip()]
+        assert len(blocks) == 4, blocks
+        for block in blocks:
+            assert block[-1] == "true", block
+            for token in block[3:]:
+                assert not token.startswith("-"), f"探测命令把 `{token}` 喂给了 nsenter：{block}"
 
 
 @check

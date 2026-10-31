@@ -1,5 +1,37 @@
 # 更新日志
 
+## 2026-10-31（八）· 热切换真机全挂，改成 init 命名空间里一次 overlayfs
+
+**主人贴的原样输出**（30 个文件、0 个挂上）：
+
+```
+nsenter: Unknown option 'bind'          ×30
+can't create /system/fonts/Selffont-WenYuanRoundedSCVF.ttf: Read-only file system
+verify：一致 0，不一致 0 / 退出码 0
+```
+
+- **根因三条，一条一条对**：① `$NS "$@"` 把 `mount --bind …` 整个交给 nsenter，toybox 的
+  getopt 把 `--bind` 当成 nsenter 自己的选项；② 新字体名在系统里不存在，`bind_one` 先
+  `: > /system/fonts/新名字` 建占位文件——`/system` 只读，必然失败；③ `cmd_verify` 末尾
+  只看 `bad == 0`，一个文件都没核对也返回 0。
+- **更根本的一条**：`mount --bind` 只能覆盖**已存在**的路径，`Selffont-*.ttf`、
+  `SelfroundsCJK-VF-*.ttf` 是新名字，逐文件 bind 这条路在模块上走不通。
+- **改法**：字体目录改成 init 命名空间里**一次 overlayfs**
+  （`lowerdir=/system/fonts`、`upperdir=/data/adb/selffont/upper`、`workdir=…/work`），
+  模块字件**硬链接**进 upper（同在 /data，零拷贝；`SELFFONT_COPY=1` 退回复制）；已存在的
+  `fonts*.xml` 仍逐个 bind（不整目录 overlay：`/system/etc` 底下可能压着别的挂载）。
+  nsenter 永远只接 `sh 本脚本 __ns apply <计划>`，探测命令是 `true`——一个 `-` 开头的参数
+  都不递给它。占位文件那条分支只留 `SELFFONT_SYSTEM_ROOT` 假根下。verify 空账返回 1，
+  并且要求单元还在 init 的挂载表里（`/proc/1/mountinfo`，目录单元还要求 `upperdir=` 对得上），
+  账上记 `boot_id`，上次开机的账一律不算数。
+- **能自证的部分（`build.py --check` 新增，12 项里的 `module_hotswap`）**：语法与接线；
+  nsenter 收到的 argv（假 `nsenter` 只记录 argv、不模拟挂载，断言 `sh` 之后没有一个 `-`
+  开头的参数）；假根里跑真脚本的五种账（无账/空账/一致/不一致/上次开机）与「内容一致但
+  挂载表里没有」。三条变异（空账退回 0、nsenter 直接收 mount、计划顺序反转）都能被抓住。
+- **仍然未验**：overlayfs 能不能在这台 ROM 的 init 命名空间挂上、SELinux 放不放行、
+  toybox `nsenter` 认不认 `-m`、`cmd font update` 是否真推新 Typeface。README 里给了四条
+  真机验收命令，输出要对得上才算过。
+
 ## 2026-10-31（六）· 量白的尺是坏的（`te` 宽 46 单位）、字点小一半、热切换与全仓审查
 
 **先认错**：上一轮把「汉字逐字节未变」当成绩报，等于交了个「我没动」的答案；把 18 项假 `mount`
