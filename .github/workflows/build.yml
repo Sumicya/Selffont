@@ -136,6 +136,46 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  publish:
+    needs: build
+    if: contains(github.event.head_commit.message, '[release]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: 找最新的全量产物
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          row=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" --jq '
+            [.artifacts[] | select(.expired==false)
+             | select(.name|test("^Selffont-[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]+\\.[0-9]+$"))]
+            | sort_by(.created_at) | last | "\(.workflow_run.id) \(.name)"')
+          test -n "$row"
+          echo "run=${row%% *}" >> "$GITHUB_OUTPUT"
+          echo "name=${row#* }" >> "$GITHUB_OUTPUT"
+      - name: 下载直刷目录并重新打包
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ steps.pick.outputs.run }}" -n "${{ steps.pick.outputs.name }}" -D dist
+          test -f dist/module.prop
+          (cd dist && zip -qr "../${{ steps.pick.outputs.name }}.zip" .)
+          sha256sum "${{ steps.pick.outputs.name }}.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: 发 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="${{ steps.pick.outputs.name }}"
+          version="${name#Selffont-}"
+          gh release create "v$version" "$name.zip" SHA256SUMS.txt \
+            --title "Selffont $version" \
+            --notes "Magisk / KernelSU：管理器里「从本地安装」选 zip → 重启。sha256 见 SHA256SUMS.txt。"
+
   cleanup-artifacts:
     needs: build
     if: always()
