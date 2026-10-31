@@ -53,85 +53,58 @@ su -c reboot                                            # 或手动重启
 
 若 `cp` 被 SELinux 拦：先在 Termux 里 `cp "$ZIP" ~/storage/downloads/`（`termux-setup-storage` 给的软链），再 `su -c 'cp /sdcard/Download/<文件名> /data/local/tmp/'` 后照上装。
 
-### 热切换（不重启）
+### 运行期换字体：本机不支持
 
-**要解决的问题**：模块平时靠 KernelSU 的 magic mount 在**开机时**把字件叠到只读分区上，
-改一次字体就要重启一次；系统设置里换字体是当场生效的。
+**结论先写**：这台设备（一加 / Android 16 / SDK 36 / KernelSU 3.3.1 / 内核 6.6.118-android15 GKI）
+**不支持运行期换字体**。换字体 = 改模块 → **重启**。`hotswap.sh` 现在只剩两件事：报告状态、
+清残留（`status` / `panic`），文件里没有任何发起挂载的语句。
 
-**五条硬规矩**（2026-10-31 两次真机事故之后定的，脚本里逐条守，`build.py --check` 逐条验）：
+**四条路，各自的原样证据**：
 
-1. **不许任何形式的整目录 bind 到 /system 路径**。目录只走 overlay；`mount --bind` 只收
-   **常规文件**，而且目标必须是系统里已经存在的文件。事故现场：`mount --bind
-   /data/adb/selffont/merged /system/fonts` → `/proc/mounts` 里成了
-   `/dev/block/dm-76 on /system/fonts type f2fs`（bind 继承源文件系统的设备与类型）。
-   守卫只有一处 `guard_mount()`：源不是常规文件、或源落在 `upper/ work/ merged/` 里，直接拒。
-2. **空文件占位只在 `SELFFONT_SYSTEM_ROOT` 假根下建**。真机上 `/system` 只读，建了也是
-   `Read-only file system`；而且会在 `/data` 里留下成排 0 字节文件（事故现场：
-   `merged/` 246 个 0 字节、`du` 15 KB）。真机路径上遇到系统里没有的配置文件是**跳过并说明**。
-3. **挂之前记录 mnt_id，摘的时候认 mnt_id**。每个单元挂之前把目标当前顶层 mnt_id 记进
-   `/data/adb/selffont-hotswap.pre`，挂完再记我们这一层的 mnt_id 进账（
-   `kind|相对路径|mnt_id`）。`off`/`panic` 只摘「顶层 mnt_id 等于我们记的那个」的挂载点；
-   被别的东西盖住就打印「我们这层 mnt_id X 上面还压着 Y」，**不猜、不摘别人的层**。
-   路径相同不是证据，mnt_id 才是。
-4. **失败一定回滚**：计划先落 `journal`，每挂成功一个追加 `done`；任何单元失败、或结束时
-   数出我们的 overlay 不是恰好一条，就按 `done` 反序摘回去、清账，打印「已回滚到挂之前」。
-   上一次挂到一半被打断（`journal` 还在）时，`on` 先跑一次 `panic` 再挂。
-5. **`panic`**：摘掉本脚本挂过的全部挂载点（认账里的 mnt_id + 只扫「`upperdir=` 是我们的」
-   或「挂载点就在 `upper/work/merged` 里」的孤儿，**不按 `/data` 前缀乱认**），删
-   `merged/`、`upper/`、`work/` 与全部账，最后打印 `/proc/mounts` 里与 `fonts` 相关的剩余行。
-   还有层摘不掉时**不删 `upper/`**——正挂着的 overlay 还在用它，删了 `/system/fonts` 会读失败；
-   这时报「重启后再跑一次 panic」，退出码 1。
+| 路 | 做法 | 真机原样输出 | 结论 |
+| --- | --- | --- | --- |
+| ① | 内核 overlay 带 upperdir（`lowerdir=/system/fonts,upperdir=/data/adb/selffont/upper,workdir=…/work`） | `mount: 'overlay'->'/system/fonts': Invalid argument`（加 `userxattr` 同样 EINVAL） | 挂不上：`/system/fonts` 上已有 KernelSU 的开机 overlay，lowerdir 是 erofs，内核直接拒 |
+| ② | 逐文件 bind（新字体名先在 `/system/fonts` 建占位） | `can't create /system/fonts/Selffont-WenYuanRoundedSCVF.ttf: Read-only file system` | 路本身不成立：bind 不能新增文件，新名字只能写只读分区 |
+| ③ | 改模块目录 + KernelSU `hot_install` 触发重挂 | 探针文件在 `/system/fonts` 里不出现 | `/system/fonts` 是**开机快照**，运行期改模块目录不重挂（`hot_install.rs:145-150` 也不重挂分区） |
+| ④ | `cmd font update` 让 FontManagerService 重读 | 需要签名；`install-debug-cert` 限 debuggable 包 | 非系统签名的模块调不动 |
 
-**具体怎么挂**：
+**它留下的东西怎么清**（上一版真的留过：`/data/adb/selffont/merged` 里 246 个 0 字节文件，
+`/proc/mounts` 里 `/dev/block/dm-76`（`/data`）挂在 `/system/fonts` 之上）：
 
 ```sh
-mount -t overlay overlay -o lowerdir=/system/fonts,upperdir=/data/adb/selffont/upper,workdir=/data/adb/selffont/work /system/fonts
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh status'   # 本机不支持 + 残留层数（带 mnt_id 与来源）
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'    # 只摘能认定是本模块留下的层，删工作目录与账
 ```
 
-upper 里放模块字件的**副本**（不硬链接——upper 里的文件不能有指向外面的第二个链接，
-否则挂载阶段就可能 `EINVAL`）。26 个文件约 147 MB，一次几秒；workdir 每次挂之前清空。
-`SelfroundsCJK-VF-<版本>.ttf` 这类新名字从 upper 长出来，系统原有的字件仍从 lower 读到。
+`panic` 认三种形状：挂在 `/system/fonts` 上且 fstype 不是 `overlay` 的那层（上一版整目录 bind
+的残留）、挂载点在 `/data/adb/selffont/` 之下的、super options 里 `upperdir=` 指向我们 upper 的。
+同路径有多层时只摘顶层，摘不掉的写「重启后会消失」。管理器里的「操作」按钮等于
+`action.sh` → `panic` 后打印状态，不再切换任何东西。
 
-进 init 的挂载命名空间：`nsenter -t 1 -m sh <本脚本> __ns apply <计划文件>`。
-nsenter 后面只许跟 `sh`——`nsenter -t 1 -m mount --bind …` 会被它的 getopt 把 `--bind`
-当成自己的选项（真机原样输出：`nsenter: Unknown option 'bind'`）。
+**还剩一条没验的路**：进程内（LSPosed）——反射读 `Typeface.sSystemFontMap` 换家族、hook
+`Typeface.createFromFile` 重定向文件。第一步只做探针（只打日志、只作用 `com.android.settings`），
+拿到 logcat 再谈替换。见下节。
 
-**命令**（`su -c` 里跑；管理器里点模块的「操作」按钮等于第一条）：
+### 进程内路线（探针，未验）
 
-```sh
-su -c 'sh /data/adb/modules/MFGA/action.sh'                  # 切换：off→on / on→off
-su -c 'sh /data/adb/modules/MFGA/action.sh status'           # on / off / partial
-su -c 'sh /data/adb/modules/MFGA/action.sh verify'           # 逐文件 sha256，0=一致
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'           # 出事时的清场（认 mnt_id，不摘别人的层）
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh on --dry-run'    # 只打印计划
-```
+真机已确认：SDK 36、KernelSU 3.3.1、LSPosed 已装且守护在跑（`lspd` pid 2580、`v2.2.1 (7912)`、
+`lspctl` 有 `status`/`stop`）。探针模块是 libxposed API 102 的纯 Hook 模块，包名
+`sumicya.selffont`，作用域只有一个包：`com.android.settings`。
 
-| 命令 | 正常输出 | 不对时看什么 |
-| --- | --- | --- |
-| `action.sh` | `挂上 N 个单元、M 个文件（字体目录一次 overlay，配置逐个 bind）` | `挂载失败：…（mount: …）` 后必须跟 `回滚：…` + `已回滚到挂之前`，否则跑 `panic` |
-| `action.sh status` | `on` / `off` / `partial` | `partial` = 挂载表里认得出的单元不够数 |
-| `action.sh verify` | `verify：一致 N，不一致 0`，退出码 0 | 退出码 1 且列 `不一致：`/`缺：`/`没挂：`；空账也返回 1 |
-| `hotswap.sh panic` | `摘下：…` 若干、`删掉了 …`、`---- /proc/mounts 里与 fonts 相关的剩余行 ----` | 剩下 `umount` 不掉的会注明「重启后会消失」 |
+探针只做一件事：在 `onPackageLoaded` 里反射读 `android.graphics.Typeface` 的私有静态字段
+`sSystemFontMap`，打印字段是否存在、map 类型与 size、`get("sans-serif")` 的 `toString`。
+**不改字体、不 hook 任何返回值**。判读：
 
-**边界**：已开的程序不会自己重画（Typeface 是进程内缓存），除 `--reload=system` 外都要
-重开那个程序；挂进去的是 **init 的挂载命名空间**，你的 `su` 若带命名空间隔离，
-`ls /system/fonts` 看不到属正常，用 `ls /proc/1/root/system/fonts`；`off` 只摘这一次运行时的
-挂载，重启后 magic mount 按模块状态重新叠上。
+| logcat | 含义 |
+| --- | --- |
+| `字段存在 class=java.util.HashMap size=…` | 字段在，替换路线成立，进第二步 |
+| `探针失败 … NoSuchFieldException` | 字段没了，改 hook `FontManager` / `Typeface.createFromFile` |
+| 一行都没有 | 模块没被加载（作用域没勾 / 应用没重启） |
 
-**没验的部分照实说**：overlay 能不能在这台 ROM 的 init 命名空间里一次挂成功、
-SELinux 放不放行、`cmd font update` 会不会真推新 Typeface、软重启后是否全局重读——都是
-真机事实。`build.py --check` 每次只验我自己的部分：计划形状（恰好一条 overlay、没有逐字体
-bind）、守卫（目录 bind 被拒）、记账与回滚（overlay 失败时把已挂的摘回去）、`panic` 清场。
-
-**真机验收**（原样贴回来）：
-
-```sh
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh on'
-su -c 'awk "\$2 == \"/system/fonts\"" /proc/1/mountinfo | wc -l'   # 我们挂完应当比开机多 1 层
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh verify'; echo "退出码 $?"
-su -c 'ls /proc/1/root/system/fonts | grep -c .'
-su -c 'cat /proc/uptime'
-```
+第二步（只有探针通过才做）：从 `/data/adb/selffont/fonts` 读字体、反射构造 `Typeface`、
+替换 `sSystemFontMap` 里目标 family；再 hook `Typeface.createFromFile(String|File)`，把
+`/system/fonts/<name>` 重定向到同名 `/data` 文件；作用域先只留设置应用，验收看 logcat 的替换
+条数、设置界面截图、去掉作用域重启应用后恢复原样。
 
 ### 火狐
 

@@ -1914,12 +1914,14 @@ def runtime_scripts():
             "keep 没写进配置副本"
         assert sh([str(web), "keep"], env).returncode == 0 and \
             state.read_text().strip() == "keep", "keep 不幂等"
-        result = sh([str(action), "web"], env)  # 网页字体那条：keep → block
+        # 网页字体开关已从管理器按钮里移出（按钮只做清场与状态），直接走 web-fonts.sh。
+        assert sh([str(action), "web"], env).returncode == 2, "action.sh 不该再有 web 动作"
+        result = sh([str(web), "toggle"], env)  # 网页字体那条：keep → block
         assert result.returncode == 0 and state.read_text().strip() == "block", result
         assert re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", bridge.read_text(encoding="utf-8"), re.M), \
             "toggle 没变回压"
         # 模块更新（customize.sh）刷新副本时按状态走：先在管理器里选 keep，再跑一次安装脚本。
-        assert sh([str(action), "web"], env).returncode == 0 and state.read_text().strip() == "keep"
+        assert sh([str(web), "keep"], env).returncode == 0 and state.read_text().strip() == "keep"
         result = sh([str(harness)], env)
         assert result.returncode == 0 and "保留网页字体开关状态" in result.stdout, result.stdout
         assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", bridge.read_text(encoding="utf-8"), re.M), \
@@ -1935,13 +1937,19 @@ def runtime_scripts():
         shutil.copy(web, broken / "web-fonts.sh")
         result = sh([str(broken / "web-fonts.sh"), "keep"], {**env, "FIREFOX_DATA_DIR": str(broken)})
         assert result.returncode != 0 and "找不到网页字体开关行" in result.stderr, result
-        # 管理器按钮的默认动作 = 字体热切换（不是网页字体）：干跑一遍，只验接线与输出。
-        dry = {**env, "SELFFONT_DRY_RUN": "1", "SELFFONT_STATE": str(tmp / "hot.state"),
-               "SELFFONT_SYSTEM_ROOT": str(tmp), "SELFFONT_RELOAD": "none"}
+        # 管理器按钮 = 清场 + 打印状态（本机不支持运行期换字体），不再有切换动作。
+        dry = {**env, "SELFFONT_DATA": str(tmp / "data"), "SELFFONT_BASE": str(tmp / "hot"),
+               "SELFFONT_SYSTEM_FONTS": str(tmp / "fonts"),
+               "SELFFONT_MOUNTINFO": str(tmp / "mountinfo"), "SELFFONT_MOUNTS": str(tmp / "mounts")}
+        (tmp / "fonts").mkdir(exist_ok=True)
+        (tmp / "mountinfo").write_text(f"100 30 0:50 / {tmp}/fonts rw - overlay overlay lowerdir=/system/fonts\n",
+                                       encoding="utf-8")
+        (tmp / "mounts").write_text(f"rootfs / rootfs rw 0 0\noverlay {tmp}/fonts overlay rw 0 0\n",
+                                    encoding="utf-8")
+        result = sh([str(action), "status"], dry)
+        assert result.returncode == 0 and "本机不支持" in result.stdout, result
         result = sh([str(action)], dry)
-        assert result.returncode == 0 and "dry-run" in result.stdout and "现在状态" in result.stdout, result
-        status_out = sh([str(action), "status"], dry).stdout
-        assert "状态 off" in status_out, status_out
+        assert result.returncode == 0 and "panic" in result.stdout and "删掉了" in result.stdout, result
         (modpath / "harness.sh").unlink()
 
 
@@ -2008,208 +2016,101 @@ def run_checks() -> None:
 
 @check
 def module_hotswap():
-    """热切换：真机两次事故后的五条规矩，逐条可判。
+    """运行期换字体：本机四条路全部判死（真机证据），脚本只许剩下「报告」与「清场」。
 
-    ① 不许任何形式的整目录 bind 到 /system 路径（目录只走 overlay，bind 只收常规文件）；
-    ② 空文件占位只在 `SELFFONT_SYSTEM_ROOT` 假根下建；
-    ③ 挂之前记录目标顶层 mnt_id，`off`/`panic` 只摘「顶层 mnt_id 等于我们记的那个」的层，
-       被别的东西盖住就报出来、不猜、不摘别人的；
-    ④ 失败一定回滚到挂之前的状态（按 done 反序摘）；
-    ⑤ `panic` 摘掉本脚本挂过的一切、删 merged/upper/work，打印 /proc/mounts 里 fonts 剩余行。
-
-    下面用假根 + 只改挂载表的 `mount`/`umount` 桩跑**真脚本**：验的是我的计划、守卫、
-    mnt_id 记账与回滚分支，**不是**真机能不能挂上——overlay 能不能在这台 ROM 的 init
-    命名空间挂成功、SELinux 放不放行，只有真机能回答，一条都不假装。
+    判据（都能在这台没装 Android 的机器上判）：
+      1. `module/hotswap.sh` 里**不许出现任何发起挂载的语句**（要的是 `mount -t overlay`
+         与 `mount --bind` 这两个字符串一个都不出现），只许用 `umount` 去摘残留；
+      2. 四个子命令只剩 `status` 与 `panic`；`on`/`off`/`toggle`/`verify` 存在即判失败；
+      3. `action.sh` 的按钮只接 `status` 与 `panic`，没有「切换」「web」这些动作；
+      4. 四条判死证据的原文都在脚本注释与 README 里（`Invalid argument`、
+         `Read-only file system`、探针不出现、`install-debug-cert`）。
     """
     module = ROOT / "module"
-    scripts = sorted(module.glob("*.sh"))
-    assert scripts, "module/ 里没有脚本"
-    for script in scripts:
+    for script in sorted(module.glob("*.sh")):
         result = subprocess.run(["sh", "-n", str(script)], capture_output=True, text=True)
         assert result.returncode == 0, f"{script.name} 语法错误：{result.stderr.strip()}"
-    hotswap = module / "hotswap.sh"
-    text = hotswap.read_text(encoding="utf-8")
-    for needed in ("mount -t overlay", "upperdir=", "mount --bind", "umount", "sha256sum",
-                   "cmd font", "guard_mount", "top_mnt_id", "mnt_id_exists", "cmd_panic"):
-        assert needed in text, f"hotswap.sh 少了关键一步：{needed}"
-    assert 'ns_run sh "$SELF" __ns' in text, "命名空间里的第二趟没有走 `sh 本脚本`"
-    # ② 全文件只许一处建占位文件，而且必须在假根守卫之后。
-    assert text.count(': > "$abs"') == 1, "建占位文件的写法变了，检查要跟着改"
-    guard = 'if [ -n "$ROOT" ] && [ ! -e "$abs" ]; then'
-    assert guard in text and text.index(guard) < text.index(': > "$abs"'), \
-        "空文件占位没有假根守卫：真机 /system 只读，会在 /data 里留下成排 0 字节文件"
+    hotswap = (module / "hotswap.sh").read_text(encoding="utf-8")
+    for banned in ("mount -t overlay", "mount --bind", "nsenter", "upperdir=$UPPER,workdir"):
+        assert banned not in hotswap, f"hotswap.sh 里还有发起挂载的语句：{banned}"
+    assert "umount" in hotswap, "panic 需要 umount 才能摘残留"
+    for gone in ("cmd_on", "cmd_off", "cmd_verify", "cmd_toggle"):
+        assert gone not in hotswap, f"hotswap.sh 还留着运行期切换的实现：{gone}"
+    assert "cmd_status" in hotswap and "cmd_panic" in hotswap, "status/panic 必须保留"
+    for evidence in ("Invalid argument", "Read-only file system", "install-debug-cert",
+                     "开机快照"):
+        assert evidence in hotswap, f"hotswap.sh 少了判死证据：{evidence}"
+
     action = (module / "action.sh").read_text(encoding="utf-8")
-    assert "hotswap.sh" in action, "action.sh 的默认动作没有接到热切换"
+    for gone in ('"$MODDIR/hotswap.sh" toggle', "web)", "hotswap.sh\" on", "hotswap.sh\" off"):
+        assert gone not in action, f"action.sh 还留着切换动作：{gone}"
+    assert "hotswap.sh\" status" in action or "hotswap.sh\" status" in action
+    assert "panic" in action and "本机不支持运行期换字体" in action
 
-    def run(script: Path, *args: str, extra_env=None):
-        env = {**os.environ, "PATH": os.environ["PATH"], **(extra_env or {})}
-        return subprocess.run(["sh", str(script), *args], env=env, capture_output=True, text=True)
-
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for evidence in ("Invalid argument", "Read-only file system", "install-debug-cert"):
+        assert evidence in readme, f"README 少了判死证据：{evidence}"
+    assert "本机不支持运行期换字体" in readme or "不支持运行期换字体" in readme, \
+        "README 没写清「不支持运行期换字体」"
+    # 用假挂载表跑 status/panic：认得出的才摘，开机那层 overlay 不许当残留。
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
-        mod = tmp / "mod"
-        (mod / "system/fonts").mkdir(parents=True)
-        (mod / "system/etc").mkdir(parents=True)
-        shutil.copy2(hotswap, mod / "hotswap.sh")
-        for name in ("Noto.ttf", "Roboto-Regular.ttf"):
-            (mod / "system/fonts" / name).write_bytes(b"sys-font")
-        (mod / "system/fonts/Selffont-WenYuanRoundedSCVF.ttf").write_bytes(b"new-primary")
-        (mod / "system/fonts/SelfroundsCJK-VF-26.10.31.5.249.ttf").write_bytes(b"new-cjk")
-        (mod / "system/etc/fonts_base.xml").write_bytes(b"xml")
-        (mod / "system/etc/fonts_extra.xml").write_bytes(b"xml-extra")   # 假系统里没有
-        sysroot = tmp / "sys"
-        (sysroot / "system/fonts").mkdir(parents=True)
-        (sysroot / "system/etc").mkdir(parents=True)
-        for name in ("Noto.ttf", "Roboto-Regular.ttf"):
-            (sysroot / "system/fonts" / name).write_bytes(b"sys-font")
-        (sysroot / "system/etc/fonts_base.xml").write_bytes(b"xml")
+        data = tmp / "data"
+        (data / "upper").mkdir(parents=True)
+        (data / "merged").mkdir(parents=True)
+        (data / "merged" / "x.ttf").write_bytes(b"0")
+        (data / "upper" / "y.ttf").write_bytes(b"0")
         state = tmp / "st"
-        fake_mountinfo = tmp / "mountinfo"
-        fake_mountinfo.write_text(
-            f"100 30 0:50 / {sysroot}/system/fonts rw - overlay overlay "
-            f"lowerdir=/data/adb/modules/MFGA/system/fonts:/system/fonts\n", encoding="utf-8")
-        (tmp / "idseq").write_text("100", encoding="utf-8")
-
+        Path(str(state) + ".state").write_text("a\n", encoding="utf-8")
+        fonts = tmp / "fonts"
+        fonts.mkdir()
+        mounts = tmp / "mounts"
+        mounts.write_text(
+            "rootfs / rootfs rw 0 0\n"
+            f"/dev/block/dm-76 {fonts} f2fs rw 0 0\n"
+            "/dev/block/sda1 /data f2fs rw 0 0\n", encoding="utf-8")
+        mountinfo = tmp / "mountinfo"
+        mountinfo.write_text(
+            f"100 30 0:50 / {fonts} rw - overlay overlay lowerdir=/system/fonts\n"
+            f"900 30 0:60 / {fonts} rw - f2fs /dev/block/dm-76 rw\n", encoding="utf-8")
+        script = tmp / "hotswap.sh"
+        shutil.copy2(module / "hotswap.sh", script)
+        # 沙箱里没有 CAP_SYS_ADMIN，umount 会失败；用一个只改挂载表、记录调用的壳替身。
         bin_dir = tmp / "bin"
         bin_dir.mkdir()
-        (bin_dir / "mount").write_text(
-            '#!/bin/sh\nprintf "mount %s\\n" "$*" >> "$LOG"\n'
-            'case "$1" in\n'
-            '  --bind) src=$2; dst=$3; type=none; opts="rw - none bind" ;;\n'
-            '  -t) type=$2; src=$3; opts=$5; dst=$6\n'
-            '      [ -f "$FAIL_OVERLAY" ] && { echo "mount: invalid argument" >&2; exit 32; } ;;\n'
-            '  *) exit 1 ;;\n'
-            'esac\n'
-            'id=$(( $(cat "$IDSEQ") + 1 )); echo "$id" > "$IDSEQ"\n'
-            'printf "%s 30 0:50 / %s rw - %s %s %s\\n" "$id" "$dst" "$type" "$src" "$opts" >> "$MI"\n'
-            'if [ "$type" = none ]; then cp -f "$src" "$dst"; '
-            'else for f in "$UP"/*; do [ -f "$f" ] && cp -f "$f" "$dst/${f##*/}"; done; fi\n'
-            'exit 0\n', encoding="utf-8")
+        umount_log = tmp / "umount.log"
         (bin_dir / "umount").write_text(
-            '#!/bin/sh\nprintf "umount %s\\n" "$*" >> "$LOG"\nmp=$1\n'
-            '[ -f "$FAIL_UMOUNT" ] && { echo "umount: $mp: Device or resource busy" >&2; exit 32; }\n'
-            'top=$(awk -v mp="$mp" \'$5==mp && $1+0>m {m=$1+0} END {print m+0}\' "$MI")\n'
+            '#!/bin/sh\nprintf "%s\\n" "$1" >> "$UMOUNT_LOG"\n'
+            # 真 umount 只摘顶层：同一路径上 mnt_id 最大的那一层
+            'top=$(awk -v mp="$1" \'$5 == mp { if ($1 + 0 > m) m = $1 + 0 } END { print m + 0 }\' "$MI")\n'
             '[ "$top" -eq 0 ] && exit 32\n'
-            'awk -v id="$top" \'$1 != id\' "$MI" > "$MI.new" && mv "$MI.new" "$MI"\n'
-            'exit 0\n', encoding="utf-8")
-        (bin_dir / "nsenter").write_text('#!/bin/sh\nshift 3\nexec "$@"\n', encoding="utf-8")
-        (bin_dir / "cmd").write_text('#!/bin/sh\nexit 1\n', encoding="utf-8")
-        for path in bin_dir.iterdir():
-            path.chmod(0o755)
+            'awk -v id="$top" \'$1 != id\' "$MI" > "$MI.new" && mv "$MI.new" "$MI"\n',
+            encoding="utf-8")
+        (bin_dir / "umount").chmod(0o755)
+        env = {**os.environ, "SELFFONT_DATA": str(data), "SELFFONT_BASE": str(state),
+               "SELFFONT_SYSTEM_FONTS": str(fonts), "SELFFONT_MOUNTINFO": str(mountinfo),
+               "SELFFONT_MOUNTS": str(mounts), "PATH": f"{bin_dir}:{os.environ['PATH']}",
+               "UMOUNT_LOG": str(umount_log), "MI": str(mountinfo)}
 
-        log = tmp / "log"
-        env = {"SELFFONT_SYSTEM_ROOT": str(sysroot), "SELFFONT_STATE": str(state),
-               "SELFFONT_UPPER": str(tmp / "upper"), "SELFFONT_WORK": str(tmp / "work"),
-               "SELFFONT_MERGED": str(tmp / "merged"), "SELFFONT_MOUNTINFO": str(fake_mountinfo),
-               "SELFFONT_NSENTER": "nsenter -t 1 -m",
-               "PATH": f"{bin_dir}:{os.environ['PATH']}", "LOG": str(log),
-               "IDSEQ": str(tmp / "idseq"), "MI": str(fake_mountinfo), "UP": str(tmp / "upper")}
+        def run_hs(*args):
+            return subprocess.run(["sh", str(script), *args], env=env, capture_output=True, text=True)
 
-        def unit_lines():
-            path = Path(str(state) + ".units")
-            return path.read_text().splitlines() if path.exists() else []
+        result = run_hs("status")
+        assert result.returncode == 0 and "本机不支持" in result.stdout, result.stdout
+        assert "900" in result.stdout and "整目录 bind 残留" in result.stdout, result.stdout
+        assert "100" not in result.stdout, "把开机那层 overlay 也算成我们的残留了"
 
-        def fake_mounts():
-            return fake_mountinfo.read_text().splitlines()
-
-        # ②(计划) + ��：dry-run 只打印，一条 overlay、不逐字体 bind、不动系统。
-        result = run(mod / "hotswap.sh", "on", "--dry-run", extra_env=env)
-        assert result.returncode == 0, result.stderr
-        assert len([ln for ln in result.stdout.splitlines() if "mount -t overlay" in ln]) == 1, result.stdout
-        assert not [ln for ln in result.stdout.splitlines()
-                    if "mount --bind" in ln and "/system/fonts/" in ln], "出现了逐字体 bind（②）"
-        assert not (sysroot / "system/etc/fonts_extra.xml").exists(), "dry-run 动了系统"
-
-        # 正常 on：③ 记 mnt_id（pre 里应看到挂之前那层的 100），② 只有一条 overlay。
-        log.write_text("", encoding="utf-8")
-        result = run(mod / "hotswap.sh", "on", "--reload=none", extra_env=env)
+        result = run_hs("panic")
         assert result.returncode == 0, (result.stdout, result.stderr)
-        units = unit_lines()
-        assert units[0].startswith("#boot "), units
-        ids = {}
-        for line in units[1:]:
-            kind, rel, mid = line.split("|")
-            ids[rel] = mid
-            assert mid.isdigit(), f"账里没记 mnt_id：{line}"
-        assert "overlay|system/fonts" in [ln.rsplit("|", 1)[0] for ln in units[1:]], units
-        pre = Path(str(state) + ".pre").read_text()
-        assert "pre|overlay|system/fonts|100" in pre, f"挂之前没记下目标那层的 mnt_id：{pre}"
-        assert len([ln for ln in fake_mounts() if "upperdir=" in ln]) == 1, "挂出来的 overlay 不是一条"
-        # ② 假根里的占位文件：只在这个假系统里出现，真机路径上没有这段代码
-        assert (sysroot / "system/etc/fonts_extra.xml").exists(), "假根里没建占位文件"
-        assert result.returncode == 0
-
-        # ③ 有人在我们上面盖了一层：status 变 partial，off 不许摘别人的层。
-        foreign = (f"900 30 0:60 / {sysroot}/system/fonts rw - f2fs /dev/block/dm-76 rw\n")
-        fake_mountinfo.write_text(fake_mountinfo.read_text() + foreign, encoding="utf-8")
-        assert run(mod / "hotswap.sh", "status", extra_env=env).stdout.strip() == "partial"
-        log.write_text("", encoding="utf-8")
-        result = run(mod / "hotswap.sh", "off", "--reload=none", extra_env=env)
-        assert result.returncode == 1, (result.stdout, result.stderr)
-        assert "上面还压着 mnt_id 900" in result.stdout, result.stdout
-        assert not [c for c in log.read_text().splitlines() if c.endswith("/system/fonts")], \
-            "被盖住时仍然按路径去摘了别人的层"
-        assert any(line.startswith("900 ") for line in fake_mounts()), "把别人的挂载摘掉了"
-        # ③ 第二道：就算计划里混进了被盖住的那一层，__ns undo 也不许按路径去摘
-        crafted = tmp / "undo.plan"
-        crafted.write_text(f"overlay|system/fonts|{ids['system/fonts']}\n", encoding="utf-8")
-        log.write_text("", encoding="utf-8")
-        result = run(mod / "hotswap.sh", "__ns", "undo", str(crafted), extra_env=env)
-        assert result.returncode != 0 and "被别的挂载盖住" in result.stdout, result.stdout
-        assert not [c for c in log.read_text().splitlines() if c.startswith("umount ")], \
-            "ns_undo 按路径摘了被盖住的层（③）"
-        assert any(line.startswith("900 ") for line in fake_mounts()), "ns_undo 摘了别人的挂载"
-        # 撤掉那层，off 才能按 mnt_id 精确摘掉我们的
-        fake_mountinfo.write_text("\n".join(ln for ln in fake_mounts() if not ln.startswith("900 ")) + "\n",
-                                  encoding="utf-8")
-        log.write_text("", encoding="utf-8")
-        result = run(mod / "hotswap.sh", "off", "--reload=none", extra_env=env)
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        umounts = [c for c in log.read_text().splitlines() if c.startswith("umount ")]
-        assert umounts, "off 一个都没摘"
-        assert all(c.endswith(str(sysroot) + "/system/fonts") or "/system/etc/" in c for c in umounts), umounts
-        assert [line for line in fake_mounts() if line.startswith("100 ")], "把开机那层也摘了（③）"
-
-        # ④ 失败回滚：overlay 挂不上时，已经挂上的配置要摘回去、账清空。
-        fail_marker = tmp / "fail"
-        fail_marker.write_bytes(b"")
-        log.write_text("", encoding="utf-8")
-        result = run(mod / "hotswap.sh", "on", "--reload=none", extra_env={**env, "FAIL_OVERLAY": str(fail_marker)})
-        assert result.returncode == 1, (result.returncode, result.stdout)
-        assert "已回滚到挂之前" in result.stdout, result.stdout
-        assert any(c.startswith("umount ") for c in log.read_text().splitlines()), "失败后没有回滚（④）"
-        assert not unit_lines() and not Path(str(state) + ".journal").exists(), "回滚后账没清"
-        assert not Path(str(state) + ".pre").exists(), "回滚后 pre 没清"
-
-        # ① 守卫：拿目录当 bind 源（= 把 merged 绑到 /system/fonts 那种写法）直接拒，连 mount 都不调。
-        bad = tmp / "bad.plan"
-        bad.write_text("overlay|system/fonts\nfile|system/fonts\n", encoding="utf-8")
-        log.write_text("", encoding="utf-8")
-        result = run(mod / "hotswap.sh", "__ns", "apply", str(bad), extra_env=env)
-        assert result.returncode != 0 and "第①条" in result.stdout, result.stdout
-        assert not [c for c in log.read_text().splitlines() if "--bind" in c], "目录 bind 被放行（①）"
-        bad.write_text("overlay|system/fonts\noverlay|system/fonts\n", encoding="utf-8")
-        result = run(mod / "hotswap.sh", "__ns", "apply", str(bad), extra_env=env)
-        assert result.returncode != 0 and "只允许 1 条" in result.stdout, result.stdout
-
-        # ⑤ panic：被盖住时不动别人的层、也不删正被挂着的 upper；清干净后删目录并报告。
-        run(mod / "hotswap.sh", "on", "--reload=none", extra_env=env)
-        (tmp / "merged").mkdir()
-        (tmp / "merged" / "x.ttf").write_bytes(b"junk")
-        fake_mountinfo.write_text(fake_mountinfo.read_text() + foreign, encoding="utf-8")
-        result = run(mod / "hotswap.sh", "panic", extra_env=env)
-        assert result.returncode == 1, (result.stdout, result.stderr)
-        assert (tmp / "upper").exists(), "还没摘干净就删了正被 overlay 用的 upper"
-        assert not (tmp / "merged").exists(), "panic 没删 merged（旧版垃圾）"
+        assert "摘下" in result.stdout and "900" in result.stdout, result.stdout
         assert "与 fonts 相关的剩余行" in result.stdout, result.stdout
-        fake_mountinfo.write_text("\n".join(ln for ln in fake_mounts() if not ln.startswith("900 ")) + "\n",
-                                  encoding="utf-8")
-        result = run(mod / "hotswap.sh", "panic", extra_env=env)
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        assert not (tmp / "upper").exists() and not (tmp / "work").exists(), "panic 没删 upper/work"
-        assert not Path(str(state) + ".units").exists(), "panic 没清账"
-        assert all(not ln.startswith("100 ") or "/system/fonts" in ln for ln in fake_mounts())
-        assert len([ln for ln in fake_mounts() if "upperdir=" in ln]) == 0, "panic 之后还有我们的 overlay"
+        assert umount_log.read_text().strip() == str(fonts),             f"panic 摘错了东西：{umount_log.read_text()!r}"
+        assert not data.exists(), "panic 没删工作目录"
+        assert not Path(str(state) + ".state").exists(), "panic 没清状态文件"
+        assert "100 30 0:50" in mountinfo.read_text(), "panic 把开机那层也摘了"
+
+        result = run_hs("on")
+        assert result.returncode == 2, "on 这个子命令必须已经不存在（不许有第四版挂载实现）"
 
 
 @check
