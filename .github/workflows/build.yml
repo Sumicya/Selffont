@@ -7,6 +7,8 @@ on:
       - '**.md'
       - 'docs/**'
       - 'bad/**'
+      - 'lsp/**'          # B 线（探针）只在 probe.yml 里编，字体 job 不跟着跑
+      - '.github/workflows/probe.yml'
       - 'LICENSE'
       - '.gitignore'
   workflow_dispatch:
