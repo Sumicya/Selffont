@@ -98,12 +98,30 @@ jobs:
           unzip -oq "build/${ARTIFACT_NAME}.zip" -d build/root
           test -f build/root/module.prop
           test -f build/root/customize.sh
+      - name: 记录产物哈希
+        if: steps.mode.outputs.full == '1'
+        id: sha
+        run: |
+          sum=$(sha256sum "build/${ARTIFACT_NAME}.zip" | cut -d' ' -f1)
+          echo "$sum  ${ARTIFACT_NAME}.zip" > build/SHA256SUMS.txt
+          cp build/SHA256SUMS.txt build/root/SHA256SUMS.txt
+          echo "sum=$sum" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sum  ${ARTIFACT_NAME}.zip"
       - name: 上传正式产物
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: build/root
+          retention-days: 5
+          if-no-files-found: error
+          overwrite: true
+      - name: 上传哈希
+        if: steps.mode.outputs.full == '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Selffont-preview-sha256-${{ steps.sha.outputs.sum }}
+          path: build/SHA256SUMS.txt
           retention-days: 5
           if-no-files-found: error
           overwrite: true
