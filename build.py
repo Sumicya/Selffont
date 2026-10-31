@@ -695,7 +695,8 @@ def is_cjk_locale(tag: str | None) -> bool:
 
 
 def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
-                    cjk: bool = False) -> bytes:
+                    cjk: bool = False, cjk_name: str | None = None,
+                    cjk_family: str | None = None) -> bytes:
     """主字体接管全部主家族、CJK 语言区与默认区；空壳留在度量家族；匿名字形回退紧随默认家族。
 
     输出统一是新语法（supportedAxes,Android 15+ 运行时实例化）：安装脚本只投放 font_fallback*.xml,
@@ -740,9 +741,15 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
     index = list(root).index(default) + 1
     if cjk:
         own = ET.Element("family")
-        # 可变字件：写 supportedAxes，不写 weight（运行时按 wght 实例化）。
-        node = ET.SubElement(own, "font", style="normal", supportedAxes=CJK_AXES)
-        node.text = cjk_naming(CJK_RELEASE_VERSION)[1]
+        if cjk_family:
+            own.set("name", cjk_family)      # 母版直通：字节没改，族名也得是它自己的
+        if cjk_family:
+            # 静态母版：写 weight，不能写 supportedAxes（那是可变字体才有的）
+            node = ET.SubElement(own, "font", style="normal", weight="400")
+        else:
+            # 可变字件：写 supportedAxes，不写 weight（运行时按 wght 实例化）。
+            node = ET.SubElement(own, "font", style="normal", supportedAxes=CJK_AXES)
+        node.text = cjk_name or cjk_naming(CJK_RELEASE_VERSION)[1]
         root.insert(index, own)
         index += 1
     fallback = ET.Element("family")
@@ -932,7 +939,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
           build_num: str | None = None, day: str | None = None, date: str | None = None,
           query: bool = False, keep_web_fonts: bool = False,
           supplemental_font_sources: tuple[dict, ...] | None = None,
-          cjk: bool = True) -> list[str]:
+          cjk: bool = True, passthrough_mother: str | None = None) -> list[str]:
     """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。
 
     supplementals=None 使用仓库固定的 OFL 来源；显式空 tuple 仅供离线自检夹具使用。
@@ -984,15 +991,38 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         # 二创汉字字库：数据 → 轮廓 → 一份独立 OTF，作为单独 family 排在主字体之前。
         # build_vf 会逐字 pop 掉传进来的字典（三万字全按 Python 对象摊开要 500 MB 以上），
         # 所以字数要先记下来。
-        glyphs = cjk_glyphs() if cjk else {}
-        glyph_count = len(glyphs)
-        cjk_font = build_cjk_font(glyphs, carrier) if glyphs else b""
+        # 母版直通：不改任何轮廓，把母版字节原样放进包里，只做挂载与配置。
+        # 用途是量基准——五条判据对着它比，任何改动都跟它差多少一目了然。
+        passthrough_name = None
+        if passthrough_mother:
+            mother_path = Path(passthrough_mother)
+            if not mother_path.is_file():
+                raise ValueError(f"母版直通要给一个本地文件：{passthrough_mother}")
+            cjk_font = mother_path.read_bytes()
+            passthrough_name = mother_path.name
+            glyphs = {}
+            glyph_count = 0
+            warnings.append(f"母版直通：{passthrough_name} 原样进包（不改轮廓、不改名），"
+                            "只用于基准测量，不是发行件。")
+        else:
+            glyphs = cjk_glyphs() if cjk else {}
+            glyph_count = len(glyphs)
+            cjk_font = build_cjk_font(glyphs, carrier) if glyphs else b""
         # 框架读 font_fallback.xml（新语法）；Skia 读库存 fonts.xml（另一份，本模块也换）。
         template = (ROOT / "fonts.xml").read_bytes()
-        xml = configure_fonts(template, name, ladder, cjk=bool(glyph_count))
+        cjk_file = passthrough_name or (cjk_naming(CJK_RELEASE_VERSION)[1] if glyph_count else None)
+        if cjk_file:
+            # 直通时按母版自己的内部族名写配置：字节没改，名字也得是它自己的。
+            with TTFont(io.BytesIO(cjk_font), lazy=True) as _mother:
+                cjk_family = (_mother["name"].getDebugName(16) or _mother["name"].getDebugName(1)
+                              or "Maruko Gothic")
+        else:
+            cjk_family = None
+        xml = configure_fonts(template, name, ladder, cjk=bool(cjk_file),
+                              cjk_name=cjk_file, cjk_family=cjk_family)
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
-        faces = ([(cjk_naming(CJK_RELEASE_VERSION)[1], 400)] if glyphs else []) + [(name, 400)]
+        faces = ([(cjk_file, 400)] if cjk_file else []) + [(name, 400)]
         legacy = legacy_rows(faces)
         xml_root = ET.fromstring(xml)
         references = [(node.text or "").strip() for node in xml_root.iter("font")]
@@ -1046,7 +1076,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
         write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals,
-                     cjk_font, legacy)
+                     cjk_font, legacy, cjk_file=cjk_file)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}")
@@ -1064,7 +1094,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
                  name: str, packaged: bytes, xml: bytes, prop: str, config: str,
-                 supplementals: list[dict], cjk_font: bytes = b"", legacy: bytes = b"") -> None:
+                 supplementals: list[dict], cjk_font: bytes = b"", legacy: bytes = b"",
+                 cjk_file: str | None = None) -> None:
     """写模块 zip：被配置引用的基础包字体 + 固定许可外部字体 + 主字体 + 原生 KSU 模块布局。
 
     两份配置走两条路：`font_fallback.xml` 是新语法，安装脚本投放到所有
@@ -1091,7 +1122,8 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
             destination.writestr(f"licenses/{license_name}", supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
         if cjk_font:
-            destination.writestr(f"system/fonts/{cjk_naming(CJK_RELEASE_VERSION)[1]}", cjk_font)
+            destination.writestr(f"system/fonts/{cjk_file or cjk_naming(CJK_RELEASE_VERSION)[1]}",
+                                 cjk_font)
             destination.writestr(f"licenses/{CJK_LICENSE_NAME}", CJK_LICENSE.read_bytes())
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("fonts-insert.xml", legacy)
@@ -2336,6 +2368,8 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="跑内建自检：不下载、不打包")
     parser.add_argument("--cjk-font", type=Path, metavar="DIR",
                         help="只出二创汉字字件（可变 + 三个静态实例）到 DIR，不下载、不打包")
+    parser.add_argument("--passthrough-mother", metavar="TTF",
+                        help="母版直通：把这份 TTF 原样放进包（不改任何轮廓），只用于量基准")
     parser.add_argument("--preview", metavar="字…",
                         help="只编这几个字出预览小字体（几秒），配合 --compare 出母版对照图")
     parser.add_argument("--preview-out", type=Path, metavar="DIR", default=ROOT / "work" / "preview",
@@ -2365,7 +2399,8 @@ def main() -> None:
     else:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,
               day=args.day, date=args.date, query=args.query_ci,
-              keep_web_fonts=args.keep_web_fonts)
+              keep_web_fonts=args.keep_web_fonts,
+              passthrough_mother=args.passthrough_mother)
 
 
 if __name__ == "__main__":
