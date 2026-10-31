@@ -24,13 +24,15 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: 准备 Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: 装编译所需的 SDK 组件
+        # ubuntu-24.04 跑者自带 Android SDK（ANDROID_HOME 已设、sdkmanager 在 PATH），
+        # 不再套第三方 setup 动作：上一版就是它这一步挂的，日志取不回来。
         run: |
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" >/dev/null
-          echo "compileSdk 36 / build-tools 36.0.0 就位"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --version
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager --list_installed | head -20
 
       - name: 准备 Gradle
         uses: gradle/actions/setup-gradle@v4
