@@ -161,7 +161,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download "${{ steps.pick.outputs.run }}" -n "${{ steps.pick.outputs.name }}" -D dist
+          gh run download "${{ steps.pick.outputs.run }}" -R "${{ github.repository }}" -n "${{ steps.pick.outputs.name }}" -D dist
           test -f dist/module.prop
           (cd dist && zip -qr "../${{ steps.pick.outputs.name }}.zip" .)
           sha256sum "${{ steps.pick.outputs.name }}.zip" > SHA256SUMS.txt
@@ -172,7 +172,7 @@ jobs:
         run: |
           name="${{ steps.pick.outputs.name }}"
           version="${name#Selffont-}"
-          gh release create "v$version" "$name.zip" SHA256SUMS.txt \
+          gh release create "v$version" "$name.zip" SHA256SUMS.txt -R "${{ github.repository }}" \
             --title "Selffont $version" \
             --notes "Magisk / KernelSU：管理器里「从本地安装」选 zip → 重启。sha256 见 SHA256SUMS.txt。"
 
