@@ -165,6 +165,22 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 设计取向写在 `docs/design-principles.md`，其中能复算的条目给了命令、阈值与现值。
 
+**复算上面几组数要什么**：母版是公开发布的字件（Maruko Gothic，钉在提交 `97e9dd4`，不进仓库），
+下面这条命令取到的 20,084,736 B 文件 sha256 = `e3709389bce13fa75af28cc2370b6175520d97f74dfbf3894ca24838f47241b7`（2026-10-31 10:18 UTC+8 现取核对）：
+
+```sh
+gh api -H "Accept: application/vnd.github.raw" \
+  "repos/max32002/maruko-gothic/contents/CJK%20SC/MarukoGothicCJKsc-Regular.ttf?ref=97e9dd4" -o maruko.ttf
+```
+
+| 数 | 命令 | 额外需要 | 实测耗时（2026-10-31 UTC+8） |
+| --- | --- | --- | --- |
+| 3 字预览 IoU 0.908 | `build.py --preview 鬱響鬢 --compare maruko.ttf` | 只要母版 | 19.5 s（10:19） |
+| 8,347 对 Δ白中位 1.3 | `tools/kern_measure.py --master maruko.ttf --verify 本版.ttf` | 母版 + 本版 | 3.2 s（09:59） |
+| 20,977 字 IoU 中位 0.929、最低 0.731 | `tools/freetype_iou.py maruko.ttf 本版.ttf --all` | 母版 + 本版 | 3 分 23 秒（10:02） |
+
+「本版」= `build.py --cjk-font DIR` 出的 `SelfroundsCJK-VF.ttf`（全量构建约 53 分钟，2026-10-31 09:30 UTC+8 那次构建的产物）。
+
 产物名跟版本走：`build/Selffont-<版本>.zip`；没有规范版本数据就不出包（取数失败停止出包和上传）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
 **版本号（展示不含 `v`）**：五段 `yy.m.d.当日序号.总序号`；`versionCode` = 最后一段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
