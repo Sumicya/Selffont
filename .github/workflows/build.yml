@@ -53,7 +53,8 @@ jobs:
       - name: 判断构建模式
         id: mode
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full }}" = "true" ]; then
+          if { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full }}" = "true" ]; } \
+             || printf '%s' "${{ github.event.head_commit.message }}" | grep -q '\[full\]'; then
             echo "full=1" >> "$GITHUB_OUTPUT"
             echo "全量构建（正式版本）"
           else
