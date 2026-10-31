@@ -163,7 +163,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python tools/kern_measure.py --master 母版.ttf --verify 本版.ttf  # 8,347 对字偶距白
 ```
 
-设计取向与每条的可判定判据写在 `docs/design-principles.md`（待主人审定）。
+设计取向写在 `docs/design-principles.md`，其中能复算的条目给了命令、阈值与现值。
 
 产物名跟版本走：`build/Selffont-<版本>.zip`；没有规范版本数据就不出包（取数失败停止出包和上传）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
