@@ -1,4 +1,4 @@
-# 出包工作流：push（不限分支）与手动触发，出 Selffont-<版本> 模块包并清理超限产物与运行记录。
+# 出包工作流：push 跑预览子集（96 秒），[full] 提交或手动触发跑全量；[release] 把最新全量产物发成 Release。
 name: Build
 
 on:
