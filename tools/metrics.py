@@ -10,8 +10,9 @@
    报 |比值 − 1| 的 P50 / P90 / P95，横竖分别报。
 3. **侧距**：`hmtx` 逐字差（lsb 与 advance 各一份），报 |diff| ≤ 20 单位的占比，以及 |diff| 的 P50/P90。
 4. **曲线连续性**：相邻段接点处，前段末切向与后段首切向的夹角（度）。转角落差 > 60° 的按
-   「角点」排除（母版与本体都排除，口径一致）。逐字取均值，报全库中位与 P90；目标是
-   ≤ 母版 + 0.5°。
+   「角点」排除（母版与本体都排除，口径一致）。逐字取均值，报全库中位与 P90，**并报相对
+   母版的增量**（本版中位 − 母版中位）。不设「母版 + 某度」这种阈值：母版自己就有 4.36°，
+   增量是唯一能跨字体、跨轮次比较的量。
 5. **渲染对照**：12 / 16 / 24 px 三档、同一批 20 字，母版一排、本版一排；像素按 3× 最近邻放大
    （等价 3x 屏幕上看见的密度，不引入重采样模糊）。输出 PNG 由调用方贴进回复。
 
@@ -228,6 +229,74 @@ def render_compare(ours: Path, mother: Path, chars: list[str], out: Path,
     return out
 
 
+def worst_jumps(ours_path: Path, mother_path: Path, chars: list[str], top: int = 5):
+    """逐字切向跳变均值，返回 (本版最差 top 字, 母版同字的值)。
+
+    4× 局部放大图就按这份名单挑字：只看跳变最大的几个，不挑「看起来有问题」的字。
+    """
+    ours = TTFont(str(ours_path), lazy=False)
+    mother = TTFont(str(mother_path), lazy=False)
+    o_cmap, m_cmap = ours.getBestCmap(), mother.getBestCmap()
+    o_gs, m_gs = ours.getGlyphSet(), mother.getGlyphSet()
+    rows = []
+    for ch in chars:
+        cp = ord(ch)
+        if cp not in o_cmap or cp not in m_cmap:
+            continue
+        jo = tangent_jumps(_flatten(o_gs[o_cmap[cp]], o_gs)[1])
+        jm = tangent_jumps(_flatten(m_gs[m_cmap[cp]], m_gs)[1])
+        if jo is None:
+            continue
+        rows.append((jo, jm, ch))
+    rows.sort(reverse=True)
+    return [(ch, round(jo, 3), round(jm, 3) if jm is not None else None)
+            for jo, jm, ch in rows[:top]]
+
+
+def render_pixel_zoom(ours: Path, mother: Path, chars: list[str], out: Path,
+                      size: int = 96, scale: int = 4, max_width: int = 900) -> Path:
+    """局部放大图：只给最差的几个字，96 px 渲染、裁到墨迹、最近邻 4×，图宽不超过 900。
+
+    这张图只用来判第 4 条（接点有没有硬折）。每行一个字：左母版、右本版，同一字号同一基线。
+    行内的两块都按 4× 放大后再贴，所以看到的是 384 px 见方的字形，接点是不是折一目了然。
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    cell = size * scale
+    label_w = 26
+    width = min(max_width, label_w + cell + 8 + cell + 8)
+    row_h = cell + 6
+    canvas = Image.new("L", (width, row_h * len(chars) + 6), 255)
+    pen = ImageDraw.Draw(canvas)
+
+    def tile(path: Path, ch: str) -> Image.Image:
+        font = ImageFont.truetype(str(path), size)
+        pad = size
+        raw = Image.new("L", (size + pad * 2, size + pad * 2), 255)
+        ImageDraw.Draw(raw).text((pad, pad), ch, font=font, fill=0)
+        box = raw.point(lambda v: 255 - v).getbbox()
+        if box:
+            left, top, right, bottom = box
+            m = 3
+            raw = raw.crop((max(left - m, 0), max(top - m, 0),
+                            min(right + m, raw.width), min(bottom + m, raw.height)))
+        return raw.resize((raw.width * scale, raw.height * scale), Image.NEAREST)
+
+    tag_font = ImageFont.truetype(str(mother), 20)
+    for row, ch in enumerate(chars):
+        y = 3 + row * row_h
+        box = pen.textbbox((0, 0), ch, font=tag_font)
+        pen.text((4, y + (row_h - box[3]) / 2), ch, font=tag_font, fill=0)  # 默认字体没有汉字，标签用母版自己画
+        for col, path in enumerate((mother, ours)):
+            img = tile(path, ch)
+            x = label_w + col * (cell + 8) + max((cell - img.width) // 2, 0)
+            y2 = y + max((cell - img.height) // 2, 0)
+            canvas.paste(img.crop((0, 0, min(img.width, cell), min(img.height, cell))), (x, y2))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out)
+    return out
+
+
 def measure(ours_path: Path, mother_path: Path, chars: list[str],
             render_out: Path | None, sizes, scale) -> dict:
     mother = TTFont(str(mother_path), lazy=False)
@@ -315,6 +384,10 @@ def main() -> None:
     parser.add_argument("--sizes", default="12,16,24", help="渲染档位（px，默认 12,16,24）")
     parser.add_argument("--scale", type=int, default=3, help="像素放大倍数（最近邻，默认 3）")
     parser.add_argument("--json", type=Path, help="把结果同时写成 JSON")
+    parser.add_argument("--worst-jumps", type=int, default=0,
+                        help="列出切向跳变最大的 N 个字（给 4× 局部放大图挑字）")
+    parser.add_argument("--pixel-zoom", type=Path,
+                        help="出 4× 局部放大图（96 px 渲染、图宽 ≤900、文件名带 -pixel）")
     args = parser.parse_args()
 
     ours = args.mother if args.baseline else args.ours
@@ -323,6 +396,13 @@ def main() -> None:
     chars = load_chars(args.chars, args.text, args.limit)
     sizes = tuple(int(s) for s in args.sizes.split(","))
     result = measure(ours, args.mother, chars, args.render, sizes, args.scale)
+    if args.worst_jumps:
+        worst = worst_jumps(ours, args.mother, chars, args.worst_jumps)
+        result["最差切向跳变"] = [{"字": ch, "本版": j, "母版": m} for ch, j, m in worst]
+        if args.pixel_zoom:
+            assert "-pixel" in args.pixel_zoom.name, "局部放大图的文件名要带 -pixel"
+            render_pixel_zoom(ours, args.mother, [ch for ch, _, _ in worst], args.pixel_zoom)
+            result["4×局部放大图"] = str(args.pixel_zoom)
     result["母版"] = str(args.mother)
     result["本版"] = str(ours)
     print(json.dumps(result, ensure_ascii=False, indent=2))

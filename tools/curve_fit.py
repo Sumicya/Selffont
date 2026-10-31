@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import math
+import os
 
 FIT_TOL = 0.80        # 三次贝塞尔拟合容差（字体单位）。0.4 会把每个 90° 圆角切成两段
                       # （R≈200 的弧单段三次误差 1.0），段数翻倍；0.8 与母版自身的
@@ -34,6 +35,16 @@ LINE_TOL = 0.80       # 段内点到弦线的最大距离不超过它 → 当直
                       # 0.3 会把剖面上 0.2 单位的正常起伏判成弯，直边被拆成两三条曲线
 MAX_QUAD = 5          # 单段三次最多拆成几条二次
 MAX_DEPTH = 12        # 递归切分深度上限
+
+# 端点切向的来源。这是 2026-10-31 那一轮唯一动的变量，留开关是为了「改前 / 改后」
+# 能用同一份代码复算，而不是靠 git 回滚去比。
+#   "segment"（默认，旧） = 段内切向：段内点 ≥6 时用段内三点定圆，否则退回**弦方向**
+#   "ring"              = 真切线：在**整条密点环**上取端点两侧邻点定圆，与这一段被切成多长无关
+# 假设是「短段退回弦方向就是接点硬折的来源，换成真切线就能把跳变压下去」。3,500 字实测：
+# ④ 中位 9.554° → 8.127°（−1.427），P90 10.854° → 9.410°，跳变确实降了；但 ① P90
+# 44.202 → 46.275（+2.07）、③ lsb 合格率 99.57% → 99.40%（−0.17pp）两条守卫判据没过。
+# 按事先定好的合取判据，这个改动**不采用**，默认留 "segment"；读数见 docs/metrics.md。
+ENDPOINT_TANGENT = os.environ.get("SELFFONT_ENDPOINT_TANGENT", "segment")
 
 
 # ---------------------------------------------------------------- 小几何
@@ -83,6 +94,34 @@ def _tangent_at(pts, i, step, toward):
     return (tx / nn, ty / nn)
 
 
+def _true_tangent(ring, i, toward):
+    """整条密点环上 i 处的真切线：用两侧邻点定圆，共线就逐级加宽基线。
+
+    与 `_tangent_at` 的差别只有一个：基线取的是**环上的邻点**，不是「这一段里的点」。
+    段被切得再短，端点处的切向也还是整条曲线的切向——这正是接点不再出现硬折的原因。
+    """
+    n = len(ring)
+    for span in (1, 2, 3, 5, 8):
+        if 2 * span >= n:
+            break
+        a, b, c = ring[(i - span) % n], ring[i % n], ring[(i + span) % n]
+        d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]))
+        if abs(d) > 1e-7:
+            ux = ((a[0] ** 2 + a[1] ** 2) * (b[1] - c[1]) + (b[0] ** 2 + b[1] ** 2) * (c[1] - a[1])
+                  + (c[0] ** 2 + c[1] ** 2) * (a[1] - b[1])) / d
+            uy = ((a[0] ** 2 + a[1] ** 2) * (c[0] - b[0]) + (b[0] ** 2 + b[1] ** 2) * (a[0] - c[0])
+                  + (c[0] ** 2 + c[1] ** 2) * (b[0] - a[0])) / d
+            tx, ty = -(a[1] - uy), (a[0] - ux)
+            if tx * toward[0] + ty * toward[1] < 0:
+                tx, ty = -tx, -ty
+            nn = math.hypot(tx, ty)
+            if nn > 1e-12:
+                return (tx / nn, ty / nn)
+    nxt = ring[(i + 1) % n]
+    prv = ring[(i - 1) % n]
+    return _unit(prv, nxt)
+
+
 def _local_dir(points, i, forward=True):
     """i 处的切向：往前（或往后）取 3 个点做差分，抗单点抖动。"""
     n = len(points)
@@ -95,7 +134,7 @@ def _local_dir(points, i, forward=True):
 
 # ---------------------------------------------------------------- 单段拟合
 
-def _fit_one(pts, u):
+def _fit_one(pts, u, t0=None, t3=None):
     """一段点列（首末是锚点）拟合成三次贝塞尔；返回 (c1, c2, max_err, at)。
 
     向量化：一段动辄两三百个点，逐点 Python 循环会把全库构建拖到一个小时以上。
@@ -105,14 +144,15 @@ def _fit_one(pts, u):
     P = np.asarray(pts, float)
     T = np.asarray(u, float)
     p0, p3 = P[0], P[-1]
-    if len(pts) >= 6:
-        # 端点切向：正向取前三点、反向取末三点各做一次三点圆（端点附近曲率最可靠）
-        t0 = _tangent_at(pts, 0, +1, (pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]))
-        t3 = _tangent_at(pts, len(pts) - 1, -1,
-                         (pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1]))
-    else:
-        t0 = _unit(pts[0], pts[-1])
-        t3 = t0
+    if t0 is None or t3 is None:            # 没给外部切向：按旧规则自己算（段内）
+        if len(pts) >= 6:
+            # 端点切向：正向取前三点、反向取末三点各做一次三点圆（端点附近曲率最可靠）
+            t0 = _tangent_at(pts, 0, +1, (pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]))
+            t3 = _tangent_at(pts, len(pts) - 1, -1,
+                             (pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1]))
+        else:
+            t0 = _unit(pts[0], pts[-1])      # 弦方向：这一行就是被替换掉的旧行为
+            t3 = t0
     t0 = np.asarray(t0, float)
     t3 = np.asarray(t3, float)
     U = 1.0 - T
@@ -329,7 +369,14 @@ def fit_rings(dense, anchors):
         for (a, b, kind) in segs:
             for w in weights:
                 pts = _sub(per_w[w], a, b)
-                c1, c2, _err, _at = _fit_one(pts, _params(pts))
+                if ENDPOINT_TANGENT == "ring" and kind != "poly":
+                    # 真切线：端点处取整条环上的邻点定圆，与这一段被切多短无关。
+                    ring_w = per_w[w]
+                    t0 = _true_tangent(ring_w, a, _unit(ring_w[(a - 1) % n], ring_w[(a + 1) % n]))
+                    t3 = _true_tangent(ring_w, b, _unit(ring_w[(b - 1) % n], ring_w[(b + 1) % n]))
+                else:
+                    t0 = t3 = None
+                c1, c2, _err, _at = _fit_one(pts, _params(pts), t0, t3)
                 cubics[w].append((pts[0], c1, c2, pts[-1]))
         quads = {w: [] for w in weights}
         for si, (_a, _b, kind) in enumerate(segs):
