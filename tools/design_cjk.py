@@ -786,7 +786,7 @@ def _dp_keep(pts, tol):
     return keep
 
 
-def outline_curves(glyph, weights=None):
+def outline_curves(glyph, weights=None, codepoint=None):
     """一个字 → ({档: [环点列]}, {档: [环 on/off 标志]})，是**真二次曲线**。
 
     与 `outline_points_all` 的区别只在最后一步：那个把点直接连成折线，这个把点拟合回
@@ -799,6 +799,8 @@ def outline_curves(glyph, weights=None):
     dense = {w: outline_points(glyph, w) for w in weights}
     if len({len(dense[w]) for w in weights}) != 1:
         return dense, {w: [[1] * len(r) for r in dense[w]] for w in weights}
+    # 凹角补圆不走这里：补丁是**追加环**，在 `cjk_vf.build_vf` 里加。
+    # 在密点环上换点也试过，接缝处切向对不上，渲染出比原来更尖的楔口。
     return curve_fit.fit_rings(dense, [[] for _ in dense[weights[0]]])
 
 

@@ -655,10 +655,10 @@ def _outside_frame(rings) -> str:
     return ""
 
 
-def _glyph_rings_all(glyph: dict):
+def _glyph_rings_all(glyph: dict, codepoint: int | None = None):
     """三档轮廓（真二次曲线），三档点数与 on/off 标志逐一对应。"""
     import design_cjk
-    return design_cjk.outline_curves(glyph)
+    return design_cjk.outline_curves(glyph, codepoint=codepoint)
 
 
 def _glyph_from_rings(rings, flags):
@@ -687,6 +687,23 @@ def _glyph_from_rings(rings, flags):
     glyph.program = ttProgram.Program()
     glyph.program.fromBytecode(b"")
     return glyph
+
+
+_FILLETS = None
+
+
+def fillet_patches() -> dict:
+    """凹角补丁：`tools/fillet_patches.json` 里按码位存的补丁环（`tools/fillet.py` 生成）。
+
+    补丁只加环、不改已有坐标，所以笔宽与端头一个点都不动；同一块补丁原样加进三档，
+    三档点数仍然逐一相同（gvar 的增量为 0）。文件不存在时返回空字典——不带补丁也能建。
+    """
+    global _FILLETS
+    if _FILLETS is None:
+        import json
+        path = Path(__file__).resolve().parent / "fillet_patches.json"
+        _FILLETS = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return _FILLETS
 
 
 def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
@@ -724,7 +741,14 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         data = glyphs.pop(codepoint)
         if is_han(codepoint):
             settle_junction_widths(data)
-        rings, flags = _glyph_rings_all(data)
+        rings, flags = _glyph_rings_all(data, codepoint)
+        # 凹角补圆（2026-10-31）：追加补丁环。nonzero 填充下绕向必须与笔画环一致
+        # （design_cjk 的所有笔画环都是 −1），否则与原有环抵消成洞——第一版就是这样翻车的。
+        add = fillet_patches().get(str(codepoint))
+        if add:
+            rings = {w: list(rr) + [[(float(x), float(y)) for x, y in poly] for poly in add]
+                     for w, rr in rings.items()}
+            flags = {w: list(ff) + [[1] * len(poly) for poly in add] for w, ff in flags.items()}
         rings = align_face_height(rings)
         # 非全角字形（拉丁、数字、标点）的侧距按边缘形状给，并把轮廓平移到该侧距上。
         # 汉字不动：它自带全角框，墨迹位置属于字面的一部分（2026-10-28 主人定）。

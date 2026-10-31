@@ -55,7 +55,7 @@ def render_crop(font_path: Path, ch: str, em: int, crop) -> Image.Image:
                         int(origin[0] + x1 * s), int(origin[1] - y0 * s)))
 
 
-def stack(tiles, labels, pad=8, label_w=34):
+def stack(tiles, labels, pad=8, label_w=54):
     w = max(t.width for t in tiles) + label_w
     h = sum(t.height for t in tiles) + pad * (len(tiles) - 1)
     out = Image.new("L", (w, h), 255)
@@ -71,7 +71,7 @@ def stack(tiles, labels, pad=8, label_w=34):
 
 def side_by_side(tiles, labels):
     w = sum(t.width for t in tiles) + 10 * (len(tiles) - 1)
-    h = max(t.height for t in tiles) + 26
+    h = max(t.height for t in tiles) + 30
     out = Image.new("L", (w, h), 255)
     pen = ImageDraw.Draw(out)
     tag_font = ImageFont.truetype(str(labels[0][1]), 22)
@@ -79,7 +79,7 @@ def side_by_side(tiles, labels):
     for (tag, _font), tile in zip(labels, tiles):
         box = pen.textbbox((0, 0), tag, font=tag_font)
         pen.text((x + (tile.width - (box[2] - box[0])) // 2, 2), tag, font=tag_font, fill=0)
-        out.paste(tile, (x, 26))
+        out.paste(tile, (x, 30))
         x += tile.width + 10
     return out
 
@@ -92,6 +92,7 @@ def main() -> None:
     ap.add_argument("--label", action="append", default=None)
     ap.add_argument("--crop", default=None, help="字体单位裁切框 x0,y0,x1,y1（给同一个框）")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--stack", action="store_true", help="整字图也竖着排（宽会超 1200 时用）")
     ap.add_argument("--max-width", type=int, default=1200)
     ap.add_argument("--min-ink", type=int, default=400)
     args = ap.parse_args()
@@ -105,11 +106,17 @@ def main() -> None:
         img = stack(tiles, list(zip(labels, args.font)))
     else:
         tiles = [render(f, args.char, args.em) for f in args.font]
-        img = side_by_side(tiles, list(zip(labels, args.font)))
+        want = sum(t.width for t in tiles) + 10 * (len(tiles) - 1)
+        if args.stack or want > args.max_width:
+            img = stack(tiles, list(zip(labels, args.font)))
+        else:
+            img = side_by_side(tiles, list(zip(labels, args.font)))
 
     ink_h = [int((np.asarray(t) < 128).sum(axis=1).nonzero()[0].size) for t in tiles]
     if not args.crop:
         assert min(ink_h) >= args.min_ink, f"墨迹高 {ink_h} 不到 {args.min_ink} px：把 --em 调大"
+    else:
+        assert min(ink_h) >= 60, f"裁切图里墨迹只有 {ink_h} px：把 --em 调大"
     assert img.width <= args.max_width, f"图宽 {img.width} 超过 {args.max_width}"
     args.out.parent.mkdir(parents=True, exist_ok=True)
     img.save(args.out)
