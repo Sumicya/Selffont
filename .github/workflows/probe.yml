@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write      # 只有这一条是为了把 APK 挂到 Release，方便直接下载
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -69,9 +69,28 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "path=$APK" >> "$GITHUB_OUTPUT"
 
+      - name: 字节数与 sha256 打成注解（沙箱取不回日志时靠这条对账）
+        working-directory: lsp
+        run: |
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          BYTES=$(stat -c %s "$APK")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "::notice title=SelfFontProbe::bytes=$BYTES sha256=$SHA"
+
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: SelfFontProbe-dev-1
           path: lsp/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+
+      - name: 挂到 Release（直接可下载的链接）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(find lsp/app/build/outputs/apk -name '*.apk' | head -1)
+          cp "$APK" SelfFontProbe-dev-1.apk
+          gh release view probe-dev-1 >/dev/null 2>&1 || \
+            gh release create probe-dev-1 --title "SelfFontProbe dev-1" \
+              --notes "LSPosed 探针：只读 Typeface.sSystemFontMap 打日志，不做替换。"
+          gh release upload probe-dev-1 SelfFontProbe-dev-1.apk --clobber
