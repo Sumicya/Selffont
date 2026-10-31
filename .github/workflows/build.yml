@@ -18,7 +18,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 120
     permissions:
       contents: read
       actions: read
@@ -38,7 +38,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_NUMBER: ${{ github.run_number }}
-        run: python build.py --query-ci
+        run: |
+          set -o pipefail
+          python build.py --query-ci 2>&1 | tee build.log
+      - name: 失败时上传构建日志
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ github.run_id }}
+          path: build.log
+          retention-days: 2
+          if-no-files-found: ignore
       - name: 确认产物名
         run: |
           zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont-*.zip' -print -quit)")
