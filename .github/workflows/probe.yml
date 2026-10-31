@@ -25,14 +25,26 @@ jobs:
           java-version: '21'
 
       - name: 装编译所需的 SDK 组件
-        # ubuntu-24.04 跑者自带 Android SDK（ANDROID_HOME 已设、sdkmanager 在 PATH），
-        # 不再套第三方 setup 动作：上一版就是它这一步挂的，日志取不回来。
+        # 跑者自带 Android SDK，但 sdkmanager 不一定在 PATH；三种找法都试一遍，
+        # 每一步都打日志（actions 的日志下载在本沙箱取不回，只能靠作业内自报）。
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager --version
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
-          sdkmanager --list_installed | head -20
+          set -x
+          echo "ANDROID_HOME=$ANDROID_HOME ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "${ANDROID_HOME:-/usr/local/lib/android/sdk}" || true
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SM=""
+          for c in "$(command -v sdkmanager || true)" \
+                   "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+                   "$SDK/cmdline-tools/bin/sdkmanager" \
+                   "$SDK/tools/bin/sdkmanager"; do
+            if [ -n "$c" ] && [ -x "$c" ]; then SM="$c"; break; fi
+          done
+          echo "sdkmanager=$SM"
+          if [ -z "$SM" ]; then echo "::error::找不到 sdkmanager"; exit 1; fi
+          "$SM" --version
+          (yes || true) | "$SM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
+          "$SM" --sdk_root="$SDK" --install "platforms;android-36" "build-tools;36.0.0"
+          ls "$SDK/platforms" "$SDK/build-tools"
 
       - name: 准备 Gradle
         uses: gradle/actions/setup-gradle@v4
