@@ -1998,20 +1998,23 @@ def run_checks() -> None:
 
 @check
 def module_hotswap():
-    """热切换脚本：语法过关 + 状态机每条路都在沙箱里走过一遍。
+    """热切换脚本：只做语法与入口接线检查，**不假装验过真机行为**。
 
-    真机上「挂了一半」「摘了别人的挂载」这类错，脚本层面全是可判定的：把 `mount`
-    换成记账的假命令，几秒就能跑完 off→on→partial→off 全部路径（`tools/hotswap_test.py`）。
+    为什么不在仓库里放假 mount 跑状态机：GLOBAL.md「工具准入」第 3 条禁止手写假宿主引擎
+    替身入库。`mount --bind`、`nsenter -t 1 -m`、SELinux 策略、`cmd font` 的返回码，全是
+    真机事实，沙箱里用假命令跑「18 项通过」只能证明我自己的记账代码自洽，不能证明挂载
+    成功——上一轮把它当证据是错的。这里只留能判定的：脚本语法与默认动作的接线。
     """
     scripts = sorted((ROOT / "module").glob("*.sh"))
     assert scripts, "module/ 里没有脚本"
     for script in scripts:
         result = subprocess.run(["sh", "-n", str(script)], capture_output=True, text=True)
         assert result.returncode == 0, f"{script.name} 语法错误：{result.stderr.strip()}"
-    harness = ROOT / "tools" / "hotswap_test.py"
-    assert harness.exists(), "缺少热切换的沙箱验收脚本 tools/hotswap_test.py"
-    result = subprocess.run([sys.executable, str(harness)], capture_output=True, text=True)
-    assert result.returncode == 0, f"热切换验收失败：\n{result.stdout[-800:]}"
+    hotswap = (ROOT / "module/hotswap.sh").read_text(encoding="utf-8")
+    for needed in ("nsenter", "mount --bind", "umount", "sha256sum", "cmd font"):
+        assert needed in hotswap, f"hotswap.sh 少了关键一步：{needed}"
+    action = (ROOT / "module/action.sh").read_text(encoding="utf-8")
+    assert "hotswap.sh" in action, "action.sh 的默认动作没有接到热切换"
 
 
 @check

@@ -40,7 +40,7 @@ BLANK_WIDTH = 250
 # 斜边 cov≈0.2 但后退快。母版 52 个字 104 个侧面最小二乘：侧距 = 24 + 58·cov，
 # 中位误差 5.5 单位、87% 的侧面落在 ±10 内（旧的「平/圆/斜」三档：中位 9.0、77% 在 ±12 内，
 # 且把 `h` 的肩、`C` 的开口、`U` 的竖笔全判错）。学的是母版的**规则**，不是抄某一组字宽。
-BEARING_COV_BASE, BEARING_COV_GAIN = 24, 58
+BEARING_COV_BASE, BEARING_COV_GAIN = 21, 60
 BEARING_COV_TOL = 30      # 「贴着极值」的容差：字体的笔画本身就是整数网格，±30 是半个 x-height 的 6%
 BEARING_MIN, BEARING_MAX = 16, 88
 
@@ -157,9 +157,13 @@ def _coverage(edges, side):
     return sum(1 for v in edge if abs(v - ext) < BEARING_COV_TOL) / len(edge)
 
 
-def _bearing_letter(edges, side):
-    """字母的侧距：`24 + 58·cov`，夹在 [16, 88]。系数在母版 104 个字母侧面上拟合。"""
-    raw = BEARING_COV_BASE + BEARING_COV_GAIN * _coverage(edges, side)
+def _bearing_letter(profile, side):
+    """字母的侧距：`21 + 60·cov`，夹在 [16, 88]。
+
+    系数在母版 104 个字母侧面上按**逐行**覆盖率重拟合（旧常数 24/58 是用 48 条粗带拟的，
+    而那条尺在曲线字上是错的）：中位误差 5.6 → 4.3 单位。
+    """
+    raw = BEARING_COV_BASE + BEARING_COV_GAIN * row_coverage(profile, side)
     return int(min(BEARING_MAX, max(BEARING_MIN, round(raw))))
 
 
@@ -185,15 +189,37 @@ def rings_from_pen(value) -> list:
             cur = (float(args[0][0]), float(args[0][1]))
             ring.append(cur)
         elif op in ("qCurveTo", "curveTo"):
-            pts = [None if p is None else (float(p[0]), float(p[1])) for p in args]
+            pts = [None if q is None else (float(q[0]), float(q[1])) for q in args]
             if op == "qCurveTo":
-                end = pts[-1] if pts[-1] is not None else (start if start is not None else cur)
-                for c in [p for p in pts[:-1] if p is not None]:
-                    for i in range(10):
-                        t = i / 10.0
-                        u = 1 - t
-                        ring.append((u * u * cur[0] + 2 * u * t * c[0] + t * t * end[0],
-                                     u * u * cur[1] + 2 * u * t * c[1] + t * t * end[1]))
+                # TrueType 允许多个连续的 off 控制点：**相邻两个控制点的中点隐含为 on 点**。
+                # 旧实现把每个控制点都当成「从 cur 直接连到 end」的一段，一条光滑弧被拆成
+                # 几段挤在同一对端点之间——`e` `o` `S` 这些曲线字展开出来的是乱环，于是
+                # 「每带最左/最右 x」全错、字偶距的目标白跟着错（母版 35 点的 `e` 有 7 段
+                # 连续 off）。展开器一旦错，量出来的白就不是屏幕上那个白。
+                finish = pts[-1] if pts[-1] is not None else (start if start is not None else cur)
+                seq = [(True, cur)]                       # [(是否 on, 点)]
+                ctrls = [q for q in pts[:-1] if q is not None]
+                for i, c in enumerate(ctrls):
+                    seq.append((False, c))
+                    if i + 1 < len(ctrls):
+                        nxt = ctrls[i + 1]
+                        seq.append((True, ((c[0] + nxt[0]) / 2, (c[1] + nxt[1]) / 2)))
+                seq.append((True, finish))
+                i = 0
+                while i < len(seq) - 1:
+                    (on_a, a), (on_b, b) = seq[i], seq[i + 1]
+                    if on_a and not on_b:
+                        on_c, c = seq[i + 2]
+                        for j in range(1, 11):
+                            t = j / 10.0
+                            u = 1 - t
+                            ring.append((u * u * a[0] + 2 * u * t * b[0] + t * t * c[0],
+                                         u * u * a[1] + 2 * u * t * b[1] + t * t * c[1]))
+                        i += 2
+                    else:
+                        ring.append(b)
+                        i += 1
+                end = finish
             else:
                 c1, c2, end = pts
                 for i in range(12):
@@ -211,8 +237,65 @@ def rings_from_pen(value) -> list:
     return [r for r in rings if len(r) >= 3]
 
 
+
+# ── 逐行墨迹轮廓（1 单位一行）──────────────────────────────────────────────
+# 为什么不用 48 条粗带：带高 27 单位，`t` 的横臂与 `e` 的碗在带内一错，量出来的白能差
+# 40 单位（实测母版 `te`：带法 188、真实 164.7）。字偶距的目标与实现必须用**同一把**、
+# 且这把尺要能看见屏幕上那个白——所以按 1 单位一行取左右缘，曲线先按 10 段展开。
+ROW_LO, ROW_HI = -320, 1010
+
+
+def row_profile(rings):
+    """每个整数 y 一行的 (最左 x, 最右 x)，缺行是 nan。"""
+    import numpy as np
+    n = ROW_HI - ROW_LO + 1
+    left = np.full(n, np.inf)
+    right = np.full(n, -np.inf)
+    for ring in rings:
+        pts = np.asarray(ring, dtype=float)
+        if len(pts) < 3:
+            continue
+        nxt = np.roll(pts, -1, axis=0)
+        for (x0, y0), (x1, y1) in zip(pts, nxt):
+            if y0 == y1:
+                continue
+            lo, hi = (y0, y1) if y0 < y1 else (y1, y0)
+            rows = np.arange(max(ROW_LO, int(np.ceil(lo))), min(ROW_HI, int(np.floor(hi))) + 1)
+            if not len(rows):
+                continue
+            xs = x0 + (rows - y0) * (x1 - x0) / (y1 - y0)
+            idx = (rows - ROW_LO).astype(int)
+            np.minimum.at(left, idx, xs)
+            np.maximum.at(right, idx, xs)
+    left[~np.isfinite(left)] = np.nan
+    right[~np.isfinite(right)] = np.nan
+    return left, right
+
+
+def row_coverage(profile, side: str) -> float:
+    """贴边覆盖率：有墨的行里，有多少比例贴在这一侧极值 `BEARING_COV_TOL` 以内。"""
+    import numpy as np
+    left, right = profile
+    edge = left if side == "left" else right
+    vals = edge[~np.isnan(edge)]
+    if not len(vals):
+        return 0.0
+    ext = vals.min() if side == "left" else vals.max()
+    return float(np.mean(np.abs(vals - ext) < BEARING_COV_TOL))
+
+
+def pair_white(advance: int, a, b) -> float | None:
+    """a 后接 b 的最小墨迹白（两字都有墨的行）。两个 profile 都是行法。"""
+    import numpy as np
+    left_a, right_a = a
+    left_b, _ = b
+    whites = advance + left_b - right_a
+    whites = whites[~np.isnan(whites)]
+    return float(whites.min()) if len(whites) >= 20 else None
+
+
 def outline_edges(glyph):
-    """一个字形**画出来之后**的每带最左/最右 x。
+    """一个字形**画出来之后**的逐行左右缘（1 单位一行）。
 
     不能拿 `rings`（描边出来的理想中线）去量：字形还要过 `curve_fit` 拟合与整数网格，
     拟合完 `o` 的墨宽会比描边时窄 16 单位——拿理想轮廓量字偶距，压下去的是不存在的那点墨。
@@ -221,7 +304,7 @@ def outline_edges(glyph):
 
     pen = RecordingPen()
     glyph.draw(pen, None)
-    return _band_edges({400: rings_from_pen(pen.value)})
+    return row_profile(rings_from_pen(pen.value))
 
 
 def _side_class(edges, side):
@@ -317,15 +400,25 @@ def advance_of(codepoint: int, rings: dict) -> int:
 
 
 
+def _body_profile(rings: dict):
+    """只留字身带（y ∈ [BODY_BAND]）的那些行，其余行变 nan。"""
+    import numpy as np
+    left, right = row_profile(rings[WEIGHT_DEFAULT])
+    rows = np.arange(ROW_LO, ROW_HI + 1)
+    outside = (rows < BODY_BAND[0]) | (rows > BODY_BAND[1])
+    left = left.copy(); right = right.copy()
+    left[outside] = np.nan; right[outside] = np.nan
+    return left, right
+
+
 def _body_ink(rings: dict, side: str, fallback: float) -> float:
     """字身带内这一侧最外的那条墨（没有就退回整字的边）。"""
-    edges = _band_edges(rings)
-    if edges is None:
+    import numpy as np
+    edge = _body_profile(rings)[0 if side == "left" else 1]
+    vals = edge[~np.isnan(edge)]
+    if not len(vals):
         return fallback
-    vals = [v for v in _body_edges(edges)[0 if side == "left" else 1] if v is not None]
-    if not vals:
-        return fallback
-    return min(vals) if side == "left" else max(vals)
+    return float(vals.min()) if side == "left" else float(vals.max())
 
 
 def sides_of(rings: dict, codepoint: int | None = None) -> tuple[int, int]:
@@ -338,7 +431,7 @@ def sides_of(rings: dict, codepoint: int | None = None) -> tuple[int, int]:
     if edges is None:
         return 0, 0
     if codepoint is not None and _is_letter(codepoint):
-        body = _body_edges(edges)
+        body = _body_profile(rings)
         return _bearing_letter(body, "left"), _bearing_letter(body, "right")
     return _bearing(_side_class(edges, "left")), _bearing(_side_class(edges, "right"))
 
@@ -355,8 +448,9 @@ def sides_of(rings: dict, codepoint: int | None = None) -> tuple[int, int]:
 # 抄母版表里的 −180 只会既不够也不对。
 KERN_LOW, KERN_HIGH = 0x20, 0x7E     # 只给 ASCII 可打印区做字偶距
 KERN_NONE = -32768
-KERN_MIN = 12                        # 小于 1.2% em 的差不写：肉眼不到 1.5 px（140 px 字号），
-                                     # 写了只会让 GPOS 变成「每对都调」的噪声表
+KERN_MIN = 5                         # 小于 5 单位的差不写（0.5% em，16 px 下 0.08 px）。
+                                     # 原来是 12：`te` 差 9 单位就落在门槛里没写，
+                                     # 于是「te 太宽」在字对层面没被修（2026-10-31 实测）。
 KERN_FLOOR, KERN_CEIL = -320, 60     # 挡掉母版里几个坏对的离谱值（`W` + `` ` `` 是 −529）
 
 _KERN_GRID: list | None = None
@@ -389,22 +483,23 @@ def kern_target(a: int, b: int) -> int | None:
 
 
 def kern_features(profiles: dict) -> str:
-    """`profiles`: {码位: (字宽, 每带最左 x, 每带最右 x)}（轮廓已平移到侧距上）。
+    """`profiles`: {码位: (字宽, 逐行最左 x, 逐行最右 x)}（轮廓已平移到侧距上）。
 
-    逐对反解：目标白 − 本字最小白 = 该给的 `pos`。只在两字**都有墨**的带上量，
-    少于 6 条带的组合不量（.notdef 与空白之外，正常字形不会这么少）。
+    逐对反解：目标白 − 本字最小白 = 该给的 `pos`。两边的白都由 `row_profile`（1 单位一行）
+    量，与 `tools/kern_measure.py` 同一把尺；少于 20 行共同墨的组合不量。
     """
+    import numpy as np
     rules = []
     for a, (adv, _, right) in profiles.items():
         for b, (_, left, _) in profiles.items():
             target = kern_target(a, b)
             if target is None:
                 continue
-            whites = [adv + left[k] - right[k] for k in range(len(left))
-                      if left[k] is not None and right[k] is not None]
-            if len(whites) < 6:
+            whites = adv + left - right
+            whites = whites[~np.isnan(whites)]
+            if len(whites) < 20:
                 continue
-            value = int(min(KERN_CEIL, max(KERN_FLOOR, target - int(round(min(whites))))))
+            value = int(min(KERN_CEIL, max(KERN_FLOOR, target - int(round(float(whites.min()))))))
             if abs(value) < KERN_MIN:
                 continue
             rules.append(f"    pos uni{a:04X} uni{b:04X} {value};")

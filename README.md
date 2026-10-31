@@ -55,29 +55,60 @@ su -c reboot                                            # 或手动重启
 
 ### 热切换（不重启）
 
-模块平时靠 KernelSU 的 magic mount **开机时**把字件叠上去，改一次要重启一次；系统设置里换字体是**立刻生效**的。
-`hotswap.sh` 把这一步搬到运行时，机制与 magic mount 同构（2026-10-31）：
+**要解决的问题**：模块平时靠 KernelSU 的 magic mount 在**开机时**把字件叠到只读分区上，
+改一次字体就要重启一次；系统设置里换字体是当场生效的。`hotswap.sh` 把「叠上去」搬到运行时。
+
+**原理，四步**：
+
+1. **bind mount 不是复制**。`mount --bind 模块里的字件 系统里的同名路径` 只改**挂载表**里的一行：
+   这个路径从此指向模块那份文件，`/system` 一个字节都不写。只读分区照样能挂，因为改的是 VFS 的
+   dentry 指向，不是磁盘。
+2. **必须进 init 的挂载命名空间**。挂载表是**每个命名空间一份**；我们在自己的 shell 里挂，
+   只有这个 shell 看得见，zygote 起的应用看不见。Android 的 init 是 PID 1，`nsenter -t 1 -m`
+   就是用 `setns(2)` 进它的挂载命名空间——这一步不做，现象就是「命令查着换了、屏幕没变」。
+3. **记账与反序摘**。挂一个记一个（`/data/adb/selffont-hotswap.state`），`off` 时反序 `umount`，
+   而且**只摘账上的路径**：开机 magic mount 的挂载不在账上，一行不碰。挂到第 3 个失败就停成
+   `partial`，这时再点一次是补齐，点 `off` 是摘干净——三态（`on`/`off`/`partial`）不是装饰，
+   是为了「半路失败还能回到已知状态」。
+4. **让读字体的人重读**。文件换了不代表屏幕变了：Typeface 在进程内缓存，FontManagerService 也有
+   自己的缓存。三级手段：`cmd font update`（Android 12+ 的框架接口，返回 0 只代表请求被受理）
+   → 软重启 `system_server`（约 15–20 秒，不是整机重启，挂载都还在）→ `--reload=app`（只影响新进程）。
+
+**命令与用法**（`su -c` 里跑；管理器里点模块的「操作」按钮等于第一条）：
 
 ```sh
-su -c 'sh /data/adb/modules/MFGA/action.sh'            # 管理器「操作」按钮 = 切换（on ⇄ off）
-su -c 'sh /data/adb/modules/MFGA/action.sh status'     # on / off / partial
-su -c 'sh /data/adb/modules/MFGA/action.sh verify'     # 逐文件 sha256：系统里看到的就是模块里这份
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh off --reload=none'   # 只摘挂载，不惊动任何进程
+su -c 'sh /data/adb/modules/MFGA/action.sh'                  # 切换：off→on / on→off，打印新状态
+su -c 'sh /data/adb/modules/MFGA/action.sh status'           # 只打印 on / off / partial
+su -c 'sh /data/adb/modules/MFGA/action.sh verify'           # 逐文件 sha256 对比，返回 0=一致
+su -c 'sh /data/adb/modules/MFGA/action.sh web'              # 老功能：网页自带字体 压/放行
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh on --reload=none' # 只挂，不惊动任何进程
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh off --dry-run'   # 只打印将执行的命令，不改系统
 ```
 
-做三件事：① 把模块 `system/` 下每个文件逐个 `mount --bind` 到系统同名路径，**进 init 的挂载命名空间**
-（`nsenter -t 1 -m`；不进的话只有 shell 自己看得见，应用看不到）；② 让读字体的人重读：有
-`cmd font`（Android 12+ FontManagerService）就交给它，没有就**软重启 system_server**（约 15–20 秒，不是整机重启），
-也可以用 `--reload=app` 只让新进程生效；③ 每一步记账（`/data/adb/selffont-hotswap.state`），`off` 按账**反序**摘，
-半路失败留下 `partial` 也能摘干净，且只摘自己挂的那些（开机 magic mount 的不动）。
+每条命令的输出是什么、怎么判读：
 
-两个已知边界，写在这里而不是等你去撞：**已开的程序**不会自己重画（Typeface 是进程内缓存），
-`--reload=system` 之外都要重开那个程序；**重启后** magic mount 会按模块状态重新叠上，
-`off` 只是这一次运行时摘掉，要长期关闭请停用模块。
+| 命令 | 正常输出 | 不对时看什么 |
+| --- | --- | --- |
+| `action.sh` | `挂上 N 个文件` + `现在状态 on` | 报 `部分失败：a 挂上、b 没挂上` 时状态是 `partial`，再跑一次 `action.sh` 补齐 |
+| `action.sh status` | `on` / `off` / `partial` | `partial` = 账上有、`/proc/mounts` 里不够数，跑 `action.sh` 补齐或 `hotswap.sh off` 摘干净 |
+| `action.sh verify` | `verify：一致 N，不一致 0`，退出码 0 | 退出码 1 且列 `不一致：路径` = 系统里那份不是模块这份 |
+| `hotswap.sh on --reload=none` | `挂上 N 个文件`，不重启任何进程 | 新开的程序能看到新字体，已开的看不到（预期） |
 
-沙箱里能验的部分全验了：`tools/hotswap_test.py` 用记账的假 `mount`/`umount` 跑完
-off → on → 幂等 → verify → partial → off 全部分支（18 项），并接进 `build.py --check`（`module_hotswap`）。
-**真机上没有验过**（这台沙箱没有 Android），按项目规矩记在「未验证项」里。
+**边界**（写在这里，不等到你撞上）：已开的程序不会自己重画（Typeface 是进程内缓存），
+除 `--reload=system` 外都要重开那个程序；`off` 只摘这一次运行时的挂载，**重启后** magic mount
+按模块状态重新叠上，要长期关闭请停用模块。
+
+**没验的部分照实说**：`mount --bind`、`nsenter`、SELinux 是否放行、`cmd font update` 是否真把新
+Typeface 推给应用、软重启后是否全局重读——这四件都是真机事实，沙箱里没有 Android，**一次都没跑过**，
+记在「未验证项」里。仓库里也不放「假 mount 跑状态机」那种自嗨测试：GLOBAL.md 工具准入禁止假宿主替身，
+它只能证明我的记账代码自洽，不能证明挂载成功。真机验收跑下面四条，四条都对才算过：
+
+```sh
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh on'
+su -c 'grep -c MFGA /proc/mounts'                  # 应等于模块 system/ 下的文件数
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh verify'  # 退出码 0
+su -c 'sh /data/adb/modules/MFGA/hotswap.sh off' && su -c 'sh /data/adb/modules/MFGA/hotswap.sh status'   # 应打印 off
+```
 
 ### 火狐
 
@@ -289,26 +320,31 @@ Light / Regular / Medium），作为独立 `<family>` 排在主字体之前。
 
 ### 还剩多少（2026-10-31 量，不挑好看的报）
 
-- **字母的前进量仍差 1–47 单位**：中位 1、最大 `Q` 47（`732 / 779`）、`o` 31、`S` 31——
-  字母字宽是自算的（墨宽 + 侧距），本字的墨宽与母版本来就不等，所以差距落在字宽上，靠
-  字偶距补的是**字对之间**的白，不是单字字宽。
-- **小圆点的半径偏小**：母版 `i` 的点半径 46、`.` 的 55.5，本版数据里这两处半宽是 30.5 / 31
-  （`：` `!` 是对的，55.3）。这是**数据侧**的量测问题（独立字点的半径被按笔画半宽记了），
-  修法是从母版的这些字点重取半宽，不是改画法——本轮没动，下一轮先修它。
-- **`A` 的尖、`V` 的起点、`4` 的高度**：`A y −16..673`（母版 `0..700`）、`V y 29..709`
-  （母版 `−1..700`）、`4 y −4..666`（母版 `0..704`）——字形自己画的，顶部/底部差 16–38
-  单位，属于取笔与字面校准，不是间距。
-- **空格 250 vs 母版 280**（四分之一 em 是 2026-10-28 定的规则，不是量错）：`j j j` 整串
-  宽 1196 vs 1265 就是这个差，词距差 0.03 em，16 px 下约半个像素。
-- **汉字**：30,519 个汉字本轮**逐字节未变**（逐字哈希对比：变化 360 字、汉字 0；重取的只是
-  360 个被 BOX 裁掉的非汉字），
-  所以它们的差距与上一版相同：点数仍是母版的 1.4–1.6 倍、字腔少数 1–2 个（`僚`/`詹`），
-  详见 2026-10-29 那批图。下一轮做汉字的三件事：曲线点数压到母版量级、字腔补齐、
-  点半径与笔宽剖面重取。
+每一条都写「怎么量的」，不只写结论。
+
+- **拉丁字对：已对上**。同一把独立尺（FreeType 逐行出像素 + HarfBuzz 真排，不用构建期代码）
+  量 ASCII 可打印区全部 **8,347 对**：Δ白（母版 vs 本版的最小墨迹白）中位 **1.3** 单位、
+  p90 **3.3**、≤5 单位 **97.4%**、≤10 单位 **99.8%**；`te` 164.5/164.5、`Ay` 55.5/54、
+  `HH` 168/168、`oo` 94/94.5。剩下 17 对超 10 的（`~a` 408/226、`%+` 329/464、`FJ` −32/101）
+  是母版自身就极端的组合（负白、被压到撞墨），GPOS 的 −320 下限与目标口径咬不上，未修。
+- **单字侧距**：52 个字母的 lsb/rsb 与母版差中位 **5 单位**（最大 `S` 22、`Y` 14）；
+  前进量差中位 **10.5 单位**（最大 `S` 40）。字母宽度是自算的（墨宽 + 侧距），没照搬母版。
+- **汉字：IoU 中位 0.925，限制项不是形状而是 2–10 单位的边缘位移**。22 个字（暖日口暑電聞回目鸞麠疊鬢僚嫓冇勢中西田自棘荆）
+  用 FreeType 200 px 同基线比：IoU 中位 **0.925**、最差 `鸞` 0.841；墨量比中位 **0.984**；
+  孔数比母版少 **3** 个（`僚` `嫓` `鬱` 各 1）。逐行量「墨心水平位移」：中位 **3.1** 单位、p90 **10.7** 单位——
+  差异全是横画上下沿 1–4 px 的条带，不是缺笔。
+- **汉字点数仍是母版的 1.49 倍**（`鸞` 667/391、`龘` 950/540）：这是上面那条边缘位移的直接来源，
+  也是「不如母版」最可量的一面。下一轮按字复杂度分档收紧拟合容差，并以「边缘位移中位 ≤2 单位」
+  为验收，不以点数为唯一目标。
+- **`A` 尖 `y −16..673`（母 0..700）、`V` 起点 `29..709`（母 −1..700）、`4` 高 `−4..666`（母 0..704）**：
+  取笔与字面校准的差，不是间距。
+- **空格 250 vs 母版 280**：四分之一 em 是 2026-10-28 定的规则，不是量错。
+- **热切换**：逻辑与语法可验，真机四件（`nsenter` 的 SELinux 策略、`mount --bind` 到只读分区、
+  `cmd font update` 是否真推新 Typeface、软重启后是否全局重读）一次未跑。
 
 ### 未验证项的真机清单
 
-**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见「火狐」一节「泛型与家族名的坑」）。**2026-10-07 装机核对（配置层已核对，渲染层未验证）**（同一台设备）：装「清掉 MiSans 引用（10-06）+ 卡开机修复 + 语言区改法 + 五个命名族恢复本来字体（10-07）」之后的构建，**正常开机、不再重启循环**，三条自查 **8 / 0 / 3** —— `grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」逐项吻合）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。**这三条只覆盖配置层**：证明设备上那份配置的内容符合构建预期、模块挂上了；**渲染层没有任何证据**——字形是否变圆、角标数字是否被切、等宽是否回到 Droid Sans Mono，都不在这三条命令的射程里，需要设备截图，取证命令与存放位置见 `docs/evidence/`。**仍无真机数据**：⓪ **热切换（`action.sh` / `hotswap.sh`）在真机上一次都没跑过**——沙箱里只验了记账逻辑（假 `mount`，18 项），`nsenter -t 1 -m` 被 SELinux 允许、`cmd font update` 在本机可用、软重启 system_server 后 Typeface 真的重读，这三件都等真机；① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 三项只影响观感、不影响开机的观察——生僻字是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）、终端 / 代码类 App 的等宽字体是否回到 Droid Sans Mono（不该是圆体）、WebView 的 `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps`；③ artifact「包直出」格式实测用的是哪个包未记录（`.102` 旧格式解一层、`.103` 起直接刷，两者字体配置相同）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
+**已真机验证**（2026-10-05，一加 / ColorOS 16 / Android 16 / KernelSU）：① 系统字体生效——三份配置（`/system/etc/font_fallback.xml`、`/system_ext/etc/fonts_base.xml`、`/system_ext/etc/fonts_ule.xml`）替换后字形变圆，模块版本 `26.10.5.23.86`；② 火狐网页字体开关（运行时「操作」按钮 / `web-fonts.sh keep|block|toggle`）切换生效；③ 别名字件已实测**无效**并删除（见「火狐」一节「泛型与家族名的坑」）。**2026-10-07 装机核对（配置层已核对，渲染层未验证）**（同一台设备）：装「清掉 MiSans 引用（10-06）+ 卡开机修复 + 语言区改法 + 五个命名族恢复本来字体（10-07）」之后的构建，**正常开机、不再重启循环**，三条自查 **8 / 0 / 3** —— `grep -c Selffont /system_ext/etc/fonts_base.xml` = **8**（与构建期「主字体被 8 族引用：匿名回退区 + `serif` + CJK 语言区」逐项吻合）、`grep -ci misans` = **0**、`grep -aic mfga /proc/mounts` = **3**（模块已挂载）。**这三条只覆盖配置层**：证明设备上那份配置的内容符合构建预期、模块挂上了；**渲染层没有任何证据**——字形是否变圆、角标数字是否被切、等宽是否回到 Droid Sans Mono，都不在这三条命令的射程里，需要设备截图，取证命令与存放位置见 `docs/evidence/`。**仍无真机数据**：⓪ **热切换（`action.sh` / `hotswap.sh`）在真机上一次都没跑过**——没有可用的沙箱替身（GLOBAL.md 禁止假宿主引擎），`nsenter -t 1 -m` 是否被 SELinux 放行、`cmd font update` 是否真推新 Typeface、软重启 system_server 后是否全局重读，三件都等真机；① 纯 AOSP（非 ColorOS）机器上的 `font_fallback.xml` 路径；② 三项只影响观感、不影响开机的观察——生僻字是否仍渲染成圆体（清掉 MiSans 后这些字改由补充字库接管）、终端 / 代码类 App 的等宽字体是否回到 Droid Sans Mono（不该是圆体）、WebView 的 `font-variant: small-caps` 会不会去查 `sans-serif-smallcaps`；③ artifact「包直出」格式实测用的是哪个包未记录（`.102` 旧格式解一层、`.103` 起直接刷，两者字体配置相同）。装上一分钟后按顺序看三条，任一条不对就按对应的回退走：
 
 1. 基础项：系统字体变圆、角标数字正常 → 模块本身生效（ColorOS 上已通过；纯 AOSP `font_fallback.xml` 路径尚未在非 ColorOS 机器上验证）。
 2. 火狐接入：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'` 出现 `Adding debug configuration from:` 与 `Adding prefs from debug config` 两行。
@@ -318,6 +354,12 @@ Light / Regular / Medium），作为独立 `<family>` 排在主字体之前。
 
 ## 许可证
 
-主字体 Maruko Gothic 与模块基础包内各补充字库均为 OFL 或等效可自由分发许可，逐项来源、许可证与保留名处理见 [`LICENSES.md`](LICENSES.md)；本仓库自身代码未单独声明许可证。
+按目录分工，两条许可各自只覆盖自己的部分：
+
+- **字体与字形源文件**（`tools/design_cjk.bin`、构建出的 `SelfroundsCJK-VF.ttf` 与三个静态实例、模块内随包的字体）——SIL OFL 1.1，全文见 [`OFL.txt`](OFL.txt)。二创字库的笔画中线由 Maruko Gothic（SIL OFL 1.1）量出，属 OFL 意义上的修改作品，改名 `Selfrounds CJK`、不使用保留名。
+- **构建脚本与生成器**（`build.py`、`tools/*.py`、`module/*.sh`、`.github/`）——GPL-3.0，全文见 [`LICENSE`](LICENSE)。
+- 模块里随包的**第三方补充字库**沿用各自原许可，逐项来源与保留名处理见 [`LICENSES.md`](LICENSES.md)。
+
+不对同一份字体做 GPL-3 与 OFL 双许可（OFL 条件 5 要求字体整体只按该许可分发）。
 
 遵循 [Sumicya/selfs](https://github.com/Sumicya/selfs) 最新 GLOBAL.md。

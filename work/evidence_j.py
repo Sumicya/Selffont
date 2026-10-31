@@ -27,7 +27,7 @@ def metrics(path: Path, ch: str) -> tuple[int, int, int, int, int, int]:
 
 
 def main() -> None:
-    rows = [("母版（对照）", MASTER), ("上一版", PRE), ("本版", POST)]
+    rows = [("母版（对照）", MASTER), ("本版", POST)]
     texts = ["j j j", "ja ju", "gjpqy"]
     label = ImageFont.truetype(str(POST), 30)
     note = ImageFont.truetype(str(POST), 24)

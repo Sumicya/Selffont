@@ -342,9 +342,13 @@ def rewrite_half_widths(measured: dict[int, list[float]], path: Path | None = No
             pos += 3
             field = pos
             hws = struct.unpack_from("<" + "H" * nweight, raw, field)
-            pos += 2 * nweight + 4 + 12 * nseg
+            # 布局必须与 `_load5` 逐字节一致：hw → start(4) → 剖面长度(2) → 剖面 → 段。
+            # 上一版这里把段写在剖面之前（`2*nweight + 4 + 12*nseg` 再读剖面），SFCJ5 一有
+            # 剖面就会越界——2026-10-31 重测字点半径时直接 struct.error 崩在读长度那一步。
+            pos += 2 * nweight + 4
             if has_profile:
                 pos += 2 + struct.unpack_from("<H", raw, pos)[0]
+            pos += 12 * nseg
             if not wanted or index >= len(wanted) or wanted[index] is None:
                 continue
             old = hws[at400] / 100.0

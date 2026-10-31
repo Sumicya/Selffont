@@ -51,7 +51,7 @@ class Line:
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    rows = [("母版（对照）", MASTER), ("上一版", PRE), ("本版", POST)]
+    rows = [("母版（对照）", MASTER), ("本版", POST)]
     texts = ["[4+3]", "{Q}", "a—b", "(x)!?", "#5%&"]
     size, pad, gap, col = 120, 30, 44, 280
     label = ImageFont.truetype(str(POST), 28)

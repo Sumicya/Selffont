@@ -38,7 +38,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from cjk_vf import BAND_Y, _band_edges, rings_from_pen  # noqa: E402  同一个尺、同一个展开器
+from cjk_vf import rings_from_pen, row_profile  # noqa: E402  同一把尺（1 单位一行）、同一个展开器
 
 LOW, HIGH = 0x20, 0x7E
 NONE = -32768
@@ -75,12 +75,9 @@ def measure(master: Path) -> np.ndarray:
         name = cmap.get(cp)
         if name is None:
             continue
-        edges = _band_edges({400: _rings(glyphset, name)})
-        if edges is not None:
-            profiles[cp] = edges
+        profiles[cp] = row_profile(_rings(glyphset, name))
 
     grid = np.full((HIGH - LOW + 1,) * 2, NONE, np.int16)
-    bands = len(next(iter(profiles.values()))[0])
     for a in range(LOW, HIGH + 1):
         for b in range(LOW, HIGH + 1):
             if a not in profiles or b not in profiles:
@@ -94,10 +91,10 @@ def measure(master: Path) -> np.ndarray:
             pen = buf.glyph_positions[1].x_offset + buf.glyph_positions[0].x_advance
             _, right = profiles[a]
             left, _ = profiles[b]
-            whites = [pen + left[k] - right[k] for k in range(bands)
-                      if left[k] is not None and right[k] is not None]
-            if whites and min(whites) > IMPLAUSIBLE_LOW:
-                grid[a - LOW, b - LOW] = int(round(min(whites)))
+            whites = pen + left - right
+            whites = whites[~np.isnan(whites)]
+            if len(whites) >= 20 and whites.min() > IMPLAUSIBLE_LOW:
+                grid[a - LOW, b - LOW] = int(round(float(whites.min())))
     return grid
 
 
@@ -115,7 +112,7 @@ def main() -> int:
     known = int((grid != NONE).sum())
     print(f"{args.out}  {len(MAGIC) + len(data):,} B  有数据的对 {known:,} / {grid.size:,}")
     print(f"  白 区间 {grid[grid != NONE].min()} .. {grid[grid != NONE].max()}"
-          f"   网格 y={BAND_Y}")
+          "   网格：1 单位一行（逐行左右缘）")
     return 0
 
 
