@@ -2047,6 +2047,44 @@ def run_checks() -> None:
 
 
 @check
+def passthrough_font():
+    """母版直通：CJK 字件必须是母版的**同一串字节**，一个轮廓点都不许动。
+
+    直通包是用来量基准的：五条判据对着它比，任何改动都跟它差多少一目了然。所以这里
+    断言三件事——包里的字件 sha256 等于源文件、配置引用的文件名是它自己的名字、
+    配置里的族名是母版内部族名（静态字体写 weight，不写 supportedAxes）。
+    """
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = Path(tmp_name)
+        base = tmp / "base.zip"
+        base_zip(base, {"Roboto-Regular.ttf": make_carrier()})
+        regular = tmp / "P-Regular.ttf"
+        regular.write_bytes(make_font())
+        mother = tmp / "MarukoGothicCJKsc-Regular.ttf"
+        mother.write_bytes(make_font(family="Maruko Gothic", axes=False))
+        output = tmp / "out" / "Selffont.zip"
+        build(base=str(base), font=str(regular), output=output, build_num="9", day="2",
+              date="26.9.30", cjk=False, supplemental_font_sources=(),
+              passthrough_mother=str(mother))
+        with zipfile.ZipFile(output) as archive:
+            member = f"system/fonts/{mother.name}"
+            assert member in archive.namelist(), sorted(archive.namelist())
+            assert hashlib.sha256(archive.read(member)).hexdigest() == digest(mother), \
+                "直通包里的母版被改了字节（只许原样挂载）"
+            xml = archive.read("font_fallback.xml").decode()
+            root = ET.fromstring(xml)
+            own = [f for f in root.iter("family")
+                   if any((n.text or "").strip() == mother.name for n in f.findall("font"))]
+            assert own, "配置里没有引用直通字件"
+            node = own[0].find("font")
+            assert node.get("weight") == "400" and node.get("supportedAxes") is None, \
+                "静态母版不许写成 supportedAxes（那是可变字件的写法）"
+            assert own[0].get("name") and "Maruko" in own[0].get("name"), own[0].get("name")
+            assert archive.read("fonts-insert.xml").decode().count(mother.name) >= 1, \
+                "Skia 那份插入行里也得有直通字件"
+
+
+@check
 def module_hotswap():
     """运行期换字体：本机四条路全部判死（真机证据），脚本只许剩下「报告」与「清场」。
 
