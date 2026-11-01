@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 /build/
+# 构建产物与一次性脚本的工作目录（字体二进制已单独忽略）
+/work/
 # 字体二进制不入 Git:主字体和基础包由 build.py 下载或 --font/--base 提供。
 *.ttf
 *.otf

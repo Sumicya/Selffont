@@ -1,0 +1,47 @@
+# PR 校验工作流：只跑自检，不取号、不出包、不上传产物。
+name: PR check
+
+on:
+  pull_request:
+
+env:
+  SEGMENTS: '5'
+  CLEANUP_APPLY: 'true'
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 准备 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: 安装字体工具
+        run: python -m pip install -r requirements.txt
+      - name: 内建自检
+        run: python build.py --check
+
+  cleanup-artifacts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: selffont-cleanup
+      cancel-in-progress: false
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 清理超限产物与运行记录
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          CLEANUP_SCOPE: actions
+        run: python3 .github/scripts/cleanup.py

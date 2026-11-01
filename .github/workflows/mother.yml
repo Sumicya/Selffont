@@ -1,0 +1,141 @@
+# 母版直通包：把 Maruko Gothic 原始字节装进 Magisk 模块，只做挂载与配置，不改任何轮廓。
+# 用途只有一个——给判据当基准：刷它，看到的汉字就是母版本身。
+# 只上传 Actions artifact，不发 Release、不打 tag、不改 latest：出包是内部动作，对外发布要人点头。
+#
+# 触发：推一个 `mother-*` tag。带 actions:write 才能用 workflow_dispatch 手动触发，
+# 这个仓的自动化令牌没有；推 tag 只要 contents:write，本仓有。
+name: Mother
+
+on:
+  push:
+    branches: ['**']
+    paths: ['.github/workflows/mother.yml']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '母版提交（maruko-gothic）'
+        type: string
+        default: '97e9dd4'
+      day:
+        description: '当日序号（版本号第三段）'
+        type: string
+        default: '1'
+
+env:
+  # 与 docs/metrics.md、README 钉的是同一份：CJK SC 的 Regular，20,084,736 B。
+  MOTHER_SHA256: 'e3709389bce13fa75af28cc2370b6175520d97f74dfbf3894ca24838f47241b7'
+  MOTHER_NAME: 'MarukoGothicCJKsc-Regular.ttf'
+  MOTHER_REF: ${{ inputs.ref || '97e9dd4' }}
+  MOTHER_DAY: ${{ inputs.day || '1' }}
+
+jobs:
+  mother:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read         # 只出 artifact，不发 Release、不打 tag、不改 latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 准备 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: 恢复 pip 缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-
+      - name: 恢复字体缓存
+        uses: actions/cache@v4
+        with:
+          path: build/cache
+          key: fonts-v1-${{ runner.os }}
+          restore-keys: fonts-v1-
+      - name: 安装字体工具
+        run: python -m pip install -r requirements.txt
+      - name: 取自母版原始字节
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          gh api "repos/max32002/maruko-gothic/contents/CJK%20SC/${MOTHER_NAME}?ref=${MOTHER_REF}" \
+            -H "Accept: application/vnd.github.raw" > "work/${MOTHER_NAME}"
+          size=$(stat -c%s "work/${MOTHER_NAME}")
+          sum=$(sha256sum "work/${MOTHER_NAME}" | cut -d' ' -f1)
+          echo "尺寸 $size B  sha256 $sum"
+          [ "$sum" = "$MOTHER_SHA256" ] || {
+            echo "母版字节与钉子不符：母版可能已换包，先核对再出包。" >&2
+            exit 1
+          }
+      - name: 内建自检
+        run: python build.py --check
+      - name: 出包（母版直通）
+        run: |
+          set -euo pipefail
+          date=$(TZ=Asia/Shanghai date +%y.%-m.%-d)
+          # 总序号从 90 万起：KernelSU 按 versionCode 比新旧，直通包要排在发行件之上，
+          # 否则刷完想换回发行件时管理器会当成「降级」。
+          build=$((900000 + ${{ github.run_number }}))
+          name="Selffont-mother-${MOTHER_REF}-${{ github.run_number }}"
+          python build.py --passthrough-mother "work/${MOTHER_NAME}" \
+            --date "$date" --day "$MOTHER_DAY" --build "$build" \
+            --output "build/${name}.zip"
+          echo "NAME=${name}" >> "$GITHUB_ENV"
+          echo "DATE=${date}" >> "$GITHUB_ENV"
+          echo "BUILD=${build}" >> "$GITHUB_ENV"
+      - name: 解包验收
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee build/verify.md
+          import hashlib, os, re, zipfile
+
+          name = os.environ["NAME"]
+          mother = os.environ["MOTHER_NAME"]
+          path = f"build/{name}.zip"
+          raw = open(path, "rb").read()
+          with zipfile.ZipFile(path) as z:
+              names = set(z.namelist())
+              prop = z.read("module.prop").decode()
+              cjk = z.read(f"system/fonts/{mother}")
+              fallback = z.read("font_fallback.xml").decode()
+              insert = z.read("fonts-insert.xml").decode()
+              fonts = sorted(n for n in names if n.startswith("system/fonts/"))
+
+          fields = dict(line.split("=", 1) for line in prop.splitlines() if "=" in line)
+          cjk_sum = hashlib.sha256(cjk).hexdigest()
+          want = os.environ["MOTHER_SHA256"]
+          assert cjk_sum == want, f"包内汉字字件不是母版原字节：{cjk_sum}"
+          assert len(cjk) == 20084736, len(cjk)
+          assert fallback.count(f">{mother}<") >= 1, "font_fallback.xml 没引用母版字件"
+          family = re.search(r"<family name=\"([^\"]+)\"[^>]*>\s*<font[^>]*>%s<" % re.escape(mother), fallback)
+
+          lines = [
+              "| 项 | 值 |", "| --- | --- |",
+              f"| 包 | `{name}.zip` |",
+              f"| 包 sha256 | `{hashlib.sha256(raw).hexdigest()}` |",
+              f"| 包大小 | {len(raw):,} B |",
+              f"| 版本 | `{fields.get('version')}`（versionCode {fields.get('versionCode')}） |",
+              f"| 模块名 | {fields.get('name')} |",
+              f"| 说明 | {fields.get('description')} |",
+              f"| 汉字字件 | `{mother}` {len(cjk):,} B sha256 `{cjk_sum}` |",
+              f"| 与母版原字节一致 | {'是' if cjk_sum == want else '否'} |",
+              f"| font_fallback.xml 引用 | {fallback.count(f'>{mother}<')} 处"
+              + (f"，族名 `{family.group(1)}`" if family else "") + " |",
+              f"| fonts-insert.xml | {sum(1 for l in insert.splitlines() if '<font' in l)} 行 |",
+              f"| 包内 /system/fonts 字件 | {len(fonts)} 个 |",
+          ]
+          print("\n".join(lines))
+          PY
+          cp build/verify.md "$GITHUB_STEP_SUMMARY"
+      - name: 存档产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: |
+            build/${{ env.NAME }}.zip
+            build/verify.md
+          retention-days: 30
+          if-no-files-found: error

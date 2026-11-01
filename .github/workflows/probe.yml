@@ -1,0 +1,96 @@
+# 探针工作流（B 线）：只编 lsp/ 这个独立 Gradle 工程，不跑字体构建的任何脚本。
+name: Probe
+
+on:
+  push:
+    paths:
+      - 'lsp/**'
+      - '.github/workflows/probe.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write      # 只有这一条是为了把 APK 挂到 Release，方便直接下载
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 准备 JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 装编译所需的 SDK 组件
+        # 跑者自带 Android SDK，但 sdkmanager 不一定在 PATH；三种找法都试一遍，
+        # 每一步都打日志（actions 的日志下载在本沙箱取不回，只能靠作业内自报）。
+        run: |
+          set -x
+          echo "ANDROID_HOME=$ANDROID_HOME ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "${ANDROID_HOME:-/usr/local/lib/android/sdk}" || true
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SM=""
+          for c in "$(command -v sdkmanager || true)" \
+                   "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+                   "$SDK/cmdline-tools/bin/sdkmanager" \
+                   "$SDK/tools/bin/sdkmanager"; do
+            if [ -n "$c" ] && [ -x "$c" ]; then SM="$c"; break; fi
+          done
+          echo "sdkmanager=$SM"
+          if [ -z "$SM" ]; then echo "::error::找不到 sdkmanager"; exit 1; fi
+          "$SM" --version
+          (yes || true) | "$SM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
+          "$SM" --sdk_root="$SDK" --install "platforms;android-36" "build-tools;36.0.0"
+          ls "$SDK/platforms" "$SDK/build-tools"
+
+      - name: 准备 Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: 编 APK（debug 签名，可直接装）
+        working-directory: lsp
+        run: gradle --no-daemon assembleDebug
+
+      - name: 报字节数与 sha256（验收用，原样进日志）
+        id: sums
+        working-directory: lsp
+        run: |
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          BYTES=$(stat -c %s "$APK")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "APK=$APK"
+          echo "字节数=$BYTES"
+          echo "sha256=$SHA"
+          echo "bytes=$BYTES" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: 字节数与 sha256 打成注解（沙箱取不回日志时靠这条对账）
+        working-directory: lsp
+        run: |
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          BYTES=$(stat -c %s "$APK")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "::notice title=SelfFontProbe::bytes=$BYTES sha256=$SHA"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: SelfFontProbe-dev-1
+          path: lsp/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+      - name: 挂到 Release（直接可下载的链接）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(find lsp/app/build/outputs/apk -name '*.apk' | head -1)
+          cp "$APK" SelfFontProbe-dev-1.apk
+          gh release view probe-dev-1 >/dev/null 2>&1 || \
+            gh release create probe-dev-1 --title "SelfFontProbe dev-1" \
+              --notes "LSPosed 探针：只读 Typeface.sSystemFontMap 打日志，不做替换。"
+          gh release upload probe-dev-1 SelfFontProbe-dev-1.apk --clobber
