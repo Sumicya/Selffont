@@ -1050,7 +1050,9 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                               cjk_name=cjk_file, cjk_family=cjk_family)
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
-        faces = ([(cjk_file, 400)] if cjk_file else []) + [(name, 400)]
+        # 二创汉字只开放 wght 300–500（tools/cjk_vf.py），超出这条阶梯的请求本来就落到主字体。
+        cjk_ladder = weight_ladder({"wght": (300, 400, 500)})
+        faces = ([(cjk_file, cjk_ladder)] if cjk_file else []) + [(name, ladder)]
         legacy = legacy_rows(faces)
         xml_root = ET.fromstring(xml)
         references = [(node.text or "").strip() for node in xml_root.iter("font")]
@@ -1077,6 +1079,22 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         default_family = xml_root.find("family[@name='sans-serif']")
         packaged_names = ({PurePosixPath(m.filename).name for m in bundled} | extra_names
                           | {name, cjk_file} - {None})
+        # 覆盖清单：配置引用了 139 个名字，包里只带得走设备也认得的那些。清单落进模块，
+        # 是为了让「覆盖不全」变成一份可读的名单——缺的是哪个名字、由谁提供，一目了然，
+        # 而不是等真机上看到某个字没换再回头猜。Android 解析器找不到字件时跳过该条，
+        # 字符继续走回退链：所以这些名字如果设备上也没有，那些字符就不会是本包的字形。
+        device_supplied = sorted(name_ for name_ in referenced - packaged_names if name_)
+        coverage = (
+            "Selffont 覆盖清单（构建期生成）\n\n"
+            f"打包的字件 {len(packaged_names)} 个：\n"
+            + "".join(f"  {item}\n" for item in sorted(packaged_names))
+            + f"\n配置引用、但本包不带、由设备 /system/fonts 提供的名字 {len(device_supplied)} 个：\n"
+            + "".join(f"  {item}\n" for item in device_supplied)
+            + "\n说明：Android 的字体解析器遇到找不到的字件会跳过那一条，字符继续走回退链。\n"
+              "第二组名字如果设备上也没有，那些字符就不是本包的字形——这是覆盖缺口唯一的来源，\n"
+              "不是漏打包。要补齐，把对应字件放进基础包或增列补充字库。\n"
+        )
+
         if default_family is not None:
             missing_carrier = sorted({(node.text or "").strip()
                                       for node in default_family.findall("font")} - packaged_names)
@@ -1117,13 +1135,14 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
         write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals,
-                     cjk_font, legacy, cjk_file=cjk_file)
+                     cjk_font, legacy, cjk_file=cjk_file, coverage=coverage)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}")
     print(f"  主字体 {face['family']!r} → {RENAME}（{name},{len(ladder)} 档）")
     print(f"  补充字库 {len(bundled)} 个基础字体 + {len(supplementals)} 个固定许可外部字体；"
-          "fonts.xml 其余引用由设备自带（Noto/OEM，不打包）")
+          f"配置共引用 {len(device_supplied) + len(packaged_names)} 个名字，"
+          f"其中 {len(device_supplied)} 个由设备自带（明细见包内 coverage.txt）")
     print(f"  二创汉字 {glyph_count} 字 / {len(cjk_font) / 1e6:.1f} MB"
           f"（{cjk_naming(CJK_RELEASE_VERSION)[0]}，排在主字体之前）"
           if glyph_count else "  二创汉字：无数据，跳过")
@@ -1136,7 +1155,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
                  name: str, packaged: bytes, xml: bytes, prop: str, config: str,
                  supplementals: list[dict], cjk_font: bytes = b"", legacy: bytes = b"",
-                 cjk_file: str | None = None) -> None:
+                 cjk_file: str | None = None, coverage: str = "") -> None:
     """写模块 zip：被配置引用的基础包字体 + 固定许可外部字体 + 主字体 + 原生 KSU 模块布局。
 
     两份配置走两条路：`font_fallback.xml` 是新语法，安装脚本投放到所有
@@ -1168,6 +1187,8 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
             destination.writestr(f"licenses/{CJK_LICENSE_NAME}", CJK_LICENSE.read_bytes())
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("fonts-insert.xml", legacy)
+        if coverage:
+            destination.writestr("coverage.txt", coverage.encode("utf-8"))
         destination.writestr("module.prop", prop)
         destination.writestr("geckoview-config.yaml", config)  # 静态模板 + 构建期尾链
         for path in sorted((ROOT / "module").rglob("*")):
@@ -1301,7 +1322,7 @@ def metric_normalization():
 
 # ---------------------------------------------------------------- 字重阶梯与 fonts.xml 生成
 
-def legacy_rows(faces: list[tuple[str, int]]) -> bytes:
+def legacy_rows(faces: list[tuple[str, list[dict]]]) -> bytes:
     """Skia 那份配置要插入的字件行（`<font ...>`，缩进四格，一行一条）。
 
     Android 框架读 `font_fallback.xml`，Flutter / WebView / 部分厂商小组件走 Skia，
@@ -1313,9 +1334,29 @@ def legacy_rows(faces: list[tuple[str, int]]) -> bytes:
     **不能整份替换**：仓库里的 `fonts.xml` 是 AOSP+MIUI 混编模板，设备那份里有 OPPO Sans
     等 OEM 字件（真机反馈：天气小组件落到 OPPO Sans）。整份盖掉等于把这些字件一起删掉。
     所以这里只出「要插的行」，由安装脚本把它插进**设备自己那份**文件里，其余行原样保留。
+
+    一条字重一行，是因为 Skia 按 `weight`/`style` 逐条匹配：只写 400 一条时，App 里
+    500/700 的粗体全部落回设备的 Roboto，看起来就是「只有正文是我们、标题不是」。
+    主字体带 ital 轴，斜体单独成条；二创汉字只有 wght 轴，调用方传入的阶梯里不含斜体。
     """
-    return "".join(f'    <font weight="{weight}" style="normal">{name}</font>\n'
-                   for name, weight in faces).encode("utf-8")
+    rows = []
+    for name, ladder in faces:
+        for entry in ladder:
+            style = "italic" if entry["italic"] else "normal"
+            rows.append(f'    <font weight="{entry["weight"]}" style="{style}">{name}</font>\n')
+    return "".join(rows).encode("utf-8")
+
+
+@check
+def skia_insert_rows():
+    """Skia 那份插入行必须覆盖整条阶梯：只写 400 一条时，App 里标题/粗体全落回设备字体。"""
+    ladder = weight_ladder({"wght": (100, 400, 900), "ital": (0, 0, 1)})
+    rows = legacy_rows([("F.ttf", ladder)]).decode("utf-8").splitlines()
+    assert len(rows) == len(ladder) == 18, f"阶梯 {len(ladder)} 档，只出了 {len(rows)} 行"
+    assert sum('style="italic"' in row for row in rows) == 9, "斜体档位没出全"
+    weights = {row.split('weight="', 1)[1].split('"', 1)[0] for row in rows}
+    assert weights == {str(weight) for weight in WEIGHTS}, f"字重不全：{sorted(weights)}"
+    assert all(row.startswith('    <font ') for row in rows), "缩进/行首不对，插进设备配置会破坏语法"
 
 
 @check
@@ -1554,7 +1595,12 @@ def build_end_to_end():
         assert TTFont(io.BytesIO(packaged))["hhea"].ascent == 930, "包内字体未归一"
         # Skia 那份只出「插入行」：每条都是带字重与样式的静态字件行，且只列真正打进包里的文件。
         rows = [line.strip() for line in legacy.splitlines() if line.strip()]
-        assert rows == ['<font weight="400" style="normal">P-Regular.ttf</font>'], legacy
+        assert rows, "fonts-insert.xml 为空：Skia（Flutter / WebView）那条路上没有字件可读"
+        assert all(row.endswith(">P-Regular.ttf</font>") for row in rows), legacy
+        assert all(row.startswith("<font weight=") and ('style="normal"' in row or 'style="italic"' in row)
+                   for row in rows), legacy
+        assert len(rows) == len(set(rows)), f"插入行有重复：{rows}"
+        assert any('weight="400"' in row for row in rows), "缺 400：正文会落回设备字体"
         assert "P-Regular.ttf" in xml
         assert "NotoMusic-Regular.ttf" in xml
         assert music_packaged == music_font_path.read_bytes()

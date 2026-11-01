@@ -131,9 +131,24 @@ if [ -f "$ROOT/system/etc/fonts.xml" ]; then
         else
             rm -f "$MODPATH/system/etc/fonts.xml"
             skia="失败：设备 fonts.xml 插不进去，Flutter / WebView 不跟系统换字"
+            ui_print "!!! Selffont: Skia 配置没插进去。系统字体照换，但 Flutter / WebView / 部分"
+            ui_print "!!!   小组件走的是 /system/etc/fonts.xml，它们会继续用原字体。"
         fi
     fi
 fi
+
+# 安装结果落盘：安装日志在管理器里一闪而过，真机上没人抢得到这几行。
+# 落到 /data/adb（不在模块里，卸载模块也还在），重启后 `cat` 就能回答「到底换了没、换了几处」。
+SELFTEST=/data/adb/selffont-selftest.log
+{
+    echo "时刻 $(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知)"
+    echo "框架配置 $count 份：$replaced"
+    echo "Skia /system/etc/fonts.xml：$skia"
+    echo "插入行 $(grep -c '<font ' "$MODPATH/fonts-insert.xml" 2>/dev/null || echo 0) 条（字重逐档，来自 fonts-insert.xml）"
+    echo "模块内字件 $(ls -1 "$MODPATH/system/fonts" 2>/dev/null | wc -l) 个"
+    echo "覆盖清单：见模块目录 coverage.txt（打包了哪些、哪些靠设备自带）"
+} > "$SELFTEST" 2>/dev/null &&
+    ui_print "Selffont: 自查已写 $SELFTEST（重启后 cat 可查换了哪些配置）"
 
 if [ "$count" -gt 0 ]; then
     ui_print "Selffont: 已替换 $count 份字体配置：$replaced"
