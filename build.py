@@ -957,7 +957,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
           build_num: str | None = None, day: str | None = None, date: str | None = None,
           query: bool = False, keep_web_fonts: bool = False,
           supplemental_font_sources: tuple[dict, ...] | None = None,
-          cjk: bool = True, passthrough_mother: str | None = None) -> list[str]:
+          cjk: bool = True, passthrough_mother: str | None = None,
+          module_id: str | None = None) -> list[str]:
     """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。
 
     supplementals=None 使用仓库固定的 OFL 来源；显式空 tuple 仅供离线自检夹具使用。
@@ -1023,11 +1024,17 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             # 刷进手机后管理器里只有 module.prop 这几行能认人：直通包的 name/description
             # 必须自己说明白，否则会跟文渊圆体的发行件长得一模一样（版本号还更高）。
             digest = hashlib.sha256(cjk_font).hexdigest()[:7]
+            # 基准件必须与发行件**不同 id**：同一个 id 就只能靠抬 versionCode 去压发行件，
+            # 抬上去之后发行件的总序号（现在是三位数）在管理器眼里永远是「降级」，
+            # 刷过基准件的机器再也装不回正规包，除非卸载。2026-11-01 那次 90 万序号就是这么来的。
+            if module_id:
+                prop = re.sub(r"^id=.*$", lambda _m: f"id={module_id}", prop, flags=re.M)
             prop = re.sub(r"^name=.*$", lambda _m: "name=Selffont 母版直通", prop, flags=re.M)
             prop = re.sub(
                 r"^description=.*$",
                 lambda _m: ("description=母版直通包：汉字用 %s 原字节（sha256 %s…），"
-                            "拉丁与符号仍走文渊圆体；只做基准对照，不是发行件。"
+                            "拉丁与符号仍走文渊圆体；只做基准对照，不是发行件；"
+                            f"模块 id 为 {module_id or '（同发行件）'}，与发行件分开，刷它不挡正规包更新。"
                             % (passthrough_name, digest)),
                 prop, flags=re.M)
             warnings.append(f"母版直通：{passthrough_name} 原样进包（不改轮廓、不改名），"
@@ -2189,6 +2196,20 @@ def passthrough_font():
             assert archive.read("fonts-insert.xml").decode().count(mother.name) >= 1, \
                 "Skia 那份插入行里也得有直通字件"
 
+        # 基准件必须与发行件**不同 id**。同一个 id 只有一条路能让基准件盖住发行件：把
+        # versionCode 抬到发行件之上（2026-11-01 那次抬到 90 万）——抬完发行件的三位数总序号
+        # 在管理器眼里永远是降级，刷过基准件的机器再也换不回正规包。id 分开就没有这个问题。
+        bench = tmp / "out" / "bench.zip"
+        build(base=str(base), font=str(regular), output=bench, build_num="7", day="1",
+              date="26.11.1", cjk=False, supplemental_font_sources=(),
+              passthrough_mother=str(mother), module_id="selffont-bench")
+        with zipfile.ZipFile(bench) as archive:
+            bench_prop = archive.read("module.prop").decode()
+        fields = dict(line.split("=", 1) for line in bench_prop.splitlines() if "=" in line)
+        assert fields["id"] == "selffont-bench", f"基准件没换独立 id：{fields['id']}"
+        assert fields["versionCode"] == "7", f"基准件不该抬 versionCode：{fields['versionCode']}"
+        assert "selffont-bench" in fields["description"], "包说明没写清它的 id 与发行件不同"
+
 
 @check
 def module_hotswap():
@@ -2543,6 +2564,8 @@ def main() -> None:
                         help="只出二创汉字字件（可变 + 三个静态实例）到 DIR，不下载、不打包")
     parser.add_argument("--passthrough-mother", metavar="TTF",
                         help="母版直通：把这份 TTF 原样放进包（不改任何轮廓），只用于量基准")
+    parser.add_argument("--module-id", metavar="ID",
+                        help="改写模块 id（基准件用独立的 id，避免与发行件同一 id 互相压制 versionCode）")
     parser.add_argument("--preview", metavar="字…",
                         help="只编这几个字出预览小字体（几秒），配合 --compare 出母版对照图")
     parser.add_argument("--preview-out", type=Path, metavar="DIR", default=ROOT / "work" / "preview",
@@ -2573,7 +2596,7 @@ def main() -> None:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,
               day=args.day, date=args.date, query=args.query_ci,
               keep_web_fonts=args.keep_web_fonts,
-              passthrough_mother=args.passthrough_mother)
+              passthrough_mother=args.passthrough_mother, module_id=args.module_id)
 
 
 if __name__ == "__main__":

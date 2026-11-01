@@ -76,12 +76,14 @@ jobs:
         run: |
           set -euo pipefail
           date=$(TZ=Asia/Shanghai date +%y.%-m.%-d)
-          # 总序号从 90 万起：KernelSU 按 versionCode 比新旧，直通包要排在发行件之上，
-          # 否则刷完想换回发行件时管理器会当成「降级」。
-          build=$((900000 + ${{ github.run_number }}))
+          # 版本号就按运行号走，不再抬到 90 万：抬 versionCode 是把基准件塞进发行序列，
+          # 只解决了「装得下去」，没算「怎么回来」——发行件的总序号是三位数，刷过基准件的机器
+          # 会被管理器判成降级，再也装不回正规包。基准件改用独立 id（selffont-bench），
+          # 不同 id 各自比较 versionCode，两边互不压制，90 万那套就没有必要了。
+          build=${{ github.run_number }}
           name="Selffont-mother-${MOTHER_REF}-${{ github.run_number }}"
           python build.py --passthrough-mother "work/${MOTHER_NAME}" \
-            --date "$date" --day "$MOTHER_DAY" --build "$build" \
+            --date "$date" --day "$MOTHER_DAY" --build "$build" --module-id selffont-bench \
             --output "build/${name}.zip"
           echo "NAME=${name}" >> "$GITHUB_ENV"
           echo "DATE=${date}" >> "$GITHUB_ENV"
