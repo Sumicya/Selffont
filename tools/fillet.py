@@ -204,6 +204,10 @@ def patch_for(font_path: Path, ch: str, seed, radius, px_per_em: int = 1024):
     else:
         radius = float(radius)
         auto = False
+    if Lmin <= 0:
+        raise SystemExit(
+            f"不可补：角点 {C[0]:.1f},{C[1]:.1f} 有一边量不到直段"
+            f"（Lu={Lu:.1f} Lv={Lv:.1f}）——那是弧上的拐点，不是折角。")
     t = radius / math.tan(theta / 2.0)
     ratio = t / Lmin
     if ratio > TANGENT_MAX:
