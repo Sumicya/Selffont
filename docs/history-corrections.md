@@ -48,6 +48,31 @@
 - **影响**：主人多等一轮；仓库多两个 152 MB 重复产物。
 - **现状**：`0655f1e` 的包 `Selffont-26.11.1.6.280` 已出（152,190,520 B），包含全部修复；另两个 run 的产物为冗余。
 
+## 8. 2026-11-01 17:23：生效点移位，六·3 换成可执行判据
+
+- **变**：`04bd5b6`（2026-11-01 16:58:31 +08:00）→ `5f71bb2`（2026-11-01 17:23:20 +08:00），文件仍是 48 行，diff 只动一行。
+- **旧句**：「**产物**：artifact 名 `项目名-版本`，留 5 个；Release 最多 1 个。」
+- **新句**：「**产物**：artifact 名 `项目名-版本`；每仓 artifact 总数 ≤5，按 `created_at` 留最新 5 个，超出当轮删，403 则报阻塞（仓名、返回码、命令）；Release 每仓 ≤1 个。验收 `gh api repos/<owner>/<repo>/actions/artifacts --jq '.total_count'`。」
+- **我的错**：17:23:20 之后仍按旧句讲 Selffont 的处置；把「删掉这 5 个」当成验收。验收应写读数 `total_count` ≤5，删几个只是实现。
+
+## 9. 2026-11-01：阻塞的位置是「令牌缺 Actions 权限项」
+
+- **证据**：`gh api -i user` 的 `X-Oauth-Scopes` 为空、`X-Accepted-Github-Permissions: allows_permissionless_access=true`，属细粒度令牌；`gh api repos/Sumicya/Selffont --jq .permissions` 返回 admin／maintain／push／pull／triage 全 true。
+- **缺的那一项**：Actions。`DELETE …/actions/artifacts/<id>` → 403 `Resource not accessible by integration`；`gh run cancel` → 403；`gh workflow run` → 404。三处同因。
+- **纠正**：本文件「阻塞」段原写「令牌无 `actions:write`」，方向对；但把结论说成「本会话对那个仓无写权限」是错话——仓权限是齐的，缺的是令牌上的 Actions 项，补错地方等于没补。
+
+## 10. 2026-11-01：分支 tip 上没有一次完整构建
+
+- **事实**：tip `3420663`（2026-11-01 17:01:57 +08:00）只跑过 `PR check`（run `41291323210`，success）。最近一次 `Build` 是 `41290029654` @`0655f1e`，只产出 10,974 字节的 preview，没有 152 MB 包。
+- **含义**：现存的 280（@`e05999d`）与 282（@`e4adf7f`）两个大包都不是 tip 的代码；280 缺 `68d3d32`、`e4adf7f`、`0655f1e` 三处改动。
+- **仍在跑**：`41289212008` @`68d3d32`，状态 `in_progress`，起于 2026-11-01 17:31:19 +08:00。
+
+## 11. 2026-11-01：一组自相矛盾的时间字段，只记不用
+
+- `run 41289326371`：`created_at` 2026-11-01 17:32:58 +08:00、`updated_at` 2026-11-01 17:06:50 +08:00、`run_attempt` 1。
+- 它的两个 artifact 落在 17:06:33／17:06:34 +08:00，早于 run 的 `created_at`。
+- **处理**：这是 GitHub 侧字段互相矛盾，`run_attempt` 为 1 也排除了重跑解释；本文件只记数值，不据此推因果，也不拿这条时间线当证据。
+
 ## 根因（三条，逐条可核）
 
 1. **用「不炸」替代「不退化」**：两次决策（10-05 不碰 `fonts.xml`、11-01 缺件就 abort）都用「最坏是可接受」收尾，没算命中面。
@@ -60,3 +85,4 @@
 - 取消冗余构建：`gh run cancel 41289326371` → **403**（同上）。
 - `gh workflow run cleanup.yml` → **404**（该工作流不在默认分支）。
 - 结果：artifact 现在 10 个（规范六要求留 5 个），冗余两个全量构建仍在跑。
+- 2026-11-01 17:26:55 +08:00 复取：`total_count` 仍为 10（上限 5，差额 5）。阻塞点是令牌缺 `Actions` 权限项，不是仓写权限，见第 9 条。
