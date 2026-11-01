@@ -22,7 +22,8 @@ exists() {
 }
 boot_missing=""
 for name in $(awk '/<family name="sans-serif"[ >]/{f=1} f&&/<\/family>/{f=0} f' "$MODPATH/font_fallback.xml" |
-              grep -o '>[[:space:]]*[^<[:space:]]*' | sed 's/^>[[:space:]]*//' | sort -u); do
+              tr '>' '\n' |
+              sed -n 's/^[[:space:]]*\([A-Za-z0-9_.+-]*\.\(ttf\|otf\|ttc\)\).*/\1/p' | sort -u); do
     [ -n "$name" ] || continue
     exists "$name" || boot_missing="$boot_missing $name"
 done
@@ -32,8 +33,11 @@ if [ -n "$boot_missing" ]; then
 fi
 
 missing=""; checked=0
-for name in $(grep -o '<font[^>]*>[[:space:]]*[^<[:space:]]*' "$MODPATH/font_fallback.xml" |
-              sed 's/.*>[[:space:]]*//' | sort -u); do
+# 取「所有 <font> 的文本」不能按行 grep：带 <axis> 子节点的条目在同一行里后面跟的是 '<'，
+# 旧写法 `grep -o '<font[^>]*>[^<[:space:]]*'` 会漏掉它们（实测 140 vs 243，漏掉 103 个）。
+# 按 '>' 切行再取文件名，与构建期 ElementTree 的口径一致（两边都是 243）。
+for name in $(tr '>' '\n' < "$MODPATH/font_fallback.xml" |
+              sed -n 's/^[[:space:]]*\([A-Za-z0-9_.+-]*\.\(ttf\|otf\|ttc\)\).*/\1/p' | sort -u); do
     [ -n "$name" ] || continue
     checked=$((checked + 1))
     exists "$name" || missing="$missing $name"
