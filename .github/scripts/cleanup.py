@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -53,6 +54,8 @@ PROJECT = REPO.rsplit("/", 1)[-1]
 PREFIX = f"{PROJECT}-"
 PREVIEW_PREFIX = f"{PROJECT}-preview-"
 PREVIEW_KEEP = 3
+MOTHER_PREFIX = f"{PROJECT}-mother-"
+MOTHER_KEEP = 1
 RUN_ID = env_int("RUN_ID")
 SEGMENTS = env_int("SEGMENTS")
 
@@ -257,6 +260,19 @@ def clean_actions() -> None:
         else:
             victims.append((row, f"预览产物（只留最新 {PREVIEW_KEEP} 个）"))
 
+    # 母版基准件（`Selffont-mother-<母版提交>-<运行号>`）不套五段版本判据：它是判据基准，
+    # 命名带母版提交与运行号，天然数不出五段。以前套判据一，出一次就当场判死一次，
+    # 2026-11-01 的 `Selffont-mother-97e9dd4-5` 就是这么消失的。这里单列，只留最新 MOTHER_KEEP 个。
+    mothers = [row for row in candidates if row["name"].startswith(MOTHER_PREFIX)]
+    candidates = [row for row in candidates if not row["name"].startswith(MOTHER_PREFIX)]
+    mothers.sort(key=lambda row: row["created_at"], reverse=True)
+    for index, row in enumerate(mothers):
+        if index < MOTHER_KEEP or (row.get("workflow_run") or {}).get("id") == RUN_ID:
+            survivors.append(row)
+            print(f"保留[母版] {row['created_at']} {row['name']} id={row['id']}")
+        else:
+            victims.append((row, f"母版基准件（只留最新 {MOTHER_KEEP} 个）"))
+
     for row in candidates:
         if (row.get("workflow_run") or {}).get("id") == RUN_ID:
             print(f"保留[artifact] {source_label(row)}（本次运行刚产出，不判定）")
@@ -338,7 +354,7 @@ def clean_actions() -> None:
     # 前五条只认 PREFIX（`Selffont-`），`SelfFontProbe-` 这类另一条线的产物永远不进计数，
     # 于是两条线各留 5 个，盘面停在 10 个。这一条改用全仓口径，超出部分连同别的项目前缀一起清。
     preview_kept = [row for row in survivors
-                    if row["name"].startswith(PREVIEW_PREFIX)
+                    if (row["name"].startswith(PREVIEW_PREFIX) or row["name"].startswith(MOTHER_PREFIX))
                     and (row.get("workflow_run") or {}).get("id") != RUN_ID]
     counted = {row["id"] for row in kept_artifacts} | {row["id"] for row in preview_kept}
     others = [row for row in artifacts
@@ -411,6 +427,14 @@ def verify() -> None:
         artifacts = api_list(f"repos/{REPO}/actions/artifacts?per_page=100",
                              ".artifacts[] | {id,name,workflow_run}")
         left = [row for row in artifacts if row.get("expired") is not True]
+        for attempt in range(3):
+            if len(left) <= KEEP_ARTIFACTS or PERMISSION_GAPS:
+                break
+            print(f"复核：读到 {len(left)} 个，超过 {KEEP_ARTIFACTS}；等 5 秒重读（第 {attempt + 1}/3 次）")
+            time.sleep(5)
+            artifacts = api_list(f"repos/{REPO}/actions/artifacts?per_page=100",
+                                 ".artifacts[] | {id,name,created_at,expired,workflow_run}")
+            left = [row for row in artifacts if row.get("expired") is not True]
         gap = any(kind == "artifact" for kind, _, _ in PERMISSION_GAPS)
         print(f"复核：artifact 全仓剩 {len(left)} 个（上限 {KEEP_ARTIFACTS}，不分前缀）")
         if gap:
