@@ -77,11 +77,13 @@ jobs:
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
           echo "::notice title=SelfFontProbe::bytes=$BYTES sha256=$SHA"
 
+      - name: 记短 SHA（命名用，见 docs/workflow-naming.md）
+        run: echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
       - name: 上传产物
-        # 名字跟提交走，不再硬编码常量：同一个 dev-1 反复覆盖会让「哪个包对应哪个提交」
-        # 无从查证，也让清理脚本无法按名字判断新旧。
+        # 名字跟提交走，不用固定常量：`dev-1` 反复覆盖会让「哪个包对应哪个提交」无从查证。
         uses: actions/upload-artifact@v7
         with:
-          name: probe-${{ github.sha }}
+          name: Selffont-probe-${{ env.SHA8 }}
           path: lsp/app/build/outputs/apk/**/*.apk
           if-no-files-found: error

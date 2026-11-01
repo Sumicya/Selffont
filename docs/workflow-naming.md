@@ -57,7 +57,7 @@
 
 | 改动 | 文件 | 状态 |
 | --- | --- | --- |
-| `probe` 产物名从固定 `SelfFontProbe-dev-1` 改为 `probe-<提交 SHA>` | `.github/workflows/probe.yml` | **已落地**（本轮） |
+| `probe` 产物名从固定 `SelfFontProbe-dev-1` 改为 `Selffont-probe-<提交短 SHA 8 位>` | `.github/workflows/probe.yml` | **已落地**（本轮，待一次 probe 运行确认名字） |
 | `probe` 不再自动建 Release、不再自行 `release upload` | `.github/workflows/probe.yml` | **已落地**（本轮） |
 | 所有 action 升到 node24 那一代 | `build.yml`、`mother.yml`、`probe.yml` | **已落地**（本轮，见第四节） |
 | 清理脚本不再按名字前缀判 tag 归属 | `.github/scripts/cleanup.py` | **已落地**（本轮） |
