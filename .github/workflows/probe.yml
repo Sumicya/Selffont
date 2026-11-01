@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write      # 只有这一条是为了把 APK 挂到 Release，方便直接下载
+      contents: read       # 只出 artifact，不发 Release、不打 tag（规范四·1）
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -78,19 +78,10 @@ jobs:
           echo "::notice title=SelfFontProbe::bytes=$BYTES sha256=$SHA"
 
       - name: 上传产物
-        uses: actions/upload-artifact@v4
+        # 名字跟提交走，不再硬编码常量：同一个 dev-1 反复覆盖会让「哪个包对应哪个提交」
+        # 无从查证，也让清理脚本无法按名字判断新旧。
+        uses: actions/upload-artifact@v7
         with:
-          name: SelfFontProbe-dev-1
+          name: probe-${{ github.sha }}
           path: lsp/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
-
-      - name: 挂到 Release（直接可下载的链接）
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          APK=$(find lsp/app/build/outputs/apk -name '*.apk' | head -1)
-          cp "$APK" SelfFontProbe-dev-1.apk
-          gh release view probe-dev-1 >/dev/null 2>&1 || \
-            gh release create probe-dev-1 --title "SelfFontProbe dev-1" \
-              --notes "LSPosed 探针：只读 Typeface.sSystemFontMap 打日志，不做替换。"
-          gh release upload probe-dev-1 SelfFontProbe-dev-1.apk --clobber

@@ -1,3 +1,20 @@
+## 2026-11-02（日）· 工作流收敛：node20 清空、probe 不再自行发版、tag 归属改为精确对应
+
+- **action 升代**：`actions/cache@v4`（`using: node20`）→ `@v5`（`node24`），`build.yml` 2 处、`mother.yml` 2 处；
+  `probe.yml` 的 `actions/upload-artifact@v4` → `@v7`。四个 workflow 逐条取 `action.yml` 的 `using:` 核对，
+  现全部 node24（`gradle/actions/setup-gradle@v4` 是 composite，自身不占 node 运行时）。
+- **`probe.yml` 停止自行发版**：删掉「挂到 Release」那一步与 `contents: write`，改 `contents: read`；
+  artifact 名从固定的 `SelfFontProbe-dev-1` 改成 `probe-<提交 SHA>`，不再用一个名字覆盖历次产物。
+- **清理脚本不再按名字前缀判 tag 归属**：旧逻辑只认 `Selffont-` 前缀，`probe-dev-1` 落在规则之外，
+  既不保留也不删除。改成「被判删的 Release 的 tag 一并删，其余 tag 一个都不碰」——精确对应，不需要猜。
+  另加 404/409 分支：对象已被并发任务删掉时跳过并记一行，不再让整轮清理标红（`dbb6fac` 的 PR check 就挂在这）。
+- **命名方案进仓库**：`docs/workflow-naming.md`，四类产物 `full` / `mother` / `preview` / `probe`，
+  以及四条「未落地」项（主包加 `-full-` 段、preview 短 SHA、哈希不进 artifact 队列等）。
+- **笔画平滑度可量了**：新增 `tools/smooth_outline.py`（逐 on-curve 点量接点折角）与 `tools/fig_joint_angle.py`。
+  同一批 200 字，接点折角中位 **母版 0.74° / 本版 4.98°**（×6.7），θ<0.5° 的接点 49% → 13%；
+  每字轮廓点 102 → 140。`g1` 切向交点模式能把中位压到 2.39°，但点数 +29%、体积 +30%，不采用。
+  证据图 `docs/evidence/2026-11-02-outline-joint-angle.png`。
+
 ## 2026-11-01（六）· 凹角补圆：日（U+65E5）四角 15.8 → 42.4，`fillet.py` 拒补弧上拐点不再崩
 
 - 「日」四个直角按三条几何判据补圆弧：半径 15.8 / 15.8 / 16.0 / 15.6 → **42.4 / 36.7 / 40.2 / 43.3**，

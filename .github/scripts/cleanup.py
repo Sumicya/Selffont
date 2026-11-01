@@ -49,11 +49,11 @@ if SCOPE not in ("actions", "releases"):
     sys.exit(f"CLEANUP_SCOPE 必须是 actions 或 releases，收到 {SCOPE!r}")
 REPO = env_value("REPO")
 PROJECT = REPO.rsplit("/", 1)[-1]
-PREFIX = f"{PROJECT}-"
 RUN_ID = env_int("RUN_ID")
 SEGMENTS = (os.environ.get("SEGMENTS") or "").strip()  # 已废弃：判据里不再看段数
 
 MODEL = "真删" if APPLY else "预演（只打印清单）"
+DOOMED_TAGS: set[str] = set()                     # 本轮要连同 Release 一起删的 tag
 PENDING: list[dict] = []                             # 每项：类型/端点/对象/方法/动作词/关联 tag
 PERMISSION_GAPS: list[tuple[str, str, str]] = []     # (类型, 端点, 对象)
 FAILURES: list[tuple[str, str, str]] = []            # (类型, 对象, 原因)
@@ -105,6 +105,12 @@ def permission_gap(stderr: str) -> bool:
     return "HTTP 403" in stderr or "Resource not accessible by integration" in stderr
 
 
+def already_gone(stderr: str) -> bool:
+    """409/404：对象已被另一个并发任务删掉（PR check 与 Build 共用同一把锁，
+    但上一轮排队中的清理可能与本轮重叠）。这个不算失败，也不该把整轮标红。"""
+    return "HTTP 404" in stderr or "HTTP 409" in stderr or "Not Found" in stderr
+
+
 def execute() -> None:
     print("=== 待处理清单（以下对象均已判定，清单打印完才动手） ===")
     if not PENDING:
@@ -131,6 +137,9 @@ def execute() -> None:
             print(f"已{verb}[{kind}] {label}")
             continue
         stderr = result.stderr.strip()
+        if already_gone(stderr):
+            print(f"跳过[{kind}] {label}（已不存在；端点={method} {endpoint}；{stderr[:120]}）")
+            continue
         if permission_gap(stderr):
             PERMISSION_GAPS.append((kind, endpoint, label))
             print(f"::warning::{verb}失败（403 权限缺口，跳过）：对象={label}；端点={method} {endpoint}；"
@@ -215,23 +224,26 @@ def clean_releases() -> None:
                      key=lambda row: (row.get("published_at") or row.get("created_at") or "", row["id"]),
                      reverse=True)
     kept, extra = ordered[:KEEP_RELEASES], ordered[KEEP_RELEASES:]
-    kept_tags = {row.get("tag_name") for row in kept if row.get("tag_name")}
-    print(f"=== {PROJECT} Release/tag 清理：{MODEL}；Release 保留 {KEEP_RELEASES} 个；"
-          f"tag 前缀 {PREFIX} ===")
+    print(f"=== {PROJECT} Release/tag 清理：{MODEL}；Release 保留 {KEEP_RELEASES} 个 ===")
     for row in kept:
         print(f"保留[release] id={row['id']} tag={row.get('tag_name')} name={row.get('name')}")
+    # tag 只跟它自己的 Release 走：被判删的 Release 的 tag 一并删，其余 tag 一个都不碰。
+    # 不按名字前缀猜归属——2026-11-01 之前按前缀判断，`SelfFontProbe-dev-1`（大小写不同）
+    # 和 `probe-dev-1`（完全没有项目名前缀）永远匹配不上 `Selffont-`，于是既不保留也不删除，
+    # 悬在规则之外；反过来前缀一旦写宽，别的项目的 tag 也会被当成自家的。精确对应不需要猜。
+    doomed_tags = {row.get("tag_name") for row in extra if row.get("tag_name")}
+    DOOMED_TAGS.clear()
+    DOOMED_TAGS.update(doomed_tags)
     for row in extra:
         plan("release", f"repos/{REPO}/releases/{row['id']}",
              f"id={row['id']} tag={row.get('tag_name')} name={row.get('name')}")
     for row in tags:
         name = row["name"]
-        if not name.startswith(PREFIX):
-            print(f"保留[tag] {name}（不属于本项目名前缀，不判定）")
-        elif name in kept_tags:
-            print(f"保留[tag] {name}（对应保留的 Release）")
-        else:
+        if name in doomed_tags:
             plan("tag", f"repos/{REPO}/git/refs/tags/{quote(name, safe='')}",
-                 f"name={name}（无对应保留 Release）", tag=name)
+                 f"name={name}（随其 Release 一起删）", tag=name)
+        else:
+            print(f"保留[tag] {name}（没有对应的被删 Release）")
 
 
 def verify() -> None:
@@ -274,9 +286,9 @@ def verify() -> None:
         releases = api_list(f"repos/{REPO}/releases?per_page=100", ".[] | {id,tag_name}")
         tags = api_list(f"repos/{REPO}/tags?per_page=100", ".[] | {name}")
         kept_tags = {row.get("tag_name") for row in releases[:KEEP_RELEASES] if row.get("tag_name")}
-        orphans = [row for row in tags if row["name"].startswith(PREFIX) and row["name"] not in kept_tags]
+        orphans = [row for row in tags if row["name"] in DOOMED_TAGS]
         gap = any(kind in ("release", "tag") for kind, _, _ in PERMISSION_GAPS)
-        print(f"复核：Release 剩 {len(releases)} 个（上限 {KEEP_RELEASES}）；项目孤立 tag {len(orphans)} 个")
+        print(f"复核：Release 剩 {len(releases)} 个（上限 {KEEP_RELEASES}）；被删 Release 的残留 tag {len(orphans)} 个")
         if gap:
             print("复核未完成：Release/tag 清理遇到 403 权限缺口，未把未删对象描述成清理成功。")
         else:
