@@ -8,27 +8,52 @@ command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 [ -n "$(ls -A "$MODPATH/system/fonts" 2>/dev/null)" ] ||
     abort "Selffont: 模块里没有字体文件。请用 build.py 打包，不要直接压缩仓库。"
 
-# 覆盖 font_fallback.xml 之前先点齐人头：模板里引用的每一个字件，必须要么在模块里，
-# 要么在这台设备的 /system/fonts 里真的存在。缺一个就拒绝安装。
-# 2026-11-01 事故：模板引用 121 个名字，模块只带 8 个，其余全指望设备自带；设备缺一个，
-# 字体配置在开机阶段就解析失败，system_server 起不来，直接进安全模式。
-# 在安装期 abort 是「装不上」，在开机期崩是「手机变砖」，两者差一个可以回退的机会。
+# 覆盖 font_fallback.xml 之前的体检。分两档，因为「缺字件」有两种后果：
+#   硬档（abort）：默认族 sans-serif 的字件必须解析得到。这一族 system_server 开机就用，
+#                  它缺了才是真砖（2026-11-01 进安全模式那条路）。
+#   软档（只警告）：其余被引用的名字，设备没有也不会崩——Android 的字体解析器找不到文件就跳过，
+#                  只是那些字符落到回退链。上一版把它写成硬档，结果每个真机都装不上，
+#                  等于把「可能崩」换成了「必然装不上」，矫枉过正。
 ROOT_DIR=${SELFFONT_SYSTEM_ROOT:-}
-missing=""
-checked=0
+exists() {
+    [ -f "$MODPATH/system/fonts/$1" ] && return 0
+    [ -f "$ROOT_DIR/system/fonts/$1" ] && return 0
+    return 1
+}
+boot_missing=""
+for name in $(awk '/<family name="sans-serif"[ >]/{f=1} f&&/<\/family>/{f=0} f' "$MODPATH/font_fallback.xml" |
+              grep -o '>[[:space:]]*[^<[:space:]]*' | sed 's/^>[[:space:]]*//' | sort -u); do
+    [ -n "$name" ] || continue
+    exists "$name" || boot_missing="$boot_missing $name"
+done
+if [ -n "$boot_missing" ]; then
+    abort "Selffont: 默认族 sans-serif 缺字件：$boot_missing
+这一族是 system_server 开机就要用的，缺了会卡开机（2026-11-01 事故）。拒绝安装。"
+fi
+
+missing=""; checked=0
 for name in $(grep -o '<font[^>]*>[[:space:]]*[^<[:space:]]*' "$MODPATH/font_fallback.xml" |
               sed 's/.*>[[:space:]]*//' | sort -u); do
     [ -n "$name" ] || continue
     checked=$((checked + 1))
-    [ -f "$MODPATH/system/fonts/$name" ] && continue
-    [ -f "$ROOT_DIR/system/fonts/$name" ] && continue
-    missing="$missing $name"
+    exists "$name" || missing="$missing $name"
 done
 if [ -n "$missing" ]; then
-    abort "Selffont: 设备缺 $(echo $missing | wc -w) 个字件，拒绝覆盖字体配置：$missing
-这些名字被 font_fallback.xml 引用，但本机 /system/fonts 里没有。整份覆盖会让字体服务在开机阶段解析失败（2026-11-01 进安全模式的原因）。请换用与本机 Android 版本匹配的包，或先卸载。"
+    ui_print "Selffont: 本机缺 $(echo $missing | wc -w) 个被引用的字件（不影响开机，那些字符走回退链）"
+    ui_print "  缺：$(echo $missing | tr ' ' '\n' | head -8 | tr '\n' ' ')..."
 fi
-ui_print "Selffont: 字件点名通过（$checked 个引用，模块内或本机都有）"
+ui_print "Selffont: 字件体检通过（引用 $checked 个，默认族齐全）"
+
+# 同名配置的旧模块必须让路。上一版的 id 是 MFGA，与基础包同源；这一版改成 selffont-mother。
+# 两个模块同时挂 /system/etc/font_fallback.xml 会互相覆盖，字体可能整个起不来。
+# 发现旧 id 就给它打 disable 标记（KernelSU / Magisk 的官方机制，可逆），不是删它。
+OLD_MOD=/data/adb/modules/MFGA
+if [ -d "$OLD_MOD" ] && [ "$OLD_MOD" != "${MODPATH%/system}" ]; then
+    if [ ! -f "$OLD_MOD/disable" ] && [ ! -f "$OLD_MOD/remove" ]; then
+        touch "$OLD_MOD/disable" 2>/dev/null &&
+            ui_print "Selffont: 已停用旧模块 MFGA（同名配置，两份同时挂会冲突）；重启后生效"
+    fi
+fi
 
 # 读配置的程序有两类，各读各的，两份都得换：
 #   font_fallback.xml / fonts_base.xml / fonts_ule.xml   新语法，Android 框架（SystemFonts）读
