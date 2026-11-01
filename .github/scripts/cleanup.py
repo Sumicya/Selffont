@@ -2,14 +2,12 @@
 """Selffont 清理：Actions 产物与运行记录、Release 与孤立 tag 共用这一份脚本。
 
 CLEANUP_SCOPE=actions 处理 artifact 与 run；CLEANUP_SCOPE=releases 处理 Release 与项目孤立 tag。
-读取 GH_TOKEN、REPO、RUN_ID、SEGMENTS、CLEANUP_APPLY；项目名前缀由 REPO 推导（Selffont-）。
-动作先收齐并打印完整清单，再按 CLEANUP_APPLY 预演或执行；只动本项目对象。
+读取 GH_TOKEN、REPO、RUN_ID、CLEANUP_APPLY。
 
-artifact 五判据依次执行：命名口径（版本段数 != SEGMENTS 或任一段带前导零）→ 来源（workflow_run.event 是
-pull_request）→ 重复当日序号（同日同序号按来源运行的 run_started_at 删旧留新）→ 号源口径
-（末段总序号必须等于来源运行的 run_number；切换号源过渡期、全仓还没有任何新口径产物时暂留
-最新 1 个旧产物）→ 数量（全仓按 created_at 保留最新 5 个，且来源运行必须仍在所属工作流保留的
-最新 5 条运行记录内）。run 只有数量判据：每个工作流保留最新 5 条，未完成且超限的先取消。
+artifact 只有一条判据，照规范六·3：每仓总数 ≤5，按 created_at 留最新 5 个，超出当轮删。
+不按名字、段数、前缀、事件来源或号源做任何分类——2026-11-01 之前那五条判据是脚本作者
+自造的，正是它们删掉了母版基准件（Selffont-mother-97e9dd4-5）和五份探针包。
+run 只有数量判据：每个工作流保留最新 5 条，未完成且超限的先取消。
 
 失败分级：403 权限缺口打印对象、端点与返回码的 warning 后继续；403 以外的失败打印 error 并让
 本轮失败，不把权限不足描述成清理成功。
@@ -52,12 +50,8 @@ if SCOPE not in ("actions", "releases"):
 REPO = env_value("REPO")
 PROJECT = REPO.rsplit("/", 1)[-1]
 PREFIX = f"{PROJECT}-"
-PREVIEW_PREFIX = f"{PROJECT}-preview-"
-PREVIEW_KEEP = 3
-MOTHER_PREFIX = f"{PROJECT}-mother-"
-MOTHER_KEEP = 1
 RUN_ID = env_int("RUN_ID")
-SEGMENTS = env_int("SEGMENTS")
+SEGMENTS = (os.environ.get("SEGMENTS") or "").strip()  # 已废弃：判据里不再看段数
 
 MODEL = "真删" if APPLY else "预演（只打印清单）"
 PENDING: list[dict] = []                             # 每项：类型/端点/对象/方法/动作词/关联 tag
@@ -98,34 +92,7 @@ def stamp(row: dict) -> str:
         "%Y-%m-%d %H:%M:%S")
 
 
-def version_parts(name: str):
-    """`Selffont-yy.m.d.当日序号.总序号` → (日期, 当日序号, 总序号)；不合口径返回 None。"""
-    if not name.startswith(PREFIX):
-        return None
-    parts = name[len(PREFIX):].split(".")
-    if len(parts) != SEGMENTS:
-        return None
-    try:
-        return ".".join(parts[:3]), int(parts[3]), int(parts[4])
-    except ValueError:
-        return None
 
-
-def segments_of(name: str) -> int:
-    version = name[len(PREFIX):] if name.startswith(PREFIX) else name
-    return len([part for part in version.split(".") if part])
-
-
-def zero_padded(name: str) -> str | None:
-    """补零段（`26.11.01`、`26.11.1.01.7`）返回该段，合规返回 None。
-
-    规范 2026-10-31：月、日、当日序号、总序号都不带前导零；`00` 这类段也不合法。
-    """
-    version = name[len(PREFIX):] if name.startswith(PREFIX) else name
-    for part in version.split("."):
-        if len(part) > 1 and part.startswith("0"):
-            return part
-    return None
 
 
 def plan(kind: str, endpoint: str, label: str, method: str = "DELETE", verb: str = "删除",
@@ -181,213 +148,61 @@ def execute() -> None:
 # ------------------------------------------------------------------ artifact / run
 
 def clean_actions() -> None:
+    """规范六·3 只有一条判据：每仓 artifact 总数 ≤5，按 created_at 留最新 5 个。
+
+    不按名字、段数、前缀、事件来源、号源做任何分类。分类只会让「最新 5 个」失效。
+    """
     runs = api_list(f"repos/{REPO}/actions/runs?per_page=100",
                     ".workflow_runs[] | {id,path,event,status,run_number,run_started_at,created_at}")
-    run_by_id = {row["id"]: row for row in runs}
-
-    # run 保留集合先算：每个工作流最新 5 条，硬上限不设当日、失败、承载产物等任何豁免。
     by_workflow: dict[str, list[dict]] = defaultdict(list)
     for row in runs:
         by_workflow[row.get("path") or ""].append(row)
-    kept_run_ids: dict[str, set[int]] = {}
-    for path, rows in by_workflow.items():
-        ordered = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
-        kept_run_ids[path] = {row["id"] for row in ordered[:KEEP_RUNS]}
 
-    print(f"=== {PROJECT} 清理：{MODEL}；SEGMENTS={SEGMENTS}；run 每工作流最多 {KEEP_RUNS} 条、"
-          f"artifact 全仓最多 {KEEP_ARTIFACTS} 个；今日(UTC+8)="
-          f"{datetime.now(CLOCK).strftime('%Y-%m-%d')}；前缀={PREFIX}；本次运行 {RUN_ID} ===")
+    print(f"=== {PROJECT} 清理：{MODEL}；artifact 全仓最多 {KEEP_ARTIFACTS} 个（只按 created_at）；"
+          f"run 每工作流最多 {KEEP_RUNS} 条；本次运行 {RUN_ID} ===")
 
+    # run：每个工作流保留最新 5 条；超限且未完成先取消，其余删除。
     for path, rows in sorted(by_workflow.items()):
         ordered = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
         for index, row in enumerate(ordered):
             label = (f"{path} {stamp(row)} run_number={row['run_number']} id={row['id']} "
                      f"status={row['status']}")
-            if row["id"] in kept_run_ids[path]:
+            if index < KEEP_RUNS:
                 print(f"保留[run] {label}（最新 {index + 1}/{KEEP_RUNS}）")
                 continue
             if row["id"] == RUN_ID:
-                print(f"保留[run] {label}（本次运行自己，永不取消不删）")
+                print(f"保留[run] {label}（本次运行自己）")
                 continue
             if row["status"] != "completed":
                 plan("run", f"repos/{REPO}/actions/runs/{row['id']}/cancel", label,
                      method="POST", verb="取消")
-                continue
-            plan("run", f"repos/{REPO}/actions/runs/{row['id']}", label)
+            else:
+                plan("run", f"repos/{REPO}/actions/runs/{row['id']}", label)
 
+    # artifact：全仓口径，一条判据。
     artifacts = api_list(f"repos/{REPO}/actions/artifacts?per_page=100",
                          ".artifacts[] | {id,name,created_at,expired,workflow_run}")
-    owner = repo_id()
+    live = [row for row in artifacts if row.get("expired") is not True]
+    mine = [row for row in live if (row.get("workflow_run") or {}).get("id") == RUN_ID]
+    pool = [row for row in live if (row.get("workflow_run") or {}).get("id") != RUN_ID]
+    pool.sort(key=lambda row: (row["created_at"], row["id"]), reverse=True)
+    room = max(KEEP_ARTIFACTS - len(mine), 0)
+    kept, victims = pool[:room], pool[room:]
 
-    def owned(row: dict) -> bool:
-        run = row.get("workflow_run") or {}
-        return run.get("repository_id") == owner and run.get("head_repository_id") == owner
-
-    candidates, unknown = [], []
-    for row in artifacts:
-        if not row["name"].startswith(PREFIX):
-            continue
-        if not owned(row):
-            unknown.append(row)
-            continue
-        candidates.append(row)
-    for row in unknown:
-        print(f"保留[artifact] {row['created_at']} {row['name']} id={row['id']}"
-              "（归属不明，不判定）")
-
-    def source_run(row: dict) -> dict:
-        return run_by_id.get((row.get("workflow_run") or {}).get("id")) or {}
-
-    def source_label(row: dict) -> str:
-        run = source_run(row)
-        if not run:
-            return f"{row['created_at']} {row['name']} id={row['id']} 来源运行未知"
-        return (f"{row['created_at']} {row['name']} id={row['id']} "
-                f"来源 run_number={run['run_number']} run_id={run['id']}")
-
-    survivors: list[dict] = []
-    victims: list[tuple[dict, str]] = []
-
-    # 预览产物（`Selffont-preview-<sha>`）不套五段命名判据，单列一条保留规则：
-    # 只留最新 PREVIEW_KEEP 个，本次运行刚产出的永不判定。
-    previews = [row for row in candidates if row["name"].startswith(PREVIEW_PREFIX)]
-    candidates = [row for row in candidates if not row["name"].startswith(PREVIEW_PREFIX)]
-    previews.sort(key=lambda row: row["created_at"], reverse=True)
-    for index, row in enumerate(previews):
-        if index < PREVIEW_KEEP or (row.get("workflow_run") or {}).get("id") == RUN_ID:
-            survivors.append(row)
-            print(f"保留[预览] {row['created_at']} {row['name']} id={row['id']}")
-        else:
-            victims.append((row, f"预览产物（只留最新 {PREVIEW_KEEP} 个）"))
-
-    # 母版基准件（`Selffont-mother-<母版提交>-<运行号>`）不套五段版本判据：它是判据基准，
-    # 命名带母版提交与运行号，天然数不出五段。以前套判据一，出一次就当场判死一次，
-    # 2026-11-01 的 `Selffont-mother-97e9dd4-5` 就是这么消失的。这里单列，只留最新 MOTHER_KEEP 个。
-    mothers = [row for row in candidates if row["name"].startswith(MOTHER_PREFIX)]
-    candidates = [row for row in candidates if not row["name"].startswith(MOTHER_PREFIX)]
-    mothers.sort(key=lambda row: row["created_at"], reverse=True)
-    for index, row in enumerate(mothers):
-        if index < MOTHER_KEEP or (row.get("workflow_run") or {}).get("id") == RUN_ID:
-            survivors.append(row)
-            print(f"保留[母版] {row['created_at']} {row['name']} id={row['id']}")
-        else:
-            victims.append((row, f"母版基准件（只留最新 {MOTHER_KEEP} 个）"))
-
-    for row in candidates:
-        if (row.get("workflow_run") or {}).get("id") == RUN_ID:
-            print(f"保留[artifact] {source_label(row)}（本次运行刚产出，不判定）")
-            survivors.append(row)
-            continue
-        # 判据一：命名口径（段数 + 不带前导零）。
-        if segments_of(row["name"]) != SEGMENTS:
-            victims.append((row, f"命名口径（{segments_of(row['name'])} 段 != SEGMENTS {SEGMENTS}）"))
-            continue
-        padded = zero_padded(row["name"])
-        if padded:
-            victims.append((row, f"命名口径（补零段 {padded!r}，规范只收 26.11.1 这种写法）"))
-            continue
-        run = source_run(row)
-        # 判据二：来源。
-        if run.get("event") == "pull_request":
-            victims.append((row, "来源（workflow_run.event 是 pull_request）"))
-            continue
-        survivors.append(row)
-
-    # 判据三：重复当日序号，按来源运行的 run_started_at 删旧留新。
-    groups: dict[tuple, list[dict]] = defaultdict(list)
-    for row in survivors:
-        parsed = version_parts(row["name"])
-        if parsed is None:
-            continue
-        groups[(parsed[0], parsed[1])].append(row)
-    duplicate_ids = set()
-    for (date, day), rows in groups.items():
-        if len(rows) < 2:
-            continue
-        rows.sort(key=lambda row: (run_time(source_run(row)), row["id"]), reverse=True)
-        for row in rows[1:]:
-            victims.append((row, f"重复当日序号 {date}.{day}（保留 run_started_at 最新的 "
-                                 f"{source_run(rows[0]).get('run_number', '?')}）"))
-            duplicate_ids.add(row["id"])
-    survivors = [row for row in survivors if row["id"] not in duplicate_ids]
-
-    # 判据四：号源口径，末段总序号必须等于来源运行的 run_number。
-    fresh, stale = [], []
-    for row in survivors:
-        parsed = version_parts(row["name"])
-        run = source_run(row)
-        if parsed is None or not run:
-            fresh.append(row)
-            print(f"保留[artifact] {source_label(row)}（号源无法核验，不当删除依据）")
-            continue
-        (fresh if parsed[2] == run.get("run_number") else stale).append(row)
-    if fresh or not stale:
-        for row in stale:
-            victims.append((row, f"号源口径（总序号 {version_parts(row['name'])[2]} != 来源 "
-                                 f"run_number {source_run(row).get('run_number')}）"))
-    else:
-        # 过渡期：全仓还没有任何新口径产物，暂留最新 1 个旧产物，别让手上一个可装的包都没有。
-        keep = max(stale, key=lambda row: (row["created_at"], row["id"]))
-        fresh.append(keep)
-        print(f"保留[artifact] {source_label(keep)}"
-              "（换号源过渡：全仓暂无新口径产物，暂留最新 1 个旧产物）")
-        for row in stale:
-            if row["id"] != keep["id"]:
-                victims.append((row, f"号源口径（总序号 {version_parts(row['name'])[2]} != 来源 "
-                                     f"run_number {source_run(row).get('run_number')}）"))
-
-    # 判据五：数量，全仓最新 5 个，且来源运行必须仍在所属工作流保留的最新 5 条里。
-    fresh.sort(key=lambda row: (row["created_at"], row["id"]), reverse=True)
-    kept_artifacts: list[dict] = []
-    for index, row in enumerate(fresh):
-        run = source_run(row)
-        workflow = run.get("path") or ""
-        if len(kept_artifacts) >= KEEP_ARTIFACTS:
-            victims.append((row, f"数量（全仓第 {index + 1} 新，超过 {KEEP_ARTIFACTS}）"))
-        elif workflow and run.get("id") not in kept_run_ids.get(workflow, set()):
-            victims.append((row, f"运行记录上限优先（来源 run {run.get('id')} 不在 {workflow} "
-                                 f"最新 {KEEP_RUNS} 条内）"))
-        else:
-            kept_artifacts.append(row)
-
-    # 判据六：仓内总数（规范六·3：每仓 artifact 总数 ≤5，按 created_at 留最新 5 个，不分项目前缀）。
-    # 前五条只认 PREFIX（`Selffont-`），`SelfFontProbe-` 这类另一条线的产物永远不进计数，
-    # 于是两条线各留 5 个，盘面停在 10 个。这一条改用全仓口径，超出部分连同别的项目前缀一起清。
-    preview_kept = [row for row in survivors
-                    if (row["name"].startswith(PREVIEW_PREFIX) or row["name"].startswith(MOTHER_PREFIX))
-                    and (row.get("workflow_run") or {}).get("id") != RUN_ID]
-    counted = {row["id"] for row in kept_artifacts} | {row["id"] for row in preview_kept}
-    others = [row for row in artifacts
-              if row["id"] not in counted
-              and row.get("expired") is not True
-              and (row.get("workflow_run") or {}).get("id") != RUN_ID]
-    dedup: dict[int, dict] = {}
-    for row in kept_artifacts + preview_kept + others:
-        dedup.setdefault(row["id"], row)          # 预览产物既是 survivor 又进了 fresh，按 id 去重
-    pool = sorted(dedup.values(), key=lambda row: (row["created_at"], row["id"]), reverse=True)
-    excess = pool[KEEP_ARTIFACTS:]
-    for row in excess:
-        if row["name"].startswith(PREFIX) and row in kept_artifacts:
-            kept_artifacts.remove(row)
-        elif not row["name"].startswith(PREFIX) and not owned(row):
-            print(f"保留[artifact] {row['created_at']} {row['name']} id={row['id']}"
-                  "（归属不明，不判定）")
-            continue
-        victims.append((row, f"仓内总数（全仓 {len(pool)} 个，超过 {KEEP_ARTIFACTS}）"))
-    if excess:
-        print(f"判据六：全仓 {len(pool)} 个，超出 {len(pool) - KEEP_ARTIFACTS} 个按 created_at 最旧清")
-
-    for row in kept_artifacts:
-        print(f"保留[artifact] {source_label(row)}")
-    for row, why in victims:
+    for row in mine:
+        print(f"保留[artifact] {row['created_at']} {row['name']} id={row['id']}（本次运行刚产出）")
+    for row in kept:
+        print(f"保留[artifact] {row['created_at']} {row['name']} id={row['id']}")
+    for row in victims:
         plan("artifact", f"repos/{REPO}/actions/artifacts/{row['id']}",
-             f"{source_label(row)} 判据={why}")
-    print(f"artifact：候选 {len(candidates)} 个，保留 {len(kept_artifacts)} 个，"
-          f"{'删除' if APPLY else '将删'} {len(victims)} 个，归属不明 {len(unknown)} 个")
+             f"{row['created_at']} {row['name']} id={row['id']} 判据=按 created_at 最旧")
+
+    print(f"artifact：全仓未过期 {len(live)} 个，保留 {len(kept) + len(mine)} 个，"
+          f"{'删除' if APPLY else '将删'} {len(victims)} 个")
     print(f"run：{'删除' if APPLY else '将删'} "
-          f"{sum(1 for item in PENDING if item['kind'] == 'run' and item['verb'] == '删除')} 条，"
+          f"{sum(1 for i in PENDING if i['kind'] == 'run' and i['verb'] == '删除')} 条，"
           f"{'取消' if APPLY else '将取消'} "
-          f"{sum(1 for item in PENDING if item['kind'] == 'run' and item['verb'] == '取消')} 条")
+          f"{sum(1 for i in PENDING if i['kind'] == 'run' and i['verb'] == '取消')} 条")
 
 
 # ------------------------------------------------------------------ Release / tag
