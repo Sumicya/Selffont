@@ -33,7 +33,7 @@ Android 个人字体模块：**Selfrounds CJK**（自研，SIL OFL 1.1 衍生物
 
 ### 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `MFGA`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。Release 只放最新一版的 zip 与 `SHA256SUMS.txt`（Actions artifact 5 天过期，别从那里下）。
+KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。Release 只放最新一版的 zip 与 `SHA256SUMS.txt`（Actions artifact 5 天过期，别从那里下）。
 
 管理器安装：KernelSU → 模块 → 从存储安装 → 选解压出的 zip → 重启。Magisk：模块 → 从本地安装 → 选同一个 zip → 重启（不重启也能先看效果时，用下面的热切换）。
 
@@ -49,7 +49,7 @@ su -c 'rm -f /data/local/tmp/selffont-module.zip'
 su -c reboot                                            # 或手动重启
 ```
 
-装完字体没变时，按序查三条：管理器里模块已启用且已重启；`su -c 'for f in /system/etc/font_fallback.xml /system_ext/etc/fonts_base.xml /system_ext/etc/fonts_ule.xml; do [ -f "$f" ] && echo "$f Selffont=$(grep -c Selffont "$f")"; done'`——设备读了哪份，就该有哪份被换（ColorOS 只查后两行；全是 0 或文件不存在说明选错了配置文件）；KernelSU 需要挂载类元模块（metamodule）才能把模块内容挂进系统——缺了它模块装得上但不生效（`mount | grep MFGA` 能看到才说明挂上了）。
+装完字体没变时，按序查三条：管理器里模块已启用且已重启；`su -c 'for f in /system/etc/font_fallback.xml /system_ext/etc/fonts_base.xml /system_ext/etc/fonts_ule.xml; do [ -f "$f" ] && echo "$f Selffont=$(grep -c Selffont "$f")"; done'`——设备读了哪份，就该有哪份被换（ColorOS 只查后两行；全是 0 或文件不存在说明选错了配置文件）；KernelSU 需要挂载类元模块（metamodule）才能把模块内容挂进系统——缺了它模块装得上但不生效（`mount | grep selffont-mother` 能看到才说明挂上了）。
 
 若 `cp` 被 SELinux 拦：先在 Termux 里 `cp "$ZIP" ~/storage/downloads/`（`termux-setup-storage` 给的软链），再 `su -c 'cp /sdcard/Download/<文件名> /data/local/tmp/'` 后照上装。
 
@@ -72,8 +72,8 @@ su -c reboot                                            # 或手动重启
 `/proc/mounts` 里 `/dev/block/dm-76`（`/data`）挂在 `/system/fonts` 之上）：
 
 ```sh
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh status'   # 本机不支持 + 残留层数（带 mnt_id 与来源）
-su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'    # 只摘能认定是本模块留下的层，删工作目录与账
+su -c 'sh /data/adb/modules/selffont-mother/hotswap.sh status'   # 本机不支持 + 残留层数（带 mnt_id 与来源）
+su -c 'sh /data/adb/modules/selffont-mother/hotswap.sh panic'    # 只摘能认定是本模块留下的层，删工作目录与账
 ```
 
 `panic` 认三种形状：挂在 `/system/fonts` 上且 fstype 不是 `overlay` 的那层（上一版整目录 bind
@@ -111,8 +111,8 @@ su -c 'sh /data/adb/modules/MFGA/hotswap.sh panic'    # 只摘能认定是本模
 Gecko 不读系统的 `fonts.xml` 选家族：字体清单来自 Android 系统字体 API，选谁看它自己 `font.name-list.*` 里硬编码的**家族名**。所以字体装好了，Firefox 也不一定用——要单独接一次，走 GeckoView 官方的原生机制，不需要 LSPosed、不改 APK：
 
 ```sh
-su -c 'sh /data/adb/modules/MFGA/firefox.sh'          # 接入
-su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
+su -c 'sh /data/adb/modules/selffont-mother/firefox.sh'          # 接入
+su -c 'sh /data/adb/modules/selffont-mother/firefox.sh remove'   # 退出
 ```
 
 `firefox.sh` 只做两件事：把 `geckoview-config.yaml` 放到 `/data/local/tmp/org.mozilla.firefox-geckoview-config.yaml`，再把 Firefox 设成 Android「调试应用」（`am set-debug-app --persistent`，重启后仍在）——GeckoView 只在这两种情况下读那份配置。配置里每条首选项都只**插入**不清空，后面原样保留 Gecko 自己的回退链（整条覆盖会掐断回退，那才是缺字的来源）。谁排在最前，看这个泛型在系统里本来是什么字体：`sans-serif` / `serif` / `emoji` 本来就是主字体（`serif` 是旧数字字件、`sans-serif` 是度量空壳），主字体在最前是把火狐改掉的恢复回来；`monospace` / `cursive` / `fantasy` 本来是 Droid Sans Mono / Dancing Script / Coming Soon（`fonts.xml` 的 `monospace` / `cursive` / `casual`），**本来是什么字体就保持什么字体**，主字体只紧随其后兜这些字体没有的 CJK。
@@ -127,7 +127,7 @@ su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
 
 - 泛型关键字（`font-family: cursive/fantasy`，不带引号）：all.js 的 Android 段只有 `cursive.x-unicode/x-western` 默认、`fantasy` 一个都没有，zh/ja/ko 下解析成空字体组落平台默认——配置把 cursive/fantasy × 7 语言组补齐。
 - 带引号的家族名（`"cursive"`、`"sans-serif-smallcaps"`）：走名字解析，而 Gecko 的字体清单只收**写进系统配置的字件**。曾试过给这些别名各发一枚「别名字件」（家族名 = 别名、无字形），2026-10-05 真机实测（OnePlus / ColorOS 16）**解析不到**：20 个空格的宽度与默认链完全相同，别名字件的 0.5em 空格没有出现。又因为每条 `font.name-list.*` 都被我们前置了主字体，命中与不命中最终渲染一致——既不可见也无收益，**已删除**（`build.py` 不再产别名字件、也无 `--no-alias-fonts` 开关）。
-- 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成主字体**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/MFGA/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是主字体；`web-fonts.sh status` 看当前状态。
+- 网页**自带的 webfont**（站内装饰字体、Google Fonts、图标字体）：不读系统清单，字体 pref 管不到，只有 `browser.display.use_document_fonts` 一个开关——**默认压成主字体**（全系统同一副面孔）。放行的两条路：打包时 `--keep-web-fonts`（当默认值烧进 zip），或运行时在 KernelSU 管理器里点模块的**「操作」按钮**切换（命令行等价 `su -c 'sh /data/adb/modules/selffont-mother/web-fonts.sh keep'`，状态存 `/data/local/tmp/selffont-web-fonts.state`）。放行后网页按自己的字体渲染、图标字体正常，代价是网页上的装饰字体不再是主字体；`web-fonts.sh status` 看当前状态。
 - CSS `font-variant: small-caps` 由基础字体合成：基础字体是主字体，小型大写就是主字体。
 
 验证：`logcat -s GeckoRuntime GeckoDebugConfig | grep -i 'config\|prefs'`，应出现 `Adding debug configuration from:` 与 `Adding prefs from debug config`。
@@ -190,9 +190,9 @@ gh api -H "Accept: application/vnd.github.raw" \
 
 CI 固定两个工作流：`build.yml`（`Build`，只接 `push`[不限分支] / `workflow_dispatch`）三个 job——`build` 只读（`contents: read` + `actions: read`），取号出包上传；`cleanup-artifacts`（`needs: build` + `if: always()`）清产物与运行记录；`cleanup-releases`（`if: always()` 且限默认分支，只授 `contents: write`）清 Release 与孤立 tag。`pr-check.yml`（`PR check`，只接 `pull_request`）的 `check` job 只跑自检、不取号不出包，`cleanup-artifacts` job 不带 `needs`、始终运行。artifact 名 = `Selffont-<版本>`，**包内根目录就是 `module.prop`，网页下载下来可直接刷**（构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容），`retention-days: 5` 只是时间兜底，`overwrite: true` 让重试不撞名。
 
-清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；两个工作流顶层的 `SEGMENTS: "5"` 与 `CLEANUP_APPLY: "true"` 保持一致。
+清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；两个工作流顶层的 `CLEANUP_APPLY: "true"` 保持一致。
 
-- **artifact/run**：两个工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py` 与同一个 `selffont-cleanup` concurrency 锁（`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`，只动 `Selffont-` 前缀的对象。artifact 五条判据按序执行：① 版本段数 = `SEGMENTS`；② 来源运行是 `pull_request` 一律删；③ 同日同当日序号按来源运行的 `run_started_at` 删旧留新；④ 号源口径——末段总序号必须等于来源运行的 `run_number`，切换过渡期全仓还没有新口径产物时暂留最新 1 个旧产物；⑤ 数量——全仓按 `created_at` 保留最新 5 个，且来源运行必须仍在所属工作流保留的最新 5 条内。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
+- **artifact/run**：两个工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py` 与同一个 `selffont-cleanup` concurrency 锁（`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`。artifact 只有一条判据，照规范六·3：全仓未过期产物按 `created_at` 保留最新 5 个，超出当轮删——不看名字、前缀、段数、来源或号源。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
 - **Release/tag**：`build.yml` 的独立 `cleanup-releases` job 只在默认分支运行，只声明 `contents: write`；保留最新一个 Release，删除不再关联保留 Release 的 `Selffont-` 前缀 tag。CI 不创建 Release、tag 或正式 asset。
 - **安全与失败处理**：所有待执行对象和端点先完整打印，再开始删除；checkout 一律默认浅克隆（取号与清理都只读 API，不再读 git 历史）。403 明确打印对象、端点和状态，标为未执行并继续；复核会注明清理未完成，不将权限缺口说成成功。403 以外的失败使 job 标红。Release/tag 清理删除 tag 前还会重新核对 Release 仍否引用该 tag，避免 Release 删除失败后误删其 tag。
 
