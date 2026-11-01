@@ -213,7 +213,7 @@ def clean_actions() -> None:
             plan("run", f"repos/{REPO}/actions/runs/{row['id']}", label)
 
     artifacts = api_list(f"repos/{REPO}/actions/artifacts?per_page=100",
-                         ".artifacts[] | {id,name,created_at,workflow_run}")
+                         ".artifacts[] | {id,name,created_at,expired,workflow_run}")
     owner = repo_id()
 
     def owned(row: dict) -> bool:
@@ -334,6 +334,33 @@ def clean_actions() -> None:
         else:
             kept_artifacts.append(row)
 
+    # 判据六：仓内总数（规范六·3：每仓 artifact 总数 ≤5，按 created_at 留最新 5 个，不分项目前缀）。
+    # 前五条只认 PREFIX（`Selffont-`），`SelfFontProbe-` 这类另一条线的产物永远不进计数，
+    # 于是两条线各留 5 个，盘面停在 10 个。这一条改用全仓口径，超出部分连同别的项目前缀一起清。
+    preview_kept = [row for row in survivors
+                    if row["name"].startswith(PREVIEW_PREFIX)
+                    and (row.get("workflow_run") or {}).get("id") != RUN_ID]
+    counted = {row["id"] for row in kept_artifacts} | {row["id"] for row in preview_kept}
+    others = [row for row in artifacts
+              if row["id"] not in counted
+              and row.get("expired") is not True
+              and (row.get("workflow_run") or {}).get("id") != RUN_ID]
+    dedup: dict[int, dict] = {}
+    for row in kept_artifacts + preview_kept + others:
+        dedup.setdefault(row["id"], row)          # 预览产物既是 survivor 又进了 fresh，按 id 去重
+    pool = sorted(dedup.values(), key=lambda row: (row["created_at"], row["id"]), reverse=True)
+    excess = pool[KEEP_ARTIFACTS:]
+    for row in excess:
+        if row["name"].startswith(PREFIX) and row in kept_artifacts:
+            kept_artifacts.remove(row)
+        elif not row["name"].startswith(PREFIX) and not owned(row):
+            print(f"保留[artifact] {row['created_at']} {row['name']} id={row['id']}"
+                  "（归属不明，不判定）")
+            continue
+        victims.append((row, f"仓内总数（全仓 {len(pool)} 个，超过 {KEEP_ARTIFACTS}）"))
+    if excess:
+        print(f"判据六：全仓 {len(pool)} 个，超出 {len(pool) - KEEP_ARTIFACTS} 个按 created_at 最旧清")
+
     for row in kept_artifacts:
         print(f"保留[artifact] {source_label(row)}")
     for row, why in victims:
@@ -383,9 +410,9 @@ def verify() -> None:
     if SCOPE == "actions":
         artifacts = api_list(f"repos/{REPO}/actions/artifacts?per_page=100",
                              ".artifacts[] | {id,name,workflow_run}")
-        left = [row for row in artifacts if row["name"].startswith(PREFIX)]
+        left = [row for row in artifacts if row.get("expired") is not True]
         gap = any(kind == "artifact" for kind, _, _ in PERMISSION_GAPS)
-        print(f"复核：artifact 当前剩 {len(left)} 个（上限 {KEEP_ARTIFACTS}）")
+        print(f"复核：artifact 全仓剩 {len(left)} 个（上限 {KEEP_ARTIFACTS}，不分前缀）")
         if gap:
             print("复核未完成：artifact 清理遇到 403 权限缺口，未把未删对象描述成清理成功。")
         elif len(left) > KEEP_ARTIFACTS:
