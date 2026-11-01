@@ -30,6 +30,9 @@ FIT_TOL = float(os.environ.get("SELFFONT_FIT_TOL", 0.80))
                       # 三次贝塞尔拟合容差（字体单位）。0.4 会把每个 90° 圆角切成两段
                       # （R≈200 的弧单段三次误差 1.0），段数翻倍；0.8 与母版自身的
                       # 曲线误差（圆角两段二次、2.1 单位）同量级
+QUAD_MODE = os.environ.get("SELFFONT_QUAD_MODE", "c0")   # c0=中点匹配（默认，接点多但稳）；
+                      # g1=切向交点（接点处 G1，但为了压误差会多拆段，接点数涨到 150+，且长段
+                      # 的控制点会越出字身框，实测整字丢失）。默认保持 c0，g1 只用于复算。
 QUAD_TOL = float(os.environ.get("SELFFONT_QUAD_TOL", 1.5))
                       # 三次 → 二次的弦高容差（字体单位）：母版 90° 圆角就是两段二次（误差 2.1 单位），
                       # 段越碎接点越多，接点上曲率不连续，放大看就是一圈棱
@@ -336,7 +339,7 @@ def _cubic_quad_err(c0, c1, c2, c3):
     三次与「中点匹配的单条二次」之差是 t(1-t)(2t-1) 的量级，极值在 t=(3±√3)/6 ≈
     0.211/0.789 附近；取这两点就够选 n 用，不必撒 7 个采样点（每段要算五遍，差 3 倍）。
     """
-    qx, qy = _quad_g1(c0, c1, c2, c3)
+    qx, qy = (_quad_g1 if QUAD_MODE == "g1" else _quad_of_cubic)(c0, c1, c2, c3)
     worst = 0.0
     for t in (0.21132486540518713, 0.7886751345948129):
         u = 1 - t
@@ -431,7 +434,7 @@ def fit_rings(dense, anchors):
             # 二次拆分数只按参考档（400）算：三档形状差一个笔宽，需要的段数在这个精度下相同
             k = _n_quad(cubics[ref_w][si])
             for w in weights:
-                quads[w].append([(_quad_g1(*s), s[3])
+                quads[w].append([((_quad_g1 if QUAD_MODE == "g1" else _quad_of_cubic)(*s), s[3])
                                  for s in _sub_cubics(*cubics[w][si], k)])
         for w in weights:
             pts, flags = [], []
