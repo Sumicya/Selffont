@@ -1,3 +1,19 @@
+## 2026-11-02（日）· 上游核查：Maruko SC 是 AI 重做的另一套，Zen/Maruko JP 才是人做的
+
+- 上游链：Zen Maru Gothic（`googlefonts/zen-marugothic`，Google Fonts 收录，OFL）
+  → Maruko Gothic 的 **JP** 版（`max32002/maruko-gothic` 固定提交 `97e9dd4`，作者 README 写明
+  「建議使用 CJK JP 版本，效果會最好」）→ Maruko **SC** 版（作者用 AI 补中文，另做的一套）。
+- 逐轮廓 sha1 比对（200 字样本里 Zen 也有的 54 字）：**Zen 与 Maruko JP 54/54 完全相同**；
+  **SC 与 JP 0/54 相同**。即 SC 不是「同一套字形加中文」，是重画的一套。
+- 接点质量（同一批 54 字）：折角中位 Zen **0.00°** / JP **0.00°** / SC **1.18°** / 我们 **3.63°**；
+  缓折(2°–25°) 占比 8.2% / 8.3% / **31.5%** / **65.0%**；点/字 132.7 / 132.8 / 136.3 / 184.5。
+  母版 SC 自己就比 Zen 糙一档，我们在这之上再描一遍又糙一档。
+- 证据图 `docs/evidence/2026-11-02-upstream-four-way.png`：「門」放大 3 倍可见 Zen/JP 竖笔末端
+  是收锋，SC 平钝带毛刺，Selfrounds 原样继承。
+- **未改设计数据**：`tools/design_cjk.bin` 仍是从 SC 量的中线。换源要重跑
+  `tools/maruko_skeleton.py` 全量抽取（33,931 字 × 0.35 s ≈ 3.3 小时），且 JP 与 SC 的
+  字形不同（繁体/日文字形差异），属换设计不是修 bug，等点头。
+
 ## 2026-11-02（日）· 轮廓接点投影：折角中位 5.19° → 3.75°，点数一个没变
 
 - `tools/curve_fit.py` 新增 `_quad_proj(cubics, lam)`：二次曲线按中点匹配（`_quad_of_cubic`）
