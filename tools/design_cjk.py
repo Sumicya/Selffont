@@ -389,13 +389,17 @@ STATION_CAP = int(os.environ.get("SELFFONT_STATION_CAP", 48))
                         # 一段只给 48 点、间距 11.5，描出来的临界曲率估不准，拟合回来就是折角。
                         # 与 JP 原版逐字对比后确认这是「重画一遍就糙一档」的主因之一。
 FAIR_UNITS = 18.0       # 半宽剖面的低通尺度（字体单位）：比它更短的起伏判为栅格噪声
-HW_GAIN = float(os.environ.get("SELFFONT_HW_GAIN", "1.05"))
-# 半宽总增益：数据里的 hw 是量母版栅格得到的，阈值化会让每侧少半个像素，
-# 画出来整字墨量比母版少 3.5%。这个数是量出来的，不是猜的（见 CHANGELOG）。
+HW_BIAS = float(os.environ.get("SELFFONT_HW_BIAS", "0.8"))
+# 半宽**常数**补偿（字体单位）：hw 是从栅格量出来的，二值化每侧吃掉约半像素。
+# 实测差距是常数不是比例——我们墨带 60–61 单位、母版 62.5–63，每侧差约 0.8 单位。
+# 早先写成乘 1.05 的**比例**增益，把剖面起伏一起放大 5%，边缘 RMS 反而从 1.59 涨到 2.04。
 STRAIGHT_TOL = float(os.environ.get("SELFFONT_STRAIGHT_TOL", "1.5"))
 # 近乎直的段吸成精确直线（字体单位）：控制点离弦线不超过这个距离就当它是直的。
 # 栅格化出来的骨架每处带 ±1 单位抖动，直笔画不该带这个波——母版同一根竖的宽度极差是 0。
 FLATTEN_STRAIGHT = os.environ.get("SELFFONT_FLATTEN_STRAIGHT", "1") not in ("0", "", "no", "false")
+# 2026-11-02 实测（`tools/check_straight.py`，13 字）：开 1.85 px、关 1.85 px 相同，
+# 但逐字看 `門` 2.17 vs 2.91、`團` 1.49 vs 1.52——开着每个字都不差，所以默认开。
+# 注意必须用带段边界过渡的版本：最早那版整段直接赋值，交接处造出 13 px 凸起。
 PROFILE_TOL = 0.015     # 剖面（相对半宽）一维 DP 容差：1.5% ≈ 半宽 28 上的 0.42 单位
 
 
@@ -875,7 +879,7 @@ def stroke_half(stroke, glyph, weight):
     """取这一笔在该档的半宽：优先逐笔三档数据，缺了退回整字半宽 × 档位比例。"""
     hw = stroke.get("hw")
     if isinstance(hw, dict) and hw:
-        return float(hw.get(weight) or hw.get(400) or next(iter(hw.values()))) * HW_GAIN
+        return float(hw.get(weight) or hw.get(400) or next(iter(hw.values()))) + HW_BIAS
     base = hw if isinstance(hw, (int, float)) else glyph.get("hw", 31.0)
     return float(base) * _LEGACY_RATIO[weight] / _LEGACY_RATIO[400]
 
