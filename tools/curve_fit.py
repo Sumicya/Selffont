@@ -44,12 +44,33 @@ LINE_TOL = float(os.environ.get("SELFFONT_LINE_TOL", 0.12))
                       # 0.12 的由来（2026-11-01）：0.80 下半径 31 的圆头整圈被判成 12 段直线，
                       # 端头在 6× 下是多边形；0.12 让弦长 5.4 以上的弧全部走曲线，真直边（母版 81 单位
                       # 那种）不受影响。环境变量 SELFFONT_LINE_TOL 只为改前改后用同一份代码复算。
+FIT_MODE = os.environ.get("SELFFONT_FIT_MODE", "proj")
+# 隐式中点（2026-11-02）：独立于 FIT_MODE，任何拟合方式都能开。
+IMPLICIT_MID = os.environ.get("SELFFONT_IMPLICIT_MID", "0") not in ("0", "", "no", "false")
+# 强制隐式中点（2026-11-02）：把折角小于该阈值的接点改造成隐式中点，折角归零。0 = 关。
+IMPLICIT_MERGE = float(os.environ.get("SELFFONT_IMPLICIT_MERGE", "8"))
+MERGE_TOL = float(os.environ.get("SELFFONT_MERGE_TOL", "8"))   # 合并时控制点允许的最大位移（字体单位）
+                      # 二次控制点怎么定（2026-11-02）：
+                      #   "c0"     = 中点匹配（旧默认）
+                      #   "proj"   = c0 打底再朝切向投影（_quad_proj），默认，形状安全
+                      #   "g1"     = 切向交点，接点天然 G1
+                      #   "bisect" = 保长度角平分线投影
+                      # 2026-11-02 实测（100 字，相对 Maruko JP 原版）：
+                      #   c0 / proj 折角中位 3.67°，整字 IoU 0.925 —— 安全
+                      #   g1        折角中位 2.62°，IoU 0.861、最差 0.341 —— **伤形状，不采用**
+                      #   bisect    折角中位 5.11°（更差），λ=1 时 76% 字形被拒 —— **不采用**
+                      # 结论：TrueType 二次链在固定段数下，中点匹配的折角下限约 3.5°；
+                      # 要更低必须换曲线类型（三次/CFF2）或换拓扑来源（直接搬母版，但那样
+                      # 三档拓扑只有 1.0% 一致，做不出可变轴）。两条都超出本轮范围。
+                      # 三者的段数判据都是 c0，所以点数只由几何决定、不受本开关影响。
 QUAD_PROJ = float(os.environ.get("SELFFONT_QUAD_PROJ", "0.5"))
                       # 接点切向阻尼投影的强度 λ（2026-11-02）：0 = 老行为（只做中点匹配），
                       # 1 = 接点处严格 G1。只移动已有的二次控制点，**不改段数、不改点数**，
                       # 所以它是唯一一个「压折角不涨点数」的旋钮。取值见 docs/metrics.md。
 MAX_QUAD = int(os.environ.get("SELFFONT_MAX_QUAD", 5))   # 单段三次最多拆成几条二次
 MAX_DEPTH = 12        # 递归切分深度上限
+BISECT_MAX_DEG = float(os.environ.get("SELFFONT_BISECT_MAX", "25.0"))
+                      # 角平分线投影允许的最大转角（度）。超过不动：转了会鼓出去。
 SMOOTH_JOINT_MAX = float(os.environ.get("SELFFONT_SMOOTH_JOINT", "30.0"))
                       # 接点投影的守卫：相邻两条三次自身切向差超过它，就当真折角，不投影
 
@@ -400,6 +421,171 @@ def _proj_toward(q, P, d, lam):
             q[1] + lam * (P[1] + t * d[1] - q[1]))
 
 
+def _quad_bisect(cubics, lam=1.0):
+    """保长度的角平分线投影：把接点两侧控制点放到同一条角平分线上，**各自长度不变**。
+
+    为什么不是 g1（切向交点）：那个为了两端都贴原切向，会把控制点甩很远，大张角下
+    径向误差 6%，实测整字 IoU 掉到 0.861、最差 0.341。
+    为什么不是投影到后段切向：投影会改变控制点到接点的距离，近距离时方向误差放大，
+    而且容易翻到接点另一侧（被守卫拒绝后原地不动，折角还在）。
+
+    这里：方向取两段三次自身切向的角平分线 d，两侧控制点分别放在 `P−|q−P|·d` 与
+    `P+|q−P|·d`。于是末切向 = P−qa = |qa−P|·d、首切向 = qb−P = |qb−P|·d，**严格共线**，
+    折角恒为 0；长度一个数都没动，所以形状只是绕接点转了一下。
+    """
+    quads = [[s[0], _quad_of_cubic(*s), s[3]] for s in cubics]
+    if lam <= 0 or len(quads) < 2:
+        return [tuple(q) for q in quads]
+    tang = [_nrm((s[1][0] - s[0][0], s[1][1] - s[0][1])) for s in cubics]
+    tend = [_nrm((s[3][0] - s[2][0], s[3][1] - s[2][1])) for s in cubics]
+    n = len(quads)
+    for i in range(n):
+        j = (i + 1) % n
+        P = quads[i][2]
+        d = _nrm((tend[i][0] + tang[j][0], tend[i][1] + tang[j][1]))
+        if d == (0.0, 0.0):
+            continue
+        for slot, sign in ((i, -1.0), (j, 1.0)):
+            q = quads[slot][1]
+            vx, vy = q[0] - P[0], q[1] - P[1]
+            L = (vx * vx + vy * vy) ** 0.5
+            if L < 1e-6:
+                continue
+            tx, ty = P[0] + sign * L * d[0], P[1] + sign * L * d[1]
+            # 限制单次转角：保长度但转到角平分线，若原方向与 d 差得多，曲线会鼓出去。
+            # BISECT_MAX_DEG 之外的不动（那些多半是真折笔或端头附近，转了会变形）。
+            ux, uy = -sign * vx / L, -sign * vy / L          # 原方向（指向接点）
+            if _angle_deg((ux, uy), (sign * d[0], sign * d[1])) > BISECT_MAX_DEG:
+                continue
+            quads[slot][1] = (q[0] + lam * (tx - q[0]), q[1] + lam * (ty - q[1]))
+    return [tuple(q) for q in quads]
+
+
+def _implicit_mid_points(out_pts, out_flags, ri, weights, tol=0.05):
+    """把「恰在前后两个 off 点中点」的显式 on 点标成可删，按倒序删三档。
+
+    返回删掉的个数。三档同时判断（同一索引三档都满足才删）。
+    """
+    w0 = weights[0]
+    pts0, flags0 = out_pts[w0][ri], out_flags[w0][ri]
+    n = len(pts0)
+    if n < 4:
+        return 0
+    victims = []
+    for i in range(n):
+        if flags0[i] != 1:
+            continue
+        a, b = (i - 1) % n, (i + 1) % n
+        if flags0[a] != 0 or flags0[b] != 0:
+            continue
+        ok = True
+        for w in weights:
+            pw = out_pts[w][ri]
+            if _dist(pw[i], ((pw[a][0] + pw[b][0]) * 0.5, (pw[a][1] + pw[b][1]) * 0.5)) > tol:
+                ok = False
+                break
+        if ok:
+            victims.append(i)
+    if not victims:
+        return 0
+    # 相邻两个 victim 不能同时删（删完会变成三个 off 点连排，中点规则仍然成立，但
+    # 第二个中点就不是原来那个 on 点了）。隔一个删。
+    keep = []
+    last = -99
+    for i in victims:
+        if i - last > 1 and not (last == 0 and i == n - 1):
+            keep.append(i)
+            last = i
+    if not keep:
+        return 0
+    for i in sorted(keep, reverse=True):
+        for w in weights:
+            out_pts[w][ri].pop(i)
+            out_flags[w][ri].pop(i)
+    return len(keep)
+
+
+def _implicit_merge(out_pts, out_flags, ri, weights, max_deg):
+    """把「本来就在缓折」的显式 on 点改造成隐式中点，折角归零且不占点。
+
+    母版接点 0° 不是因为拟合得好，而是因为它**根本不存 on 点**：相邻两个 off 点的中点
+    由渲染器补出，那个中点天生 G1。我们全显式，每个接点都得自己挣 G1——这就是「重画
+    一遍糙一档」真正花钱的地方。
+
+    这里反向利用同一机制：挑接点 P，把两侧控制点 C、D 摆成关于 P 对称（方向取 C→D
+    割线，长度取原两侧的平均），P 就精确等于 (C+D)/2，再删掉 P。曲线在 P 处的切向变成
+    C→D 方向，折角恒 0。只动缓折接点：硬掰张角大的接点会把笔锋压平，那是设计的拐，
+    不是误差。三档同时判定——gvar 的点序必须对齐，删不删只能有一个答案。
+    """
+    w0 = weights[0]
+    pts0, flags0 = out_pts[w0][ri], out_flags[w0][ri]
+    n = len(pts0)
+    if n < 6:
+        return 0
+    victims = []
+    for i in range(n):
+        if flags0[i] != 1:
+            continue
+        a, b = (i - 1) % n, (i + 1) % n
+        if flags0[a] != 0 or flags0[b] != 0:
+            continue
+        ok = True
+        for w in weights:
+            pw = out_pts[w][ri]
+            P, C, D = pw[i], pw[a], pw[b]
+            u = (P[0] - C[0], P[1] - C[1])
+            v = (D[0] - P[0], D[1] - P[1])
+            lu = (u[0] * u[0] + u[1] * u[1]) ** 0.5
+            lv = (v[0] * v[0] + v[1] * v[1]) ** 0.5
+            if lu < 1e-6 or lv < 1e-6:
+                ok = False
+                break
+            cs = max(-1.0, min(1.0, (u[0] * v[0] + u[1] * v[1]) / (lu * lv)))
+            if _angle_deg(u, v) > max_deg:
+                ok = False
+                break
+        if ok:
+            victims.append(i)
+    if not victims:
+        return 0
+    keep = []
+    last = -99
+    for i in victims:
+        if i - last > 1 and not (last == 0 and i == n - 1):
+            keep.append(i)
+            last = i
+    if not keep:
+        return 0
+    for i in sorted(keep, reverse=True):
+        # 先在**每一档**上算出对称摆法，全部合格才落刀：三档只允许一个答案，否则点数分叉。
+        plans = {}
+        ok = True
+        for w in weights:
+            pw = out_pts[w][ri]
+            a, b = (i - 1) % len(pw), (i + 1) % len(pw)
+            P, C, D = pw[i], pw[a], pw[b]
+            # 约束是 (C'+D')/2 = P：两侧臂必须等长且共线，只有一个自由度 w。
+            # 对 |C'−C|² + |D'−D|² 求极小，解就是 w = (D−C)/2——把 P 与中点的
+            # 偏差**平分**给两个控制点。控制点因此只落在原 C–D 连线上，不会外飞
+            # （曾用「两侧臂长取平均」，一长一短时把控制点甩出字身框，97/100 字被拒）。
+            wx, wy = (D[0] - C[0]) * 0.5, (D[1] - C[1]) * 0.5
+            # 位移守卫：控制点挪得太远说明这个接点并不是「缓折」，宁可不合。
+            if (max(abs(wx - (P[0] - C[0])), abs(wy - (P[1] - C[1])),
+                    abs(wx - (D[0] - P[0])), abs(wy - (D[1] - P[1]))) > MERGE_TOL):
+                ok = False
+                break
+            plans[w] = (a, b, P, wx, wy)
+        if not ok:
+            continue
+        for w in weights:
+            a, b, P, wx, wy = plans[w]
+            out_pts[w][ri][a] = (P[0] - wx, P[1] - wy)
+            out_pts[w][ri][b] = (P[0] + wx, P[1] + wy)
+            out_pts[w][ri].pop(i)
+            out_flags[w][ri].pop(i)
+    return len(keep)
+
+
 def _split_cubic(c0, c1, c2, c3, t):
     p01 = (c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t)
     p12 = (c1[0] + (c2[0] - c1[0]) * t, c1[1] + (c2[1] - c1[1]) * t)
@@ -434,7 +620,9 @@ def _cubic_quad_err(c0, c1, c2, c3):
     三次与「中点匹配的单条二次」之差是 t(1-t)(2t-1) 的量级，极值在 t=(3±√3)/6 ≈
     0.211/0.789 附近；取这两点就够选 n 用，不必撒 7 个采样点（每段要算五遍，差 3 倍）。
     """
-    qx, qy = (_quad_g1 if QUAD_MODE == "g1" else _quad_of_cubic)(c0, c1, c2, c3)
+    qx, qy = _quad_of_cubic(c0, c1, c2, c3)
+    # 判据固定用中点匹配：g1 在大张角下径向误差更大（90° 时 6%），拿它判段数会
+    # 一路把段拆碎（实测点数 +29%）。段数按 c0 判，控制点可以另选——见 FIT_MODE。
     worst = 0.0
     for t in (0.21132486540518713, 0.7886751345948129):
         u = 1 - t
@@ -546,8 +734,12 @@ def fit_rings(dense, anchors):
             if run:
                 todo.append((run, [x for si2 in run for x in subs[w][si2]]))
             for idxs, chain in todo:
-                if QUAD_MODE == "g1":
+                if FIT_MODE == "g1":
                     moved = [(_quad_g1(*c), c[3]) for c in chain]
+                elif FIT_MODE == "c0":
+                    moved = [(_quad_of_cubic(*c), c[3]) for c in chain]
+                elif FIT_MODE == "bisect":
+                    moved = [(q[1], q[2]) for q in _quad_bisect(chain, QUAD_PROJ)]
                 else:
                     moved = [(q[1], q[2]) for q in _quad_proj(chain, QUAD_PROJ)]
                 at = 0
@@ -559,7 +751,7 @@ def fit_rings(dense, anchors):
         # 第二遍：曲线与**直线**相接的接点。这一侧只有一根控制柄，投影到直线方向上就够，
         # 不需要成对。跑之前这些接点完全没被处理过（直线段是链的断点），而横竖笔画的
         # 直边与端头/转折相接处正是它们——不补这一遍，中位数压不下去。
-        if QUAD_MODE != "g1" and QUAD_PROJ > 0:
+        if FIT_MODE in ("proj", "bisect") and QUAD_PROJ > 0:
             for w in weights:
                 n_seg = len(segs)
                 for si in range(n_seg):
@@ -621,4 +813,30 @@ def fit_rings(dense, anchors):
                 flags.pop()
             out_pts[w].append(pts)
             out_flags[w].append(flags)
+    if IMPLICIT_MID or FIT_MODE == "c0_none":
+        # 隐式接点（2026-11-02）：TrueType 允许两个 off-curve 点相邻，中点由渲染器补出，
+        # 而那个中点**天然 G1**——它是两个 off 点的均值，入切向 (M−A) 与出切向 (B−M)
+        # 本来共线。母版正是这么排的（「一」14 点里 6 on / 8 off，最长连续 off = 2），
+        # 所以它的接点折角是 0.00°。我们此前全是显式 on 点，每个接点都要自己挣 G1。
+        # 这里把「正好落在前后两个 off 点中点」的显式 on 点删掉：曲线一个像素都不动，
+        # 点数反而更少。三档必须同时满足才删，否则 gvar 的点序会错位。
+        for ri in range(len(out_pts[weights[0]])):
+            for _round in range(3):
+                lens = {w: len(out_pts[w][ri]) for w in weights}
+                if len(set(lens.values())) != 1:
+                    break
+                drop = _implicit_mid_points(out_pts, out_flags, ri, weights)
+                if not drop:
+                    break
+    # 强制隐式中点：独立于上面的开关，任何拟合方式都能跑（见 _implicit_merge）。
+    if IMPLICIT_MERGE > 0:
+        for ri in range(len(out_pts[weights[0]])):
+            # 只跑一轮：多轮会级联（这轮合掉 i，下轮 i+2 又满足条件），实测四轮把全库
+            # on 点从 16,313 啃到 7,916——角被一起啃平了。一轮的每一次合并都受守卫约束。
+            for _round in range(1):
+                lens = {w: len(out_pts[w][ri]) for w in weights}
+                if len(set(lens.values())) != 1:
+                    break
+                if not _implicit_merge(out_pts, out_flags, ri, weights, IMPLICIT_MERGE):
+                    break
     return out_pts, out_flags

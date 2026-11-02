@@ -384,6 +384,10 @@ ARC_STEPS = int(os.environ.get("SELFFONT_ARC_STEPS", 16))
                         # 环境变量同上，只为 A/B。
 CHORD_TOL = 0.10        # 描边的中间点弦高误差（字体单位）；这是**拟合用的密点**，不是输出点
 STATION_STEP = 8.0      # 中间点最大弧长间距（字体单位）：间距太大就估不出曲率
+STATION_CAP = int(os.environ.get("SELFFONT_STATION_CAP", 48))
+                        # 单段采样点数上限。2026-11-02 实测：48 会把长笔画截断——弧长 552 的
+                        # 一段只给 48 点、间距 11.5，描出来的临界曲率估不准，拟合回来就是折角。
+                        # 与 JP 原版逐字对比后确认这是「重画一遍就糙一档」的主因之一。
 FAIR_UNITS = 18.0       # 半宽剖面的低通尺度（字体单位）：比它更短的起伏判为栅格噪声
 PROFILE_TOL = 0.015     # 剖面（相对半宽）一维 DP 容差：1.5% ≈ 半宽 28 上的 0.42 单位
 
@@ -437,7 +441,7 @@ def _stations(segs):
             L += math.hypot(a[0] - b[0], a[1] - b[1])
         by_len = int(math.ceil(L / STATION_STEP))
         by_curve = int(math.ceil(math.sqrt(max(d, 1e-9) * 0.75 / CHORD_TOL)))
-        counts.append(min(max(by_len, by_curve), 48))
+        counts.append(min(max(by_len, by_curve), STATION_CAP))
     return counts
 
 
