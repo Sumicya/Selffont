@@ -389,6 +389,13 @@ STATION_CAP = int(os.environ.get("SELFFONT_STATION_CAP", 48))
                         # 一段只给 48 点、间距 11.5，描出来的临界曲率估不准，拟合回来就是折角。
                         # 与 JP 原版逐字对比后确认这是「重画一遍就糙一档」的主因之一。
 FAIR_UNITS = 18.0       # 半宽剖面的低通尺度（字体单位）：比它更短的起伏判为栅格噪声
+HW_GAIN = float(os.environ.get("SELFFONT_HW_GAIN", "1.05"))
+# 半宽总增益：数据里的 hw 是量母版栅格得到的，阈值化会让每侧少半个像素，
+# 画出来整字墨量比母版少 3.5%。这个数是量出来的，不是猜的（见 CHANGELOG）。
+STRAIGHT_TOL = float(os.environ.get("SELFFONT_STRAIGHT_TOL", "1.5"))
+# 近乎直的段吸成精确直线（字体单位）：控制点离弦线不超过这个距离就当它是直的。
+# 栅格化出来的骨架每处带 ±1 单位抖动，直笔画不该带这个波——母版同一根竖的宽度极差是 0。
+FLATTEN_STRAIGHT = os.environ.get("SELFFONT_FLATTEN_STRAIGHT", "1") not in ("0", "", "no", "false")
 PROFILE_TOL = 0.015     # 剖面（相对半宽）一维 DP 容差：1.5% ≈ 半宽 28 上的 0.42 单位
 
 
@@ -445,6 +452,129 @@ def _stations(segs):
     return counts
 
 
+def _weld_straight_runs(stroke):
+    """把**连续的直线段**并成一条公共直线。
+
+    `門` 左竖在骨架上被切成三段（段 13/14/15），每段各自是直的，但方向差 0.548°：
+    396 单位长的竖上累计偏 3.8 单位，渲染出来就是「不直」。母版同一根竖是 0.00。
+    做法：连续的直段端点做最小二乘拟合，再把所有端点投影到这条直线上——
+    段数不变（剖面长度按段数算），相邻段严格共线，拼起来就是一条线。
+    """
+    straight = stroke.get("_straight") or set()
+    if len(straight) < 2:
+        return 0
+    segs = stroke["segs"]
+    runs, cur = [], []
+    for j in range(len(segs)):
+        if j in straight:
+            cur.append(j)
+        else:
+            if cur:
+                runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    welded = 0
+    for run in runs:
+        if len(run) < 2:
+            continue
+        pts = []
+        for j in run:
+            pts.append(segs[j][0])
+        pts.append(segs[run[-1]][3])
+        n = len(pts)
+        mx = sum(p[0] for p in pts) / n
+        my = sum(p[1] for p in pts) / n
+        sxx = sum((p[0] - mx) ** 2 for p in pts)
+        syy = sum((p[1] - my) ** 2 for p in pts)
+        sxy = sum((p[0] - mx) * (p[1] - my) for p in pts)
+        # 主方向：协方差矩阵的最大特征向量
+        import math
+        tr = sxx + syy
+        det = sxx * syy - sxy * sxy
+        lam = tr / 2 + math.sqrt(max(tr * tr / 4 - det, 0.0))
+        if abs(sxy) > 1e-12:
+            dx, dy = lam - syy, sxy
+        else:
+            dx, dy = (1.0, 0.0) if sxx >= syy else (0.0, 1.0)
+        ln = math.hypot(dx, dy) or 1.0
+        dx, dy = dx / ln, dy / ln
+        for j in run:
+            p0, p1, p2, p3 = segs[j]
+            q0 = _proj_on_line(p0, mx, my, dx, dy)
+            q3 = _proj_on_line(p3, mx, my, dx, dy)
+            segs[j] = [q0,
+                       (q0[0] + (q3[0] - q0[0]) / 3.0, q0[1] + (q3[1] - q0[1]) / 3.0),
+                       (q0[0] + (q3[0] - q0[0]) * 2.0 / 3.0, q0[1] + (q3[1] - q0[1]) * 2.0 / 3.0),
+                       q3]
+            welded += 1
+    return welded
+
+
+def _proj_on_line(p, ox, oy, dx, dy):
+    t = (p[0] - ox) * dx + (p[1] - oy) * dy
+    return (ox + dx * t, oy + dy * t)
+
+
+def _snap_straight(stroke):
+    """把几乎直的段吸成精确直线，并在笔画上记下哪些段是直的。
+
+    只改控制点、不改段数——`prof` 的长度按段数算，段数一变剖面就整条作废。
+    判据是控制点离弦线 ≤ STRAIGHT_TOL：`門` 左竖那三段实测 0.28–0.48 单位，
+    `日` 的竖 0.40；而真拐角、钩、撇的同类值都在 2 以上。
+    """
+    import math
+
+    segs = stroke["segs"]
+    out, straight = [], set()
+    for j, seg in enumerate(segs):
+        p0, p1, p2, p3 = seg
+        L = math.hypot(p3[0] - p0[0], p3[1] - p0[1])
+        if L > 1e-6 and max(_off_line(p0, p3, p1), _off_line(p0, p3, p2)) <= STRAIGHT_TOL:
+            out.append([p0,
+                        (p0[0] + (p3[0] - p0[0]) / 3.0, p0[1] + (p3[1] - p0[1]) / 3.0),
+                        (p0[0] + (p3[0] - p0[0]) * 2.0 / 3.0, p0[1] + (p3[1] - p0[1]) * 2.0 / 3.0),
+                        p3])
+            straight.add(j)
+        else:
+            out.append(seg)
+    stroke["segs"] = out
+    stroke["_straight"] = straight
+    _weld_straight_runs(stroke)
+    return straight
+
+
+def _flatten_straight_halves(halves, ts, straight):
+    """直段上的半宽压成常数，且**在段边界上做线性过渡**。
+
+    2026-11-02 第一版直接整段赋值，`門` 左竖与横画的交接处出现 13 px 的凸起——
+    相邻段半宽不同，边界上跳变，轮廓在那里折了一下。改成：段内目标值为中位数，
+    但只在本段范围内从「原值」过渡过去，边界处仍接原值，跳变就没了。
+    """
+    if not straight:
+        return halves
+    out = list(halves)
+    for j in straight:
+        idx = [i for i, (sj, _t) in enumerate(ts) if sj == j]
+        if len(idx) < 3:
+            continue
+        vals = sorted(halves[i] for i in idx)
+        med = vals[len(vals) // 2]
+        n = len(idx)
+        for k, i in enumerate(idx):
+            # 两端 25% 的路程用于过渡，中间恒为 med
+            ramp = n * 0.25
+            if k < ramp:
+                w = 0.5 * (k / max(ramp, 1.0))
+            elif k > n - 1 - ramp:
+                w = 0.5 * ((n - 1 - k) / max(ramp, 1.0))
+            else:
+                w = 0.5
+            w = max(0.0, min(0.5, w))
+            out[i] = halves[i] * (1.0 - w) + med * w
+    return out
+
+
 def _dense_axis(stroke):
     """中线密采样（按弦高误差），返回 (点列, (段号, 参数) 列, 切向列)。结果缓存在笔画上。
 
@@ -454,6 +584,8 @@ def _dense_axis(stroke):
     cached = stroke.get("_dense")
     if cached is not None:
         return cached
+    if "_straight" not in stroke:
+        _snap_straight(stroke)
     segs = stroke["segs"]
     pts, ts, tans = [], [], []
     for j, (seg, n) in enumerate(zip(segs, _stations(segs))):
@@ -710,6 +842,8 @@ def stroke_contours(stroke, weight, glyph=None):
         faired = _fair(raw, _spacing(axis), FAIR_UNITS, closed)
         faired = _polyline1d(list(faired), PROFILE_TOL)
         halves = [float(v) * half for v in faired]
+        if FLATTEN_STRAIGHT:
+            halves = _flatten_straight_halves(halves, ts, stroke.get("_straight") or set())
     else:
         halves = [half] * n
     ref_half = stroke_half(stroke, glyph or {}, 400)
@@ -741,7 +875,7 @@ def stroke_half(stroke, glyph, weight):
     """取这一笔在该档的半宽：优先逐笔三档数据，缺了退回整字半宽 × 档位比例。"""
     hw = stroke.get("hw")
     if isinstance(hw, dict) and hw:
-        return float(hw.get(weight) or hw.get(400) or next(iter(hw.values())))
+        return float(hw.get(weight) or hw.get(400) or next(iter(hw.values()))) * HW_GAIN
     base = hw if isinstance(hw, (int, float)) else glyph.get("hw", 31.0)
     return float(base) * _LEGACY_RATIO[weight] / _LEGACY_RATIO[400]
 
