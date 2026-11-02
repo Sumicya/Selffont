@@ -77,7 +77,7 @@ jobs:
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
           echo "::notice title=SelfFontProbe::bytes=$BYTES sha256=$SHA"
 
-      - name: 记短 SHA（命名用，见 docs/workflow-naming.md）
+      - name: 记短 SHA（产物名用）
         run: echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
 
       - name: 上传产物
@@ -108,4 +108,5 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           CLEANUP_SCOPE: actions
+          CLEANUP_APPLY: 'true'          # 缺这一行脚本会按「未交代」直接退出（实测 exit 1）
         run: python3 .github/scripts/cleanup.py
