@@ -1,3 +1,17 @@
+## 2026-11-02（日）· 换源验证：换 Maruko JP 不改善折角，「重画」本身才是主因
+
+- 用 `maruko_skeleton.bezier_strokes` 从 **Maruko JP** 直接抽中线，走我们自己的固定拓扑管线
+  重画 100 字（`design_cjk.write` → 75,421 B），抽笔速度 **0.4 s/字**——全量 33,931 字约 **3.8 小时**，
+  不是原先估的 3.3 小时（那是从 SC 复测剖面的速度）。
+- 结果（同一批 4 字 `冨弐満狸`）：JP 原版 点/字 **110.2**、折角中位 **0.00°**、缓折 **4.5%**；
+  我们从 JP 重画 **148.2 / 2.97° / 58.3%**；现在成品（SC 源）**146.8 / 2.96° / 60.6%**。
+  **换源几乎不动折角**——重画一遍（栅格化→骨架→描边→拟合）本身就损失掉全部平滑度。
+- 上游能否直接做可变字体：Maruko JP 的 Light/Regular/Medium 三档**互不兼容**
+  （varLib 报 53 个字形 incompatible masters），强行 varLib 出件后 instancing 到 300/500，
+  墨量一个像素都不变（5583 px × 3）——**假的轴**。上游没有可变字体，这条得我们自己重建。
+- 覆盖不构成障碍：Maruko JP 覆盖 GB2312 一级字 **3755/3755 = 100%**（Zen 原版只有 2384/3755=63.5%）。
+- 证据图 `docs/evidence/2026-11-02-redraw-cost.png`。
+
 ## 2026-11-02（日）· 上游核查：Maruko SC 是 AI 重做的另一套，Zen/Maruko JP 才是人做的
 
 - 上游链：Zen Maru Gothic（`googlefonts/zen-marugothic`，Google Fonts 收录，OFL）
