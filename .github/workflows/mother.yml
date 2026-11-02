@@ -83,7 +83,7 @@ jobs:
           # 会被管理器判成降级，再也装不回正规包。基准件改用独立 id（selffont-bench），
           # 不同 id 各自比较 versionCode，两边互不压制，90 万那套就没有必要了。
           build=${{ github.run_number }}
-          name="Selffont-mother-${MOTHER_REF}-${{ github.run_number }}"
+          name="maruko-mother-${MOTHER_REF}-${{ github.run_number }}"
           python build.py --passthrough-mother "work/${MOTHER_NAME}" \
             --date "$date" --day "$MOTHER_DAY" --build "$build" --module-id selffont-bench \
             --output "build/${name}.zip"
@@ -143,3 +143,25 @@ jobs:
             build/verify.md
           retention-days: 30
           if-no-files-found: error
+
+  cleanup-artifacts:
+    needs: mother
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: selffont-cleanup          # 与 build.yml / pr-check.yml 共用同一把锁
+      cancel-in-progress: false
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 清理超限产物与运行记录
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          CLEANUP_SCOPE: actions
+        run: python3 .github/scripts/cleanup.py

@@ -44,8 +44,14 @@ LINE_TOL = float(os.environ.get("SELFFONT_LINE_TOL", 0.12))
                       # 0.12 的由来（2026-11-01）：0.80 下半径 31 的圆头整圈被判成 12 段直线，
                       # 端头在 6× 下是多边形；0.12 让弦长 5.4 以上的弧全部走曲线，真直边（母版 81 单位
                       # 那种）不受影响。环境变量 SELFFONT_LINE_TOL 只为改前改后用同一份代码复算。
+QUAD_PROJ = float(os.environ.get("SELFFONT_QUAD_PROJ", "0.5"))
+                      # 接点切向阻尼投影的强度 λ（2026-11-02）：0 = 老行为（只做中点匹配），
+                      # 1 = 接点处严格 G1。只移动已有的二次控制点，**不改段数、不改点数**，
+                      # 所以它是唯一一个「压折角不涨点数」的旋钮。取值见 docs/metrics.md。
 MAX_QUAD = int(os.environ.get("SELFFONT_MAX_QUAD", 5))   # 单段三次最多拆成几条二次
 MAX_DEPTH = 12        # 递归切分深度上限
+SMOOTH_JOINT_MAX = float(os.environ.get("SELFFONT_SMOOTH_JOINT", "30.0"))
+                      # 接点投影的守卫：相邻两条三次自身切向差超过它，就当真折角，不投影
 
 # 端点切向的来源。这是 2026-10-31 那一轮唯一动的变量，留开关是为了「改前 / 改后」
 # 能用同一份代码复算，而不是靠 git 回滚去比。
@@ -56,6 +62,12 @@ MAX_DEPTH = 12        # 递归切分深度上限
 # 44.202 → 46.275（+2.07）、③ lsb 合格率 99.57% → 99.40%（−0.17pp）两条守卫判据没过。
 # 按事先定好的合取判据，这个改动**不采用**，默认留 "segment"；读数见 docs/metrics.md。
 ENDPOINT_TANGENT = os.environ.get("SELFFONT_ENDPOINT_TANGENT", "segment")
+
+# 诊断用：设 SELFFONT_JOINT_DEBUG=1 时，把每个接点的台账记到这里
+# （环号, i 段类型, j 段类型, 三次切向差, 二次折角改前, 改后）。只为量「折角长在哪」，
+# 不参与出件；默认关闭，不写文件。
+JOINT_LOG: list[tuple] = []
+_DEBUG_JOINTS = os.environ.get("SELFFONT_JOINT_DEBUG") == "1"
 
 
 # ---------------------------------------------------------------- 小几何
@@ -305,6 +317,89 @@ def _quad_g1(c0, c1, c2, c3):
     return (c0[0] + s_ * da[0], c0[1] + s_ * da[1])
 
 
+def _nrm(v):
+    n = (v[0] ** 2 + v[1] ** 2) ** 0.5
+    return (v[0] / n, v[1] / n) if n > 1e-12 else (0.0, 0.0)
+
+
+def _quad_proj(cubics, lam=0.5):
+    """把一条二次链的**接点**朝 G1 投影，只挪控制点——段数与点数一个都不变。
+
+    一条二次曲线 (P0, Q, P1) 的两端切向是 `Q−P0` 与 `P1−Q`。相邻两条要在接点 P 处
+    切向连续，`P−Q_前` 与 `Q_后−P` 就得同向。中点匹配（`_quad_of_cubic`）只保证曲线
+    经过段中点，接点切向不管，于是每拆一次段就在接点上留一个几度的折角——这正是
+    「点数比母版多、边却比母版糙」的地方。
+
+    做法：接点 P、该处切向 d（取后一段三次的起始切向），把两侧控制点各自朝
+    「过 P、沿 d 的直线」正投影，只走 λ 倍距离。λ=1 是严格 G1；λ=1 的副作用是控制点
+    可能被拉出去很远（近直段上投影距离很大），所以默认 0.5。
+
+    为什么不是 g1 模式：那个换的是**控制点算法**，为了压误差会多拆段（点数 +29%、
+    体积 +30%）。这里不动拆段，只在既有段上改接点，所以点数恒定。
+
+    输入 `cubics` 是一条**首尾相接**的三次曲线链（闭合环就是整环）；返回同样长度的
+    [(起点, 控制点, 终点)]。
+    """
+    quads = [[s[0], _quad_of_cubic(*s), s[3]] for s in cubics]
+    if lam <= 0 or len(quads) < 2:
+        return [tuple(q) for q in quads]
+    tang = [_nrm((s[1][0] - s[0][0], s[1][1] - s[0][1])) for s in cubics]
+    tend = [_nrm((s[3][0] - s[2][0], s[3][1] - s[2][1])) for s in cubics]
+    n = len(quads)
+
+    def _angle(a, b):
+        c = a[0] * b[0] + a[1] * b[1]
+        return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+    def _joint(i, j):
+        """这一对二次在接点上形成的折角（度）与折反（180° 附近）都要能看见。"""
+        P = quads[i][2]
+        a = _nrm((P[0] - quads[i][1][0], P[1] - quads[i][1][1]))
+        b = _nrm((quads[j][1][0] - P[0], quads[j][1][1] - P[1]))
+        return _angle(a, b)
+
+    for i in range(n):
+        j = (i + 1) % n
+        # 守卫一：真折角不动。相邻两条三次自己的切向就差很多，那不是「同一段弧被切碎」
+        # 而是设计上的拐；投影上去会把角磨平、把形状改坏（实测 P90 18.96°→68.34°）。
+        if _angle(tend[i], tang[j]) > SMOOTH_JOINT_MAX:
+            if _DEBUG_JOINTS:
+                JOINT_LOG.append(("corner", _angle(tend[i], tang[j]), _joint(i, j), _joint(i, j)))
+            continue
+        P = quads[i][2]
+        d = tang[j]
+        qa, qb = quads[i][1], quads[j][1]
+        sa = (qa[0] - P[0]) * d[0] + (qa[1] - P[1]) * d[1]
+        sb = (qb[0] - P[0]) * d[0] + (qb[1] - P[1]) * d[1]
+        na = (qa[0] + lam * (P[0] + sa * d[0] - qa[0]),
+              qa[1] + lam * (P[1] + sa * d[1] - qa[1]))
+        nb = (qb[0] + lam * (P[0] + sb * d[0] - qb[0]),
+              qb[1] + lam * (P[1] + sb * d[1] - qb[1]))
+        # 守卫二：只接受折角变小，不接受折反。
+        before = _joint(i, j)
+        qa0, qb0 = quads[i][1], quads[j][1]
+        quads[i][1], quads[j][1] = na, nb
+        after = _joint(i, j)
+        if after > before:
+            quads[i][1], quads[j][1] = qa0, qb0
+            after = before
+        if _DEBUG_JOINTS:
+            JOINT_LOG.append(("joint", _angle(tend[i], tang[j]), before, after))
+    return [tuple(q) for q in quads]
+
+
+def _angle_deg(a, b):
+    c = a[0] * b[0] + a[1] * b[1]
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+def _proj_toward(q, P, d, lam):
+    """把 q 朝「过 P、沿 d 的直线」移动 lam 倍，返回新点。"""
+    t = (q[0] - P[0]) * d[0] + (q[1] - P[1]) * d[1]
+    return (q[0] + lam * (P[0] + t * d[0] - q[0]),
+            q[1] + lam * (P[1] + t * d[1] - q[1]))
+
+
 def _split_cubic(c0, c1, c2, c3, t):
     p01 = (c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t)
     p12 = (c1[0] + (c2[0] - c1[0]) * t, c1[1] + (c2[1] - c1[1]) * t)
@@ -421,21 +516,85 @@ def fit_rings(dense, anchors):
                     t0 = t3 = None
                 c1, c2, _err, _at = _fit_one(pts, _params(pts), t0, t3)
                 cubics[w].append((pts[0], c1, c2, pts[-1]))
+        # 先把每段的三次拆成 k 条二次的下料单攒起来，再按「连续的曲线段」连成链做接点投影。
+        # 直线段与拐角段（poly）没有二次控制点，是链的断点：跨过它们的接点不在这一版的处理
+        # 范围内（那边的另一侧根本不是二次曲线）。
+        subs = {w: [] for w in weights}
         quads = {w: [] for w in weights}
         for si, (_a, _b, kind) in enumerate(segs):
-            if kind == "line":
+            if kind in ("line", "poly"):
                 for w in weights:
-                    quads[w].append(None)
-                continue
-            if kind == "poly":
-                for w in weights:
-                    quads[w].append("poly")
+                    subs[w].append(None)
+                    quads[w].append(None if kind == "line" else "poly")
                 continue
             # 二次拆分数只按参考档（400）算：三档形状差一个笔宽，需要的段数在这个精度下相同
             k = _n_quad(cubics[ref_w][si])
             for w in weights:
-                quads[w].append([((_quad_g1 if QUAD_MODE == "g1" else _quad_of_cubic)(*s), s[3])
-                                 for s in _sub_cubics(*cubics[w][si], k)])
+                subs[w].append(_sub_cubics(*cubics[w][si], k))
+                quads[w].append([])          # 占位，长度与 segs 对齐；下面按链回填
+
+        for w in weights:
+            run: list[int] = []
+            todo: list[tuple[list[int], list[tuple]]] = []
+            for si in range(len(segs)):
+                if subs[w][si] is None:
+                    if run:
+                        todo.append((run, [x for si2 in run for x in subs[w][si2]]))
+                        run = []
+                else:
+                    run.append(si)
+            if run:
+                todo.append((run, [x for si2 in run for x in subs[w][si2]]))
+            for idxs, chain in todo:
+                if QUAD_MODE == "g1":
+                    moved = [(_quad_g1(*c), c[3]) for c in chain]
+                else:
+                    moved = [(q[1], q[2]) for q in _quad_proj(chain, QUAD_PROJ)]
+                at = 0
+                for si in idxs:
+                    n_sub = len(subs[w][si])
+                    quads[w][si] = moved[at:at + n_sub]
+                    at += n_sub
+
+        # 第二遍：曲线与**直线**相接的接点。这一侧只有一根控制柄，投影到直线方向上就够，
+        # 不需要成对。跑之前这些接点完全没被处理过（直线段是链的断点），而横竖笔画的
+        # 直边与端头/转折相接处正是它们——不补这一遍，中位数压不下去。
+        if QUAD_MODE != "g1" and QUAD_PROJ > 0:
+            for w in weights:
+                n_seg = len(segs)
+                for si in range(n_seg):
+                    j = (si + 1) % n_seg
+                    a_lin = subs[w][si] is None and segs[si][2] == "line"
+                    b_lin = subs[w][j] is None and segs[j][2] == "line"
+                    if a_lin == b_lin:
+                        continue                      # 两侧同类型（都曲线或都直线/拐角）：不处理
+                    P = cubics[w][si][3]
+                    if b_lin:                         # 曲线 i → 直线 j：末控制点朝直线方向投影
+                        d = _nrm((cubics[w][j][3][0] - cubics[w][j][0][0],
+                                  cubics[w][j][3][1] - cubics[w][j][0][1]))
+                        t_side = _nrm((cubics[w][si][3][0] - cubics[w][si][2][0],
+                                       cubics[w][si][3][1] - cubics[w][si][2][1]))
+                        chain, slot, tail = quads[w][si], -1, True
+                    else:                             # 直线 i → 曲线 j：首控制点朝直线方向投影
+                        d = _nrm((cubics[w][si][3][0] - cubics[w][si][0][0],
+                                  cubics[w][si][3][1] - cubics[w][si][0][1]))
+                        t_side = _nrm((cubics[w][j][1][0] - cubics[w][j][0][0],
+                                       cubics[w][j][1][1] - cubics[w][j][0][1]))
+                        chain, slot, tail = quads[w][j], 0, False
+                    # 真折角不动：曲线在接点处的切向与直线差得远，说明这是设计的拐，不是误差
+                    if _angle_deg(t_side, d) > SMOOTH_JOINT_MAX:
+                        continue
+                    if not isinstance(chain, list) or not chain:
+                        continue
+                    q = chain[slot][0]
+                    before = _angle_deg(_nrm((P[0] - q[0], P[1] - q[1]) if tail else
+                                             (q[0] - P[0], q[1] - P[1])), d)
+                    moved = _proj_toward(q, P, d, QUAD_PROJ)
+                    after = _angle_deg(_nrm((P[0] - moved[0], P[1] - moved[1]) if tail else
+                                            (moved[0] - P[0], moved[1] - P[1])), d)
+                    if after <= before:               # 只接受折角变小，不接受折反
+                        chain[slot] = (moved, chain[slot][1])
+
         for w in weights:
             pts, flags = [], []
             pts.append(cubics[w][0][0])

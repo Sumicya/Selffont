@@ -84,6 +84,28 @@ jobs:
         # 名字跟提交走，不用固定常量：`dev-1` 反复覆盖会让「哪个包对应哪个提交」无从查证。
         uses: actions/upload-artifact@v7
         with:
-          name: Selffont-probe-${{ env.SHA8 }}
+          name: probe-${{ env.SHA8 }}
           path: lsp/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+
+  cleanup-artifacts:
+    needs: probe
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: selffont-cleanup          # 与 build.yml / mother.yml 共用同一把锁
+      cancel-in-progress: false
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 清理超限产物与运行记录
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          CLEANUP_SCOPE: actions
+        run: python3 .github/scripts/cleanup.py
