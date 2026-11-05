@@ -10,6 +10,7 @@
   `gh release create`／`action-gh-release`／`gh release upload` 直接红，README 里出现
   `releases/latest` 或 `releases/download` 也直接红。要让链接出现，必须先改这条检查，
   那一步必然是一次看得见、需要点头的对话。
+- 撤回不是一次就完：`42115740683`（`fa94c0d`，带回滚前的发布步骤）在我删掉 326 之后才跑完，又发了一个 `26.11.6.1.327`（`published_at 2026-11-05T21:51:31Z`）。已同样删除（`--cleanup-tag`），复查 `/releases` 与 `/tags` 两个列表均为空。教训：撤回代码不等于撤回后果，正在跑的旧代码会再发一遍。
 - 同轮查清的三条事实（回应「仓库里已经找不到执行发布的代码」）：
   一，`main` 的 `build.yml` 确实 0 处 `gh release`，因为发布代码只在本分支
   （`bc8b8fd`、`fa94c0d`），没有合并；不是被谁删掉。
