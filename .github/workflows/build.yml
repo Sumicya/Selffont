@@ -77,6 +77,17 @@ jobs:
         run: |
           set -o pipefail
           python build.py --query-ci 2>&1 | tee build.log
+      - name: 失败时把日志尾巴报成注解
+        if: failure()
+        # 摘要页那块在 GitHub 页面上是「### Uh oh! There was an error while loading」，
+        # 读不到；注解（::error::）在运行页的 Annotations 里直接显示，能被抓下来。
+        run: |
+          if [ -f build.log ]; then
+            msg=$(tail -n 25 build.log | sed 's/%/%25/g; s/\r//g' | paste -sd'\n' - | sed 's/\n/%0A/g')
+            echo "::error title=build.log 末尾 25 行::$msg"
+          else
+            echo "::error title=build.log::没有 build.log"
+          fi
       - name: 失败时把日志写进运行摘要
         if: failure()
         # 运行日志本体走 results-receiver / blob.core.windows.net，本机取不到（握手 EOF），
