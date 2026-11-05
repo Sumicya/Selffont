@@ -96,3 +96,29 @@ python tools/fig_position_fix.py --font 母版.ttf --span 24 \
 
 本轮修前/修后的字件：`build.py --preview "門口国團日一永字你式验基"`（12 字预览件），
 600 字那一份同样走 `--preview`。两份都只用来量，不是发行件。
+
+## 七、全量构建：一条真拦路的崩溃（顺带修掉）
+
+本轮第一次跑全量（`[full]`，Build #298）在「取号并出包」这一步 `exit 1`，日志宿主
+（`results-receiver` / `blob.core.windows.net`）在本机都是握手 EOF，artifact 里的 `build-log`
+也过不去。绕法是两步：失败时把 `build.log` 尾巴逐行发成 `::error::` 注解（运行页的
+Annotations 能读），再把最后一行写进 commit status（`description` 140 字，API 能读）。
+拿到的是：
+
+```
+AttributeError: 'NoneType' object has no attribute 'append'
+  File "tools/cjk_vf.py", line 220, in rings_from_pen
+    ring.append((u * u * a[0] + ...))
+  File "tools/cjk_vf.py", line 311, in outline_edges
+    return row_profile(rings_from_pen(pen.value))
+```
+
+病根：真字库里存在**没有 `moveTo` 就直接开段**的环（TrueType 允许一整条环全是 off 点，
+fontTools 的 `draw` 遇到这种环会从 `qCurveTo` 起手），而展开器默认 `ring` 一定是 `moveTo`
+建的。补一个起点（首点＝本段第一个非空点）继续走，环的形状与闭合方式不变；正常字形
+的输出逐字节不变（12 字预览件改前改后逐字 bbox＋环数全同）。
+
+修完在本机跑全量 `python build.py --cjk-font <dir>`：**3,228.6 s、33,932 字形、零崩**，
+行框 `hhea` 930/−250、`usWin` 1322/549（比旧记录的 1307/529 大 15–20，是对齐把个别字的
+墨迹顶上去了一点，`usWin` 本来就按全库墨迹包络算）。这条不是本轮的验收项，是出正式包
+的必经之路，写在这里备案。

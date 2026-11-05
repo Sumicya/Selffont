@@ -189,7 +189,19 @@ def rings_from_pen(value) -> list:
             cur = start = (float(args[0][0]), float(args[0][1]))
             ring = [cur]
             rings.append(ring)
-        elif op == "lineTo":
+            continue
+        # 真字库里存在「没有 moveTo 就直接开段」的环：TrueType 允许一整条环全是 off 点，
+        # fontTools 的 draw 遇到这种环会从 qCurveTo 起手。此前这里直接 ring.append 会炸
+        # （2026-11-05 全量构建在 33,808 字里的某一个上 AttributeError: NoneType.append）。
+        # 补一个起点继续走：首点就是本段第一个非空点，环的形状与闭合方式不变。
+        if ring is None:
+            first = next((p for p in args if p is not None), None)
+            if first is None:
+                continue
+            cur = start = (float(first[0]), float(first[1]))
+            ring = [cur]
+            rings.append(ring)
+        if op == "lineTo":
             cur = (float(args[0][0]), float(args[0][1]))
             ring.append(cur)
         elif op in ("qCurveTo", "curveTo"):
