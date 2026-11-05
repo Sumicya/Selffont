@@ -51,7 +51,20 @@ jobs:
 
       - name: 编 APK（debug 签名，可直接装）
         working-directory: lsp
-        run: gradle --no-daemon :hotswap:assembleDebug
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace :hotswap:assembleDebug 2>&1 | tee gradle.log
+
+      - name: 失败时把编译错误报成注解
+        if: failure()
+        # 运行日志走 blob.core.windows.net，本沙箱握手 EOF 取不回；注解能从 check-run API 直接读，
+        # 所以逐行发（最多 8 条），一行一条 title。
+        working-directory: lsp
+        run: |
+          if [ ! -f gradle.log ]; then echo "::error title=gradle::没有 gradle.log"; exit 0; fi
+          grep -nE "e: |error:|FAILURE|What went wrong|Caused by" gradle.log | tail -n 8 | while IFS= read -r line; do
+            echo "::error title=gradle::${line:0:900}"
+          done
 
       - name: 验收：包名、xposed 元数据、编进去的字体
         working-directory: lsp

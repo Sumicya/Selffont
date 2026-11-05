@@ -82,8 +82,9 @@ su -c 'sh /data/adb/modules/selffont-mother/hotswap.sh panic'    # 只摘能认�
 `action.sh` → `panic` 后打印状态，不再切换任何东西。
 
 **还剩一条没验的路**：进程内（LSPosed）——反射读 `Typeface.sSystemFontMap` 换家族、hook
-`Typeface.createFromFile` 重定向文件。第一步只做探针（只打日志、只作用 `com.android.settings`），
-拿到 logcat 再谈替换。见下节。
+`Typeface.createFromFile` 重定向文件。**已实现**为模块 `sumicya.selffont.hotswap`（工作流 `hotswap`，
+产物 `hotswap-<SHA8>`，可直装），用法与判读表见 [`docs/hotswap-lsposed.md`](docs/hotswap-lsposed.md)。
+**未真机验证。**
 
 ### 进程内路线（探针，未验）
 
