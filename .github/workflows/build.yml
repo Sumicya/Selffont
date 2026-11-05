@@ -34,7 +34,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # 出 selfrounds-*（字体文件本身）；勾 selffont 时同一次构建额外出 selffont-*
+  selfrounds:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -128,7 +129,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: build-log-${{ github.run_id }}
+          name: log-${{ github.run_id }}
           path: build.log
           retention-days: 2
           if-no-files-found: error
@@ -136,15 +137,15 @@ jobs:
       - name: 确认产物名
         if: steps.mode.outputs.full == '1'
         run: |
-          zip_file=$(basename "$(find build -maxdepth 1 -name 'Selffont-*.zip' -print -quit)")
+          zip_file=$(basename "$(find build -maxdepth 1 -name 'selffont-*.zip' -print -quit)")
           test -n "$zip_file"
           name="${zip_file%.zip}"
-          echo "$name" | grep -Eq '^Selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+\.[0-9]+$' || {
+          echo "$name" | grep -Eq '^selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+\.[0-9]+$' || {
             echo "产物名不是五段规范版本：$name" >&2
             exit 1
           }
           echo "ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
-          echo "VERSION=${name#Selffont-}" >> "$GITHUB_ENV"
+          echo "VERSION=${name#selffont-}" >> "$GITHUB_ENV"
       - name: 解包为可直刷目录
         if: steps.mode.outputs.full == '1'
         run: |
@@ -175,15 +176,8 @@ jobs:
           retention-days: 5
           if-no-files-found: error
           overwrite: true
-      - name: 上传哈希
-        if: steps.mode.outputs.full == '1'
-        uses: actions/upload-artifact@v7
-        with:
-          name: selffont-sha256-${{ steps.sha.outputs.sum8 }}
-          path: build/SHA256SUMS.txt
-          retention-days: 5
-          if-no-files-found: error
-          overwrite: true
+      # 哈希不再单独上传：SHA256SUMS.txt 已经拷进 build/root（下一步「记录产物哈希」里那行 cp），
+      # 跟着 selffont-<版本> 一起走。多一个前缀就多一类产物，名字又要多解释一遍。
       - name: 上传预览产物
         if: steps.mode.outputs.full != '1'
         uses: actions/upload-artifact@v7
@@ -194,9 +188,9 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
-  # 母版 Magisk 模块：母版原字节直接进模块，只做挂载与配置，不改一个轮廓。
-  # 与上面的 build job 并行（互不 needs），push 一次两个 job 同时起跑。
-  pack:
+  # 母版 Magisk 模块（build-*）：母版原字节直接进模块，只做挂载与配置，不改一个轮廓。
+  # 与上面的 selfrounds job 并行（互不 needs），push 一次两个 job 同时起跑。
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -285,7 +279,7 @@ jobs:
           overwrite: true
 
   cleanup-artifacts:
-    needs: [build, pack]
+    needs: [selfrounds, build]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -304,7 +298,7 @@ jobs:
         run: python3 .github/scripts/cleanup.py
 
   cleanup-releases:
-    needs: [build, pack]
+    needs: [selfrounds, build]
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: 10

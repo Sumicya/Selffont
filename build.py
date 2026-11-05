@@ -9,7 +9,7 @@
 版本号按全局规范：yy.m.d.当日序号.总序号（五段，展示不含 v），versionCode = 总序号。号源只有
 一处：CI 运行数。总序号 = `build.yml` 本次运行的 `run_number` 原值，不做基线相减；当日序号
 （当日 = `run_started_at` 转 UTC+8）用差值锚定法算：取当日现存 `build.yml` 运行的最小
-`run_number`，与当日现存产物 `Selffont-yy.m.d.d0.r0` 反推出的 `r0 - d0 + 1`，两者取小作当日
+`run_number`，与当日现存产物 `selffont-yy.m.d.d0.r0` 反推出的 `r0 - d0 + 1`，两者取小作当日
 首条运行号 `R_first`（都没有就取当前 `run_number`），当日序号 = 当前 `run_number - R_first + 1`。
 失败运行同样占号，`pull_request` 运行永不计入。`--query-ci` 用 `gh api` 现场读数并打印 head
 SHA、run_id、run_number、R_first、当日序号与最终版本；取不到数直接抛错，不编数、不留降级。
@@ -226,7 +226,7 @@ BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
-PROJECT = "Selffont"  # 产物名与 artifact 名的项目段：<项目名>-<版本>
+PROJECT = "selffont"  # 产物名与 artifact 名的项目段：<项目名>-<版本>；自版模块就叫这个前缀
 DEV_VERSION = "dev"     # 仓库里的非发行默认：没盖戳就不假装有正式序号
 # 规范 2026-10-31 定的版本串：yy.m.d 两位年、月/日/序号一律不补零、序号 ≥1。
 DATE_RE = r"\d{2}\.(1[0-2]|[1-9])\.(3[01]|[12][0-9]|[1-9])"
@@ -787,7 +787,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
 # ---------------------------------------------------------------- 版本盖戳
 
 def default_output(prop: str) -> Path:
-    """产物名跟版本走：Selffont-<版本>.zip（规范 <项目名>-<版本>）；五段或退化四段都认，别的不出包。"""
+    """产物名跟版本走：selffont-<版本>.zip（规范 <项目名>-<版本>）；五段或退化四段都认，别的不出包。"""
     stamped = re.search(r"^version=(.+)$", prop, flags=re.M)
     core = stamped.group(1) if stamped else ""
     if not (VERSION_RE.fullmatch(core) or VERSION_RE4.fullmatch(core)):
@@ -862,8 +862,15 @@ def run_day(row: dict) -> date:
 
 
 def artifact_anchor(name: str, date: str) -> int | None:
-    """产物名 `Selffont-yy.m.d.d0.r0` 反推当日首条运行号 `r0 - d0 + 1`；口径不合返回 None。"""
-    version = name.split("-", 1)[1] if "-" in name else ""
+    """产物名 `selffont-yy.m.d.d0.r0` 反推当日首条运行号 `r0 - d0 + 1`；口径不合返回 None。
+
+    前缀必须是 `PROJECT-`：全仓四类产物（`build-` 母版、`selffont-` 自版、`selfrounds-` 字体、
+    `hotswap-` 热切换）。`build-26.11.6.1.320` 也是五段，不卡前缀就会被当成当日首个产物，
+    把两条号源搅在一起——名字各指各的东西，取号才不会被别的序列带偏。
+    """
+    if not name.startswith(f"{PROJECT}-"):
+        return None
+    version = name.split("-", 1)[1]
     parts = version.split(".")
     if len(parts) != 5 or ".".join(parts[:3]) != date:
         return None
@@ -880,7 +887,7 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
 
     总序号取 `run_number` 原值（同一 run 重试时 GitHub 不换 run_number，版本号自然不变）。
     当日序号按差值锚定：当日现存 `build.yml` 运行的最小 `run_number`，与当日现存产物
-    `Selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，两者取小作 `R_first`（都没有就取当前
+    `selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，两者取小作 `R_first`（都没有就取当前
     `run_number`），当日序号 = 当前 `run_number - R_first + 1`。失败运行同样占号，
     `pull_request` 运行永不计入。锚点比当前号还大（旧运行已删）时钳到当前号，序号不小于 1。
 
@@ -1665,7 +1672,7 @@ def build_end_to_end():
         except ValueError as error:
             assert "版本号缺少" in str(error), error
         assert default_output(stamp_version((ROOT / "module/module.prop").read_text(),
-                                           "9", day="2", date="26.9.30")).name == "Selffont-26.9.30.2.9.zip"
+                                           "9", day="2", date="26.9.30")).name == "selffont-26.9.30.2.9.zip"
 
         # 自由化：主字体按自己的文件名安装，不要求固定命名；非字体后缀明确报错。
         custom = fonts_dir / "Weird-Name.ttf"
@@ -1786,8 +1793,8 @@ def version_stamp():
         raise AssertionError("非发行版本不该有产物名")
     except ValueError as error:
         assert "版本号" in str(error), error
-    assert default_output(stamped).name == "Selffont-26.9.30.3.42.zip"
-    assert default_output(degraded).name == "Selffont-26.9.30.42.zip"
+    assert default_output(stamped).name == "selffont-26.9.30.3.42.zip"
+    assert default_output(degraded).name == "selffont-26.9.30.42.zip"
     for bad in ("abc", "4 2", "9.", "0"):
         try:
             stamp_version(prop, bad, day="3", date="26.9.30")
@@ -1829,20 +1836,20 @@ def ci_version_numbering():
     assert ci_version_numbers([run(205, "2026-10-27T00:05:00+00:00", "pull_request")], [], 210, now) \
         == (today, 1, 210, 210)
     # 5) 产物反推锚点：26.10.27.3.500 → R_first=498，当前 503 就是当日第 6 条。
-    assert ci_version_numbers([], [art(f"Selffont-{today}.3.500", 1)], 503, now) \
+    assert ci_version_numbers([], [art(f"{PROJECT}-{today}.3.500", 1)], 503, now) \
         == (today, 6, 503, 498)
     # 6) 两个锚点取小：运行最小号 496 比产物反推的 498 更早。
     assert ci_version_numbers([run(496, "2026-10-27T00:01:00+00:00")],
-                              [art(f"Selffont-{today}.3.500", 1)], 503, now) == (today, 8, 503, 496)
+                              [art(f"{PROJECT}-{today}.3.500", 1)], 503, now) == (today, 8, 503, 496)
     # 7) 段数不是五段、或日期不是今天的产物不参与锚定。
-    assert ci_version_numbers([], [art(f"Selffont-{today}.3", 1),
-                                   art(f"Selffont-{yesterday}.3.500", 2)], 210, now) \
+    assert ci_version_numbers([], [art(f"{PROJECT}-{today}.3", 1),
+                                   art(f"{PROJECT}-{yesterday}.3.500", 2)], 210, now) \
         == (today, 1, 210, 210)
     # 8) 当日序号 0、总序号小于当日序号的畸形名忽略，不当锚点。
-    assert ci_version_numbers([], [art(f"Selffont-{today}.0.500", 1),
-                                   art(f"Selffont-{today}.5.3", 2)], 210, now) == (today, 1, 210, 210)
+    assert ci_version_numbers([], [art(f"{PROJECT}-{today}.0.500", 1),
+                                   art(f"{PROJECT}-{today}.5.3", 2)], 210, now) == (today, 1, 210, 210)
     # 9) 锚点比当前号还大（旧运行已删）时钳到当前号，当日序号不小于 1。
-    assert ci_version_numbers([], [art(f"Selffont-{today}.3.600", 1)], 210, now) == (today, 1, 210, 210)
+    assert ci_version_numbers([], [art(f"{PROJECT}-{today}.3.600", 1)], 210, now) == (today, 1, 210, 210)
     # 10) 日界按 UTC+8：UTC 10-27 16:30 = UTC+8 10-28 00:30，日期跨到 28 号，前一条 23:00 的运行不算。
     late = datetime(2026, 10, 27, 16, 30, tzinfo=timezone.utc)
     assert ci_version_numbers([run(300, "2026-10-27T15:00:00+00:00")], [], 301, late) \
@@ -1850,9 +1857,10 @@ def ci_version_numbering():
     # 日期段格式：yy.m.d，月日不补零。
     assert re.fullmatch(r"\d{2}\.(1[0-2]|[1-9])\.(3[01]|[12][0-9]|[1-9])", ci_version_numbers([], [], 1, now)[0])
     # 产物名反推的边界：day=1 时 R_first 就是总序号本身。
-    assert artifact_anchor(f"Selffont-{today}.1.700", today) == 700
-    assert artifact_anchor(f"Selffont-{today}.2.700", today) == 699
-    assert artifact_anchor("Selffont-26.10.27", today) is None
+    assert artifact_anchor(f"{PROJECT}-{today}.1.700", today) == 700
+    assert artifact_anchor(f"{PROJECT}-{today}.2.700", today) == 699
+    assert artifact_anchor(f"{PROJECT}-26.10.27", today) is None
+    assert artifact_anchor(f"build-{today}.1.320", today) is None, "母版序列不许进自版号源"
 
 
 # ---------------------------------------------------------------- 火狐（Gecko）接入
@@ -2143,6 +2151,17 @@ def supplemental_font_reference():
     assert NOTO_MUSIC_SOURCE["minimum_outline_mappings"] >= 200
 
 
+# 四类产物各归一条工作流（主人第六次强调）：build 出母版、selffont 出自版（冻着）、
+# selfrounds 出字体本身、hotswap 出热切换。`log-` 是失败时的诊断件，不是交付物。
+ARTIFACT_OWNER = {
+    "build-": "build.yml",
+    "selffont-": "build.yml",
+    "selfrounds-": "build.yml",
+    "log-": "build.yml",
+    "hotswap-": "hotswap.yml",
+}
+
+
 @check
 def workflow_format():
     """§12 工作流格式：每个 workflow 同一套，几个、几种由仓里定。
@@ -2227,6 +2246,24 @@ def workflow_format():
                     assert key in with_, f"{path.name}/{job_name}: artifact 缺 {key}"
                 assert with_["if-no-files-found"] == "error", \
                     f"{path.name}/{job_name}: if-no-files-found 必须是 error"
+
+        # 8. 名字与产物一对一：四类前缀各归各的工作流，工作流名与 job 名必须是自己的产物
+        for job_name, job in (data.get("jobs") or {}).items():
+            prefixes = set()
+            for step in job.get("steps", []):
+                if "upload-artifact" not in str(step.get("uses", "")):
+                    continue
+                label = str((step.get("with") or {}).get("name", ""))
+                prefix = label.split("${{")[0]
+                owner = ARTIFACT_OWNER.get(prefix)
+                assert owner, f"{path.name}/{job_name}: 产物前缀 {prefix!r} 不在四类里（{sorted(ARTIFACT_OWNER)}）"
+                assert owner == path.name, f"{path.name}/{job_name}: 产物 {label!r} 属于 {owner}，不该在这里出"
+                prefixes.add(prefix)
+            if prefixes:
+                assert f"{job_name}-" in prefixes, \
+                    f"{path.name}/{job_name}: 这个 job 一件以自己名字命名的产物都没有（只出 {sorted(prefixes)}）"
+        assert f"{stem}-" in ARTIFACT_OWNER, f"{path.name}: 工作流名 {stem!r} 不是任何一类产物的前缀"
+        assert ARTIFACT_OWNER[f"{stem}-"] == path.name, f"{path.name}: 前缀 {stem}- 归属 {ARTIFACT_OWNER[f'{stem}-']}"
 
 
 def run_checks() -> None:
@@ -2661,7 +2698,7 @@ def main() -> None:
     parser.add_argument("--base", help="基础包 ZIP：本地路径或 URL（默认下载并缓存）")
     parser.add_argument("--font", metavar="PATH|URL", help="主字体：本地文件或 URL（默认用内置来源）")
     parser.add_argument("--output", type=Path,
-                        help="产物路径（默认跟版本走：build/Selffont-<五段版本>.zip）")
+                        help="产物路径（默认跟版本走：build/selffont-<五段版本>.zip）")
     parser.add_argument("--build", help="总序号：版本号倒数第一段，同时写进 versionCode（默认读 $SELFFONT_BUILD）")
     parser.add_argument("--day", help="当日序号：不传就是四段版本 yy.m.d.总序号（默认读 $SELFFONT_DAY）")
     parser.add_argument("--date", help="版本日期 YY.M.D（默认读 $SELFFONT_DATE）")

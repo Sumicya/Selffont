@@ -40,7 +40,7 @@ KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实
 命令行安装（Termux / adb，需 root）：先把 zip 搬到 `/data/local/tmp` 再装——`ksud` 直接读 Termux 家目录或 `/sdcard` 路径常因挂载命名空间 / SELinux 报 `No such file or directory`：
 
 ```sh
-ZIP=$(ls -t "$PWD"/Selffont-*.zip | head -1)            # 定位刚解出的模块 zip
+ZIP=$(ls -t "$PWD"/selffont-*.zip | head -1)            # 定位刚解出的模块 zip
 ls -l "$ZIP" && unzip -l "$ZIP" | head -5               # 约 100 MB；根部有 module.prop 才对
 su -c "cp '$ZIP' /data/local/tmp/selffont-module.zip"   # 搬进 root 能读的 /data/local/tmp
 su -c 'ls -l /data/local/tmp/selffont-module.zip'       # 字节数应与上一步一致
@@ -178,12 +178,12 @@ gh api -H "Accept: application/vnd.github.raw" \
 
 「本版」= `build.py --cjk-font DIR` 出的 `SelfroundsCJK-VF.ttf`（全量构建约 53 分钟，2026-10-31 09:30 UTC+8 那次构建的产物）。
 
-产物名跟版本走：`build/Selffont-<版本>.zip`；没有规范版本数据就不出包（取数失败停止出包和上传）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
+产物名跟版本走：`build/selffont-<版本>.zip`；没有规范版本数据就不出包（取数失败停止出包和上传）。输入侧不降级：基础包缺 Roboto 空壳、或 `--font` 给的字体没有 `wght` 轴，都直接报错退出（不做「跳过归一」或「全档同文件」的降级）。默认来源与提示性哈希钉在 `build.py` 顶部（哈希漂移只警告，不拦构建）；下载缓存在 `build/cache/`，删掉即重新下载。构建 stdout 就是构建报告；没有随包的 report.json。
 
 **版本号（展示不含 `v`）**：五段 `yy.m.d.当日序号.总序号`；`versionCode` = 最后一段（总序号，KSU 靠它比新旧，单调递增）。日期按 UTC+8 取，免得 CI 在 UTC 下差一天。
 
 - **号源只有一处：CI 运行数**。总序号 = `build.yml` 本次运行的 `run_number` 原值，不做基线相减；改工作流文件名或换号源后数值变小照常使用（设备端模块覆盖安装即可）。不读 git 提交数、不读时间戳、不读本地计数。
-- **当日序号用差值锚定法**：当日（`run_started_at` 转 UTC+8）现存 `build.yml` 运行的最小 `run_number`，与当日现存产物 `Selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，两者取小作当日首条运行号 `R_first`（都没有就取当前 `run_number`），当日序号 = 当前 `run_number - R_first + 1`。失败运行同样占号，PR 运行永不计入；同一 `run_id` 重试保持同一版本号。
+- **当日序号用差值锚定法**：当日（`run_started_at` 转 UTC+8）现存 `build.yml` 运行的最小 `run_number`，与当日现存产物 `selffont-yy.m.d.d0.r0` 反推的 `r0 - d0 + 1`，两者取小作当日首条运行号 `R_first`（都没有就取当前 `run_number`），当日序号 = 当前 `run_number - R_first + 1`。失败运行同样占号，PR 运行永不计入；同一 `run_id` 重试保持同一版本号。
 - **取号留痕**：`build.py --query-ci` 打印 head SHA、run_id、run_number、R_first、当日序号与最终版本，取不到即退出，不降级、不编数。
 - **五段恒定**：CI 一定有当日序号；四段只在本地手工省略 `--day` 时出现。
 - **本地不出 CI 号**：`--query-ci` 只在 CI 里成立，本地打包必须显式传齐 `--date/--day/--build`，数的可追溯性由打包的人负责。
@@ -193,10 +193,12 @@ CI 只有两个工作流，各出一类东西（名字与产物前缀一一对�
 
 | 工作流 | `name:` | job | 产物 | 是什么 |
 | --- | --- | --- | --- | --- |
-| `.github/workflows/build.yml` | `build` | `build` / `pack` / `cleanup-artifacts` / `cleanup-releases` | `build-<五段版本>`、`selfrounds-<SHA8>`、`selffont-<版本>`（手动勾才出）、`build-log-<run_id>`（失败时） | 母版 Magisk 模块（可直刷）、Selfrounds 字体文件、自研模块 |
+| `.github/workflows/build.yml` | `build` | `build` / `selfrounds` / `cleanup-artifacts` / `cleanup-releases` | `build-<五段版本>`、`selfrounds-<SHA8>`、`selffont-<版本>`（手动勾才出）、`log-<run_id>`（失败时） | 母版 Magisk 模块（可直刷）、Selfrounds 字体文件、自研模块 |
 | `.github/workflows/hotswap.yml` | `hotswap` | `hotswap` / `cleanup-artifacts` | `hotswap-<SHA8>` | LSPosed 热切换模块（`sumicya.selffont.hotswap`） |
 
-`build` 与 `pack` 两个 job **并行**（互不 `needs`）：`pack` 出母版模块（约 2 分钟，母版字节直通，不改轮廓），`build` 出 selfrounds 字体（push 走预览子集约 96 秒，手动 `full` 才跑全量约 53 分钟）。`cleanup-artifacts`（`needs: [build, pack]` + `if: always()`）与 `cleanup-releases`（`if: always()` 且限默认分支，只授 `contents: write`）收尾。artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷；`build-` 留 30 天，其余 5 天只是兜底，`overwrite: true` 让重试不撞名。
+**每个 job 的名字就是它出的产物前缀**（第六次强调）：`build` job 出 `build-*`，`selfrounds` job 出 `selfrounds-*`（勾 `selffont` 时同一次构建额外出 `selffont-*`），`hotswap` 工作流出 `hotswap-*`；`log-*` 是失败时的诊断件，不算交付物。
+
+`build` 与 `selfrounds` 两个 job **并行**（互不 `needs`）：`build` 出母版模块（约 2 分钟，母版字节直通，不改轮廓），`selfrounds` 出字体文件（push 走预览子集约 96 秒，手动 `full` 才跑全量约 53 分钟）。`cleanup-artifacts`（`needs: [selfrounds, build]` + `if: always()`）与 `cleanup-releases`（`if: always()` 且限默认分支，只授 `contents: write`）收尾。artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷；`build-` 留 30 天，其余 5 天只是兜底，`overwrite: true` 让重试不撞名。
 
 三个前缀不许混：`build`＝母版 Magisk 模块、`selffont`＝自研字体模块（默认关，字体不合格）、`selfrounds`＝Selfrounds 字体本身；`hotswap` 是第四类，独立工作流。
 
@@ -228,7 +230,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 
 ### 母版直通包（`build-*`，可直刷）
 
-`build.yml` 的 `pack` job 每次都出这一份：汉字是 Maruko Gothic `97e9dd4` 的原始字节，
+`build.yml` 的 `build` job 每次都出这一份：汉字是 Maruko Gothic `97e9dd4` 的原始字节，
 形状一个点没改，拉丁与符号仍走文渊圆体。与 `selffont-*`（自研字体模块）不是一回事，
 前者是母版、后者是自研；也不是 `selfrounds-*`，那只是字体文件本身。
 
@@ -245,7 +247,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 | 补充字库（`fonts.xml` 引用、基础包里有的那几个：Plangothic、Unicode*-New、NotoSansPro、ZDigit 等） | 约 54 MiB |
 | 配置与脚本（`font_fallback.xml`、`customize.sh`、火狐配置） | 不到 0.1 MiB |
 
-主字体从「一个 46 MiB 的可变字体」换成「两个 20 MiB 的静态字体」，产物总量基本持平。装完想自己看构成：`unzip -l Selffont-<版本>.zip | sort -k1 -nr | head -15`。
+主字体从「一个 46 MiB 的可变字体」换成「两个 20 MiB 的静态字体」，产物总量基本持平。装完想自己看构成：`unzip -l selffont-<版本>.zip | sort -k1 -nr | head -15`。
 
 ## 项目限制
 

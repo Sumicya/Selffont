@@ -1,3 +1,20 @@
+## 2026-11-06（二）· 第六次强调：名字与产物一对一，落到 job 层
+
+- 四行映射（主人原话）：`build` 出母版、`selffont` 出自版（冻着）、`selfrounds` 出 selfrounds、
+  `hotswap` 出 hotswap。上一轮只把**工作流文件**层对齐了，**job 层仍是反的**：
+  叫 `build` 的 job 出 `selfrounds-*`／`selffont-*`，叫 `pack` 的 job 出 `build-*`。这一轮改掉。
+- `build.yml`：job `pack` → `build`（出 `build-*`），job `build` → `selfrounds`（出 `selfrounds-*`，
+  勾 `selffont` 时同一次构建额外出 `selffont-*`）。`needs: [build, pack]` → `[selfrounds, build]`。
+- 诊断件 `build-log-<run_id>` → `log-<run_id>`：它借用 `build` 前缀，会让人以为有两类 `build-*`。
+- `selffont-sha256-*` 这个第五个前缀**删了**：`SHA256SUMS.txt` 本来就 `cp` 进 `build/root`，
+  跟 `selffont-<版本>` 一起走。四类前缀之外不再有第五个。
+- `build.py`：`PROJECT` 从 `Selffont` 改 `selffont`（本地 zip 名、默认产物名跟着走，
+  `Selffont-<版本>.zip` 这个第四轮就被禁的串彻底消失）；`artifact_anchor()` 卡前缀——
+  `build-26.11.6.1.320` 也是五段，不卡就会被当成当日首个产物，把两条号源搅在一起。
+- 自检第 15 项 `workflow_format` 增加第 8 条：四类前缀各归各的工作流（`ARTIFACT_OWNER`），
+  且每个上传产物的 job 至少有一件以自己名字命名的产物。写的时候当场红了两次
+  （`selffont-sha256-` 不在四类里），所以这一条不是装饰。
+
 ## 2026-11-06 · 工作流命名收口：`build` 就是出 `build-*` 的那条，`mother` 这个词从 CI 里消失
 
 - 事实：上一轮我把母版直通包放进单独的 `mother.yml`，产物叫 `build-*`——工作流名与产物名
