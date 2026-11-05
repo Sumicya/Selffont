@@ -1,4 +1,4 @@
-# 出包工作流：每次出母版 Magisk 模块 build-* 与 selfrounds 字体；手动勾 selffont 才出自研模块。不发 Release、不打 tag。
+# 母版工作流：只出 build-*（Maruko 原字节进 Magisk 模块，只做水平定位归位，不改轮廓）。不发 Release、不打 tag。
 name: build
 
 on:
@@ -7,24 +7,14 @@ on:
       - '**.md'
       - 'docs/**'
       - 'bad/**'
-      - 'lsp/**'          # LSPosed 模块在 hotswap.yml 里编，字体 job 不跟着跑
+      - 'lsp/**'
       - 'LICENSE'
       - '.gitignore'
   workflow_dispatch:
-    inputs:
-      full:
-        description: '跑全量构建（默认 true；push 时一律只出预览子集）'
-        type: boolean
-        default: true
-      selffont:
-        description: '出 selffont 模块（自研字体还不合格，默认关；关时只发 selfrounds 字体）'
-        type: boolean
-        default: false
 
 env:
   SEGMENTS: '5'
   CLEANUP_APPLY: 'true'
-  # 母版来源钉死：CJK SC 的 Regular，20,084,736 B，sha256 与 docs/metrics.md 同一份。
   MOTHER_SHA256: 'e3709389bce13fa75af28cc2370b6175520d97f74dfbf3894ca24838f47241b7'
   MOTHER_NAME: 'MarukoGothicCJKsc-Regular.ttf'
   MOTHER_REF: '97e9dd4'
@@ -34,14 +24,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # 出 selfrounds-*（字体文件本身）；勾 selffont 时同一次构建额外出 selffont-*
-  selfrounds:
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     permissions:
       contents: read
       actions: read
-      statuses: write   # 失败时把 build.log 最后一行写进 commit status（日志宿主取不到）
+      statuses: write
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -65,153 +54,12 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: 内建自检
         run: python build.py --check
-      - name: 判断构建模式
-        id: mode
-        run: |
-          # selffont 模块（自研字体）默认不出：主人 2026-11-05「字体太过垃圾所以不搞」。
-          # 只有手动触发且勾了 selffont 才走全量出模块这条；push 永远只发 selfrounds 字体。
-          if { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full }}" = "true" ] \
-               && [ "${{ inputs.selffont }}" = "true" ]; } \
-             || printf '%s' "${{ github.event.head_commit.message }}" | grep -q '\[selffont\]'; then
-            echo "full=1" >> "$GITHUB_OUTPUT"
-            echo "全量构建（selffont 模块）"
-          else
-            echo "full=0" >> "$GITHUB_OUTPUT"
-            echo "只发 selfrounds 字体（预览子集，不出模块）"
-          fi
-      - name: 预览出包
-        if: steps.mode.outputs.full != '1'
-        run: |
-          echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
-          python build.py --preview '鬱響鬢Ay?' --preview-out build/preview
-      - name: 取号并出包
-        if: steps.mode.outputs.full == '1'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_NUMBER: ${{ github.run_number }}
-        run: |
-          set -o pipefail
-          python build.py --query-ci 2>&1 | tee build.log
-      - name: 失败时把日志尾巴报成注解
-        if: failure()
-        # 摘要页那块在 GitHub 页面上是「### Uh oh! There was an error while loading」，读不到；
-        # 注解（::error::）在运行页的 Annotations 里直接显示，能抓下来。多行拼成一条注解会被
-        # 页面截成一句，所以逐行发（最多 10 条）；异常那一行另发一条 commit status，
-        # description 有 140 字，正好装得下。
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          if [ ! -f build.log ]; then
-            echo "::error title=build.log::没有 build.log"
-            exit 0
-          fi
-          tail -n 6 build.log | while IFS= read -r line; do
-            echo "::error title=build.log::${line}"
-          done
-          desc=$(tail -n 1 build.log | cut -c1-120)
-          gh api -X POST "repos/${REPO}/statuses/${GITHUB_SHA}" \
-            -f state=failure -f context=build-log -f description="$desc" >/dev/null || true
-      - name: 失败时把日志写进运行摘要
-        if: failure()
-        # 运行日志本体走 results-receiver / blob.core.windows.net，本机取不到（握手 EOF），
-        # 产物里的 build-log 也一样要过同一个域名。摘要走的是页面 HTML，能直接读，
-        # 所以失败时把日志尾巴抄一份到摘要里——不然只知道「exit 1」，不知道为什么。
-        run: |
-          {
-            echo '### build.log 末尾 120 行'
-            echo '```'
-            if [ -f build.log ]; then tail -n 120 build.log; else echo '（没有 build.log）'; fi
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: 失败时上传构建日志
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: log-${{ github.run_id }}
-          path: build.log
-          retention-days: 2
-          if-no-files-found: error
-          overwrite: true
-      - name: 确认产物名
-        if: steps.mode.outputs.full == '1'
-        run: |
-          zip_file=$(basename "$(find build -maxdepth 1 -name 'selffont-*.zip' -print -quit)")
-          test -n "$zip_file"
-          name="${zip_file%.zip}"
-          echo "$name" | grep -Eq '^selffont-[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\.[0-9]+\.[0-9]+$' || {
-            echo "产物名不是五段规范版本：$name" >&2
-            exit 1
-          }
-          echo "ARTIFACT_NAME=$name" >> "$GITHUB_ENV"
-          echo "VERSION=${name#selffont-}" >> "$GITHUB_ENV"
-      - name: 解包为可直刷目录
-        if: steps.mode.outputs.full == '1'
-        run: |
-          rm -rf build/root
-          unzip -oq "build/${ARTIFACT_NAME}.zip" -d build/root
-          test -f build/root/module.prop
-          test -f build/root/customize.sh
-      - name: 记录产物哈希
-        if: steps.mode.outputs.full == '1'
-        id: sha
-        run: |
-          sum=$(sha256sum "build/${ARTIFACT_NAME}.zip" | cut -d' ' -f1)
-          echo "$sum  ${ARTIFACT_NAME}.zip" > build/SHA256SUMS.txt
-          cp build/SHA256SUMS.txt build/root/SHA256SUMS.txt
-          echo "sum=$sum" >> "$GITHUB_OUTPUT"
-          echo "sum8=${sum:0:8}" >> "$GITHUB_OUTPUT"
-          echo "sha256=$sum  ${ARTIFACT_NAME}.zip"
-      - name: 上传正式产物
-        if: steps.mode.outputs.full == '1'
-        uses: actions/upload-artifact@v7
-        with:
-          # 三类产物各用一个固定前缀，别混（主人第五次强调）：
-          #   build      → 母版 Magisk 模块（同文件的 pack job，可直刷）
-          #   selffont   → 自研字体 Magisk 模块（本行；默认关，字体不合格）
-          #   selfrounds → Selfrounds 字体本身（下面那一处）
-          name: selffont-${{ env.VERSION }}
-          path: build/root
-          retention-days: 5
-          if-no-files-found: error
-          overwrite: true
-      # 哈希不再单独上传：SHA256SUMS.txt 已经拷进 build/root（下一步「记录产物哈希」里那行 cp），
-      # 跟着 selffont-<版本> 一起走。多一个前缀就多一类产物，名字又要多解释一遍。
-      - name: 上传预览产物
-        if: steps.mode.outputs.full != '1'
-        uses: actions/upload-artifact@v7
-        with:
-          name: selfrounds-${{ env.SHA8 }}
-          path: build/preview
-          retention-days: 3
-          if-no-files-found: error
-          overwrite: true
-
-  # 母版 Magisk 模块（build-*）：母版原字节直接进模块，只做挂载与配置，不改一个轮廓。
-  # 与上面的 selfrounds job 并行（互不 needs），push 一次两个 job 同时起跑。
-  build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read         # 只出 artifact，不发 Release、不打 tag、不改 latest
-    steps:
-      - name: 检出仓库
-        uses: actions/checkout@v7
-      - name: 准备 Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.14'
-      - name: 安装字体工具
-        run: python -m pip install -r requirements.txt
-      - name: 内建自检
-        run: python build.py --check
       - name: 取自母版原始字节
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p work
+          mkdir -p build work
           gh api "repos/max32002/maruko-gothic/contents/CJK%20SC/${MOTHER_NAME}?ref=${MOTHER_REF}" \
             -H "Accept: application/vnd.github.raw" > "work/${MOTHER_NAME}"
           sum=$(sha256sum "work/${MOTHER_NAME}" | cut -d' ' -f1)
@@ -223,13 +71,10 @@ jobs:
       - name: 修水平定位（只平移，不缩放、不改轮廓）
         run: |
           set -euo pipefail
-          # 母版 27,559 个汉字全是 1000 宽的字格，但墨迹不都落在格子中间：
-          # 满格字里 10.3% 的墨心偏离 500 超过 20 单位（=2% em），最远 ±54.5；
-          # 而且带方向——偏左 951 字、偏右 241 字。这就是「字发飘、有的挤边」。
+          # 母版 27,559 个汉字全是 1000 宽的字格，但墨迹不都落在格子中间：满格字里 10.3%
+          # 的墨心偏离 500 超过 20 单位（=2% em），最远 ±54.5；且整体偏左。
           # 只做一件事：整字沿 x 平移，让墨心落到 500。轮廓相对彼此一个点不动。
-          # 输出**保持原文件名**（放进 work/hpos/）：包内字件的名字与 fonts.xml 的引用都靠它，
-          # 换了名字等于换了字件名，验收和配置全对不上。build/ 这时还没被 build.py 建出来，
-          # 也得自己建，否则 tee 直接 No such file or directory（这就是上一轮失败的原因）。
+          # 输出保持原文件名：包内字件名与 fonts.xml 的引用都靠它。
           mkdir -p build work/hpos
           python tools/fix_hpos.py "work/${MOTHER_NAME}" -o "work/hpos/${MOTHER_NAME}" \
             | tee build/hpos.md
@@ -250,12 +95,10 @@ jobs:
           unzip -oq "build/${NAME}.zip" -d build/root
           test -f build/root/module.prop
           test -f build/root/customize.sh
-          # artifact 下下来就是模块 zip：module.prop 必须在根目录，不能「zip 里套 zip」，
-          # 所以上传解开的目录内容，而不是 build/${NAME}.zip。
           ver=$(sed -n 's/^version=//p' build/root/module.prop)
           echo "VERSION=${ver}" >> "$GITHUB_ENV"
           echo "产物名 build-${ver}"
-      - name: 验收（平移只平移、字宽不变、墨心归位）
+      - name: 验收（纯平移、字宽不变、墨心归位）
         run: |
           set -euo pipefail
           python - <<'PY' | tee build/verify.md
@@ -269,19 +112,17 @@ jobs:
               prop = z.read("module.prop").decode()
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
 
-          # 包内那份必须就是改过的那个文件，字节相同
           fixed_bytes = open("work/hpos/" + mother, "rb").read()
           assert packed == fixed_bytes, "包内字件不是修过定位的那一份"
 
-          before = TTFont("work/" + mother)          # 母版原字节
-          after = TTFont(io.BytesIO(packed))          # 进包的那份
+          before = TTFont(os.path.join("work", mother))
+          after = TTFont(io.BytesIO(packed))
           cmap = before.getBestCmap()
           gb, ga = before["glyf"], after["glyf"]
           hb, ha = before["hmtx"], after["hmtx"]
 
           def cjk(cp): return 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF
 
-          # 1) 位移处处相等 = 只平移；2) advance 一个字都没变
           moved = bad_shift = bad_adv = 0
           for cp, gname in cmap.items():
               if not cjk(cp):
@@ -301,7 +142,6 @@ jobs:
           assert bad_shift == 0, f"{bad_shift} 个字的点位移不相等（不是纯平移）"
           assert bad_adv == 0, f"{bad_adv} 个字的 advance 变了"
 
-          # 3) 汉字字格全 1000、lsb == xMin（拉丁与标点的侧距是母版逐个手调的，不在这一条里）
           cjk_glyphs = [cmap[cp] for cp in cmap if cjk(cp)]
           advs = {ha[g][0] for g in cjk_glyphs}
           assert advs == {1000}, f"汉字 advance 不再全是 1000：{sorted(advs)[:5]}"
@@ -325,7 +165,6 @@ jobs:
           def share(values, limit=20):
               return 100 * sum(1 for v in values if abs(v) <= limit) / len(values)
 
-          # 4) 满格字墨心落在 20 单位内的占比必须上去，不能只是「动了」
           assert share(ca) >= 99.5, f"修完满格字 |dcx|≤20 只有 {share(ca):.2f}%"
           assert share(ca) > share(cb), "修完反而更偏"
 
@@ -336,7 +175,7 @@ jobs:
               f"| 包 sha256 | `{hashlib.sha256(raw).hexdigest()}` |",
               f"| 包大小 | {len(raw):,} B |",
               f"| 版本 | `{fields.get('version')}`（versionCode {fields.get('versionCode')}） |",
-              f"| 汉字字件 | `{mother}` {len(packed):,} B（母版原字节 → 只平移过的字节） |",
+              f"| 汉字字件 | `{mother}` {len(packed):,} B（母版字节 → 只平移过的字节） |",
               f"| 平移过的字 | {moved:,} 个，逐字位移处处相等（纯平移） |",
               f"| advance / lsb | 全 1000 / lsb==xMin 0 例外 |",
               f"| 满格字墨心 \\|dcx\\|≤20 | {share(cb):.2f}% → **{share(ca):.2f}%** |",
@@ -356,7 +195,7 @@ jobs:
           overwrite: true
 
   cleanup-artifacts:
-    needs: [selfrounds, build]
+    needs: build
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -375,7 +214,7 @@ jobs:
         run: python3 .github/scripts/cleanup.py
 
   cleanup-releases:
-    needs: [selfrounds, build]
+    needs: build
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: 10

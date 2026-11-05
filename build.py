@@ -959,6 +959,9 @@ def query_ci_version() -> tuple[str, str, str]:
 
     取不到即抛：不降级、不编数。启动行打印 head SHA、run_id、run_number、R_first、当日序号
     与最终版本，和产物名逐字可对。
+
+    读哪条工作流的运行列表由 `CI_WORKFLOW` 决定（默认 `build.yml`，即母版那条）。
+    自版走自己那条 `selffont.yml`，号源才不会跟母版的运行数混在一起。
     """
     repo = (os.environ.get("REPO") or os.environ.get("GITHUB_REPOSITORY") or "").strip()
     run_number = (os.environ.get("RUN_NUMBER") or os.environ.get("GITHUB_RUN_NUMBER") or "").strip()
@@ -967,7 +970,8 @@ def query_ci_version() -> tuple[str, str, str]:
                            f"RUN_NUMBER/GITHUB_RUN_NUMBER 都要取到，实际 REPO={repo!r} "
                            f"RUN_NUMBER={run_number!r}")
     now = datetime.now(timezone.utc).astimezone(CLOCK)
-    runs = gh_json(f"repos/{repo}/actions/workflows/build.yml/runs?per_page=100", "workflow_runs")
+    workflow = (os.environ.get("CI_WORKFLOW") or "build.yml").strip()
+    runs = gh_json(f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=100", "workflow_runs")
     artifacts = gh_json(f"repos/{repo}/actions/artifacts?per_page=100", "artifacts")
     try:
         date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now)
@@ -2208,14 +2212,15 @@ def supplemental_font_reference():
     assert NOTO_MUSIC_SOURCE["minimum_outline_mappings"] >= 200
 
 
-# 四类产物各归一条工作流（主人第六次强调）：build 出母版、selffont 出自版（冻着）、
-# selfrounds 出字体本身、hotswap 出热切换。`log-` 是失败时的诊断件，不是交付物。
+# 四类产物各归一条工作流（主人第六、七次强调）：build 出母版、selffont 出自版（冻着）、
+# selfrounds 出字体本身、hotswap 出热切换——**四条工作流，四条名字，四类前缀，不许混在一条里**。
+# `log-` 是失败时的诊断件，不是交付物，四条都可能出。
 ARTIFACT_OWNER = {
-    "build-": "build.yml",
-    "selffont-": "build.yml",
-    "selfrounds-": "build.yml",
-    "log-": "build.yml",
-    "hotswap-": "hotswap.yml",
+    "build-": {"build.yml"},
+    "selffont-": {"selffont.yml"},
+    "selfrounds-": {"selfrounds.yml"},
+    "log-": {"build.yml", "selffont.yml", "selfrounds.yml", "hotswap.yml"},
+    "hotswap-": {"hotswap.yml"},
 }
 
 
@@ -2314,13 +2319,15 @@ def workflow_format():
                 prefix = label.split("${{")[0]
                 owner = ARTIFACT_OWNER.get(prefix)
                 assert owner, f"{path.name}/{job_name}: 产物前缀 {prefix!r} 不在四类里（{sorted(ARTIFACT_OWNER)}）"
-                assert owner == path.name, f"{path.name}/{job_name}: 产物 {label!r} 属于 {owner}，不该在这里出"
+                assert path.name in owner, \
+                    f"{path.name}/{job_name}: 产物 {label!r} 只属于 {sorted(owner)}，不该在这里出"
                 prefixes.add(prefix)
             if prefixes:
                 assert f"{job_name}-" in prefixes, \
                     f"{path.name}/{job_name}: 这个 job 一件以自己名字命名的产物都没有（只出 {sorted(prefixes)}）"
         assert f"{stem}-" in ARTIFACT_OWNER, f"{path.name}: 工作流名 {stem!r} 不是任何一类产物的前缀"
-        assert ARTIFACT_OWNER[f"{stem}-"] == path.name, f"{path.name}: 前缀 {stem}- 归属 {ARTIFACT_OWNER[f'{stem}-']}"
+        assert path.name in ARTIFACT_OWNER[f"{stem}-"], \
+            f"{path.name}: 前缀 {stem}- 归 {sorted(ARTIFACT_OWNER[f'{stem}-'])}，不含本文件"
 
 
 def run_checks() -> None:

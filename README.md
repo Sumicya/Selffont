@@ -189,22 +189,22 @@ gh api -H "Accept: application/vnd.github.raw" \
 - **本地不出 CI 号**：`--query-ci` 只在 CI 里成立，本地打包必须显式传齐 `--date/--day/--build`，数的可追溯性由打包的人负责。
 - `module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI 只有两个工作流，各出一类东西（名字与产物前缀一一对应）：
+CI 有四条工作流，**一条工作流一个名字、一类产物**，不许混在一条里（第六、七次强调）：
 
 | 工作流 | `name:` | job | 产物 | 是什么 |
 | --- | --- | --- | --- | --- |
-| `.github/workflows/build.yml` | `build` | `build` / `selfrounds` / `cleanup-artifacts` / `cleanup-releases` | `build-<五段版本>`、`selfrounds-<SHA8>`、`selffont-<版本>`（手动勾才出）、`log-<run_id>`（失败时） | 母版 Magisk 模块（可直刷）、Selfrounds 字体文件、自研模块 |
+| `.github/workflows/build.yml` | `build` | `build` / `cleanup-artifacts` / `cleanup-releases` | `build-<五段版本>` | 母版 Magisk 模块（可直刷） |
+| `.github/workflows/selffont.yml` | `selffont` | `selffont` / `cleanup-artifacts` | `selffont-<五段版本>` | 自研字体模块（**冻结**，手动触发或 `[selffont]` 才跑） |
+| `.github/workflows/selfrounds.yml` | `selfrounds` | `selfrounds` / `cleanup-artifacts` | `selfrounds-<SHA8>` | Selfrounds 字体文件本身 |
 | `.github/workflows/hotswap.yml` | `hotswap` | `hotswap` / `cleanup-artifacts` | `hotswap-<SHA8>` | LSPosed 热切换模块（`sumicya.selffont.hotswap`） |
 
-**每个 job 的名字就是它出的产物前缀**（第六次强调）：`build` job 出 `build-*`，`selfrounds` job 出 `selfrounds-*`（勾 `selffont` 时同一次构建额外出 `selffont-*`），`hotswap` 工作流出 `hotswap-*`；`log-*` 是失败时的诊断件，不算交付物。
+`log-<run_id>` 是失败时的诊断件，四条都可能出，不算交付物，也不占四类前缀。
 
-`build` 与 `selfrounds` 两个 job **并行**（互不 `needs`）：`build` 出母版模块（约 2 分钟，母版字节直通，不改轮廓），`selfrounds` 出字体文件（push 走预览子集约 96 秒，手动 `full` 才跑全量约 53 分钟）。`cleanup-artifacts`（`needs: [selfrounds, build]` + `if: always()`）与 `cleanup-releases`（`if: always()` 且限默认分支，只授 `contents: write`）收尾。artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷；`build-` 留 30 天，其余 5 天只是兜底，`overwrite: true` 让重试不撞名。
+四条工作流各有自己的并发组（`selffont-<文件名>`、`cancel-in-progress: false`），互不排队；`build` 约 2 分钟，`selfrounds` 约 96 秒（预览子集），`selffont` 全量约 53 分钟且默认不跑。`cleanup-artifacts`（`if: always()`）各自收尾，`cleanup-releases` 只在 `build.yml` 且限默认分支。artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷；`build-` 留 30 天，其余 5 天只是兜底，`overwrite: true` 让重试不撞名。
 
-三个前缀不许混：`build`＝母版 Magisk 模块、`selffont`＝自研字体模块（默认关，字体不合格）、`selfrounds`＝Selfrounds 字体本身；`hotswap` 是第四类，独立工作流。
+清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；四条工作流顶层的 `CLEANUP_APPLY: "true"` 保持一致。
 
-清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；两个工作流顶层的 `CLEANUP_APPLY: "true"` 保持一致。
-
-- **artifact/run**：两个工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py`，各自用自己的并发组（`selffont-build` / `selffont-hotswap`，`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`。artifact 只有一条判据，照规范六·3：全仓未过期产物按 `created_at` 保留最新 5 个，超出当轮删——不看名字、前缀、段数、来源或号源。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
+- **artifact/run**：四条工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py`，各自用自己的并发组（`selffont-build` / `selffont-selffont` / `selffont-selfrounds` / `selffont-hotswap`，`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`。artifact 只有一条判据，照规范六·3：全仓未过期产物按 `created_at` 保留最新 5 个，超出当轮删——不看名字、前缀、段数、来源或号源。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
 - **Release/tag**：`build.yml` 的独立 `cleanup-releases` job 只在默认分支运行，只声明 `contents: write`；保留最新一个 Release，删除不再关联保留 Release 的 `Selffont-` 前缀 tag。CI 不创建 Release、tag 或正式 asset。
 - **安全与失败处理**：所有待执行对象和端点先完整打印，再开始删除；checkout 一律默认浅克隆（取号与清理都只读 API，不再读 git 历史）。403 明确打印对象、端点和状态，标为未执行并继续；复核会注明清理未完成，不将权限缺口说成成功。403 以外的失败使 job 标红。Release/tag 清理删除 tag 前还会重新核对 Release 仍否引用该 tag，避免 Release 删除失败后误删其 tag。
 
