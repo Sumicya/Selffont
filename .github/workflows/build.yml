@@ -227,14 +227,19 @@ jobs:
           # 满格字里 10.3% 的墨心偏离 500 超过 20 单位（=2% em），最远 ±54.5；
           # 而且带方向——偏左 951 字、偏右 241 字。这就是「字发飘、有的挤边」。
           # 只做一件事：整字沿 x 平移，让墨心落到 500。轮廓相对彼此一个点不动。
-          python tools/fix_hpos.py "work/${MOTHER_NAME}" -o work/mother-hpos.ttf | tee build/hpos.md
+          # 输出**保持原文件名**（放进 work/hpos/）：包内字件的名字与 fonts.xml 的引用都靠它，
+          # 换了名字等于换了字件名，验收和配置全对不上。build/ 这时还没被 build.py 建出来，
+          # 也得自己建，否则 tee 直接 No such file or directory（这就是上一轮失败的原因）。
+          mkdir -p build work/hpos
+          python tools/fix_hpos.py "work/${MOTHER_NAME}" -o "work/hpos/${MOTHER_NAME}" \
+            | tee build/hpos.md
           cp build/hpos.md "$GITHUB_STEP_SUMMARY"
       - name: 出包（母版 + 水平定位修正）
         run: |
           set -euo pipefail
           date=$(TZ=Asia/Shanghai date +%y.%-m.%-d)
           name="build-${MOTHER_REF}-${{ github.run_number }}"
-          python build.py --passthrough-mother work/mother-hpos.ttf \
+          python build.py --passthrough-mother "work/hpos/${MOTHER_NAME}" \
             --date "$date" --day 1 --build "${{ github.run_number }}" --module-id selffont-bench \
             --output "build/${name}.zip"
           echo "NAME=${name}" >> "$GITHUB_ENV"
@@ -265,7 +270,7 @@ jobs:
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
 
           # 包内那份必须就是改过的那个文件，字节相同
-          fixed_bytes = open("work/mother-hpos.ttf", "rb").read()
+          fixed_bytes = open("work/hpos/" + mother, "rb").read()
           assert packed == fixed_bytes, "包内字件不是修过定位的那一份"
 
           before = TTFont("work/" + mother)          # 母版原字节
