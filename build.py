@@ -2153,12 +2153,30 @@ def workflow_format():
     import re
     import yaml
 
+    class _Strict(yaml.SafeLoader):
+        """重复键直接报错。
+
+        `yaml.safe_load` 遇到重复键只保留最后一个——同一次改动里我写出两段 `env:`、
+        两个 `overwrite:`，它一声不响地通过，GitHub 那边却整份判「invalid workflow」，
+        运行起来 0 个 job。宽松解析器给出的绿是假的。
+        """
+
+    def _no_dup(loader, node, deep=False):
+        seen = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            assert key not in seen, f"重复键 {key!r} 第 {key_node.start_mark.line + 1} 行"
+            seen[key] = loader.construct_object(value_node, deep=deep)
+        return seen
+
+    _Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_dup)
+
     folder = ROOT / ".github" / "workflows"
     names = {}
     for path in sorted(folder.glob("*.yml")):
         stem = path.stem
         text = path.read_text(encoding="utf-8")
-        data = yaml.safe_load(text)
+        data = yaml.load(text, Loader=_Strict)
 
         # 1. name 与文件名一致、不重复
         assert data.get("name") == stem, f"{path.name}: name={data.get('name')!r} 应等于文件名 {stem!r}"

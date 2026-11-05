@@ -172,7 +172,6 @@ jobs:
           retention-days: 5
           if-no-files-found: error
           overwrite: true
-          overwrite: true
       - name: 上传哈希
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7

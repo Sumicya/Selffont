@@ -25,10 +25,9 @@ env:
   MOTHER_NAME: 'MarukoGothicCJKsc-Regular.ttf'
   MOTHER_REF: ${{ inputs.ref || '97e9dd4' }}
   MOTHER_DAY: ${{ inputs.day || '1' }}
-
-env:
   SEGMENTS: '5'
   CLEANUP_APPLY: 'true'
+
 
 concurrency:
   group: selffont-mother

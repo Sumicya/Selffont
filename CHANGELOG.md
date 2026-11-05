@@ -8,6 +8,9 @@
   `probe` 缺 `retention-days`，`build-log` 那处 `if-no-files-found: ignore` 改 `error`）。
 - **并行**：并发组共用一套时，五个工作流的清理 job 互相排队；拆开之后互不相干，push 一次五个
   工作流同时跑。这也是原来「跑一次要等一次」的原因，不是 CPU 核数。
+- 第一次推上去 **mother 与 build 两个工作流整份无效、跑起来 0 个 job**：我的批量改写造出重复键
+  （mother 两段 `env:`、build 两个 `overwrite:`），而自检用的 `yaml.safe_load` 对重复键只留
+  最后一个、一声不响地放行。自检已改成严格加载器（重复键即 FAIL），见 `workflow_format`。
 - 新增自检 `workflow_format`（第 15 项）：name/注释/env/并发组/清理 job/步骤名/artifact 三样，
   七样任一不齐就红。**它现在真的会红**——第一次跑就抓到 `pr-check` 的组名与缺 `if: always()`。
 
