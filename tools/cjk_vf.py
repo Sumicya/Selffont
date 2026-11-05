@@ -13,7 +13,6 @@ glyf 的 gvar 是 fontTools 直接支持的格式，肉眼可核。
 from __future__ import annotations
 
 import io
-import os
 from pathlib import Path
 
 WEIGHT_MIN, WEIGHT_DEFAULT, WEIGHT_MAX = 300, 400, 500
@@ -762,7 +761,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
             settle_junction_widths(data)
         # 收笔尖补齐（2026-11-05）：母版的撇尖/捺脚是尖的，骨架在离尖几十单位处就收住了，
         # 圆头补不满。按母版字面框把该补的自由端拉成半椭圆（点数不动，三档共用一个缺口）。
-        if is_han(codepoint) and os.environ.get("SELFFONT_TIP_EXTEND", "1") != "0":
+        if is_han(codepoint):
             tip_extend.apply(data, codepoint)
         rings, flags = _glyph_rings_all(data, codepoint)
         # 凹角补圆（2026-10-31）：追加补丁环。nonzero 填充下绕向必须与笔画环一致

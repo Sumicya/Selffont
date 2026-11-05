@@ -53,7 +53,7 @@
   **另一条轴**留 4 单位余量，超了按比例缩回来。
 - **点数一个不动**：`ARC_STEPS` 不变，只是把半圆的点摆到半椭圆上。三档共用同一个 δ
   （`_ext` 记在笔画上），各自按自己的半宽算 reach——可变字体的点对点对应关系不动。
-- 只补汉字；闭合环与零长度笔（字点）不动。要关掉做对照：`SELFFONT_TIP_EXTEND=0`。
+- 只补汉字；闭合环与零长度笔（字点）不动。
 
 改动落在三处：`tools/design_cjk.py`（`_round_cap` 加 `reach`、`stroke_contours` 读 `_ext`）、
 新增 `tools/tip_extend.py`、`tools/cjk_vf.py` 在描轮廓前调一次。
@@ -111,8 +111,9 @@ EOF
 python tools/tip_extend.py --chars "基验式席铲笺日口" --dry-run      # 逐字打印缺口与要补的端
 python tools/tip_extend.py --chars "基验式席铲笺日口"               # 打印补后墨迹框
 
-# 两个对照件（同一批 13 字，只有这一个开关不同）
-SELFFONT_TIP_EXTEND=0 python build.py --preview "基式席铲笺日口验炎妨硷久殴" --preview-out /tmp/before
+# 两个对照件（同一批 13 字）：补尖前的取上一笔提交 7f27ded 的 tools/，补尖后用本提交
+git worktree add /tmp/before-tree 7f27ded
+(cd /tmp/before-tree && python build.py --preview "基式席铲笺日口验炎妨硷久殴" --preview-out /tmp/before)
 python build.py --preview "基式席铲笺日口验炎妨硷久殴" --preview-out /tmp/after
 
 # 量

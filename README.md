@@ -296,7 +296,8 @@ gh run list --workflow=mother.yml -R Sumicya/Selffont --limit 1
     构建期按母版字面框把该补的**自由端**拉成半椭圆：切向半轴 = 半宽 + 缺口 ÷ 切向投影，法向仍是半宽，
     上限 60 单位；斜端按另一条轴留 4 单位余量。`ARC_STEPS` 不变，所以**三档点数一个不动**。
     交汇点（`验` 的「人」顶）与中段极值不在这一步的范围内，那是骨架重取的活。
-    口径见 `docs/evidence/2026-11-05-tip-extend.md`，关掉做对照用 `SELFFONT_TIP_EXTEND=0`。
+    口径见 `docs/evidence/2026-11-05-tip-extend.md`；`build.py --check` 的 `tip_extend` 一项守着
+    「关掉时与原半圆逐点相同」和「`基` 补完残差 ≤ 8」。
 
 **间距的两把尺**（2026-10-31 重做，之前那把是坏的）：
 

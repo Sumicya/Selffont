@@ -2328,6 +2328,39 @@ def cjk_font():
         CJK_RELEASE_VERSION = saved
 
 
+@check
+def tip_extend():
+    """收笔尖补齐：关掉时与原半圆逐点相同；`基` 补完朝向母版字面框收窄缺口。
+
+    两件事各防一个回归：`reach` 缺省走老半圆，全库字形不能因为多了这条路就动一个点；
+    补尖只该「把缺口补掉大半」，剩下的那几单位交给 `box_align` 的仿射收尾——
+    实测 `基` 补完 (18.0, −67.1, 985.3, 839.0)，母版 (11, −68, 992, 839)，残差 7。
+    """
+    import copy
+    import math
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import box_align
+    import design_cjk
+    import tip_extend
+
+    for steps, angle in ((3, 0.0), (5, 1.1), (9, -2.4)):
+        old = [(25 * math.cos(angle - math.pi * i / steps),
+                25 * math.sin(angle - math.pi * i / steps)) for i in range(1, steps)]
+        new_ = design_cjk._round_cap((0.0, 0.0), angle, 25.0, steps)
+        assert all(abs(p[0] - q[0]) < 1e-9 and abs(p[1] - q[1]) < 1e-9
+                   for p, q in zip(old, new_)), (steps, angle)
+
+    glyph = copy.deepcopy(design_cjk.load()[ord("基")])
+    before = tip_extend.ink_box(glyph)
+    tip_extend.apply(glyph, ord("基"), box_align.load())
+    after = tip_extend.ink_box(glyph)
+    target = box_align.load()[ord("基")]
+    assert after[2] - after[0] > before[2] - before[0] + 10, (before, after)
+    assert abs(after[0] - target[0]) <= 8 and abs(after[2] - target[2]) <= 8, (after, target)
+
+
 def _cjk_font_check():
     import io as _io
     import sys as _sys
