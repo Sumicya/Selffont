@@ -17,6 +17,10 @@ on:
         description: '跑全量构建（默认 true；push 时一律只出预览子集）'
         type: boolean
         default: true
+      selffont:
+        description: '出 selffont 模块（自研字体还不合格，默认关；关时只发 selfrounds 字体）'
+        type: boolean
+        default: false
 
 env:
   SEGMENTS: '5'
@@ -56,13 +60,16 @@ jobs:
       - name: 判断构建模式
         id: mode
         run: |
-          if { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full }}" = "true" ]; } \
-             || printf '%s' "${{ github.event.head_commit.message }}" | grep -q '\[full\]'; then
+          # selffont 模块（自研字体）默认不出：主人 2026-11-05「字体太过垃圾所以不搞」。
+          # 只有手动触发且勾了 selffont 才走全量出模块这条；push 永远只发 selfrounds 字体。
+          if { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full }}" = "true" ] \
+               && [ "${{ inputs.selffont }}" = "true" ]; } \
+             || printf '%s' "${{ github.event.head_commit.message }}" | grep -q '\[selffont\]'; then
             echo "full=1" >> "$GITHUB_OUTPUT"
-            echo "全量构建（正式版本）"
+            echo "全量构建（selffont 模块）"
           else
             echo "full=0" >> "$GITHUB_OUTPUT"
-            echo "预览子集构建（改字形用，不跑 53 分钟的全量）"
+            echo "只发 selfrounds 字体（预览子集，不出模块）"
           fi
       - name: 预览出包
         if: steps.mode.outputs.full != '1'
@@ -151,11 +158,11 @@ jobs:
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
         with:
-          # 三类产物各用一个固定前缀，别混（主人 2026-11-05 定）：
-          #   Build 工作流 → 母版包 `maruko-<版本>`（在 mother.yml 里传）
-          #   Build 工作流 → 正式包 `Selffont-<版本>`（本行，README:191 的约定）
-          #   预览产物     → 自版包 `selfrounds-<SHA8>`（下面那一处）
-          name: Selffont-${{ env.VERSION }}
+          # 三类产物各用一个固定前缀，别混（主人 2026-11-05 第四次强调）：
+          #   build      → 母版 Magisk 模块（mother.yml）
+          #   selffont   → 自研字体 Magisk 模块（本行；默认关，字体不合格）
+          #   selfrounds → Selfrounds 字体本身（下面那一处）
+          name: selffont-${{ env.VERSION }}
           path: build/root
           retention-days: 5
           if-no-files-found: error

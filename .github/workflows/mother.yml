@@ -2,7 +2,7 @@
 # 只上传 artifact：不发 Release、不打 tag、不改 latest。出包是内部动作，对外发布要人点头。
 # 触发：push 本文件（paths 只盯这一个）或 Actions 页 Run workflow；`gh workflow run` 实测 403。
 # 清理按规范：全仓按 created_at 留最新 5 个，母版件也在这 5 个里。
-name: Mother
+name: build
 
 on:
   push:
@@ -79,13 +79,26 @@ jobs:
           # 会被管理器判成降级，再也装不回正规包。基准件改用独立 id（selffont-bench），
           # 不同 id 各自比较 versionCode，两边互不压制，90 万那套就没有必要了。
           build=${{ github.run_number }}
-          name="maruko-mother-${MOTHER_REF}-${{ github.run_number }}"
+          name="build-${MOTHER_REF}-${{ github.run_number }}"
           python build.py --passthrough-mother "work/${MOTHER_NAME}" \
             --date "$date" --day "$MOTHER_DAY" --build "$build" --module-id selffont-bench \
             --output "build/${name}.zip"
           echo "NAME=${name}" >> "$GITHUB_ENV"
           echo "DATE=${date}" >> "$GITHUB_ENV"
           echo "BUILD=${build}" >> "$GITHUB_ENV"
+      - name: 解包为可直刷目录
+        run: |
+          set -euo pipefail
+          rm -rf build/root
+          unzip -oq "build/${NAME}.zip" -d build/root
+          test -f build/root/module.prop
+          test -f build/root/customize.sh
+          # 下载下来的 artifact 就是模块 zip：module.prop 必须在包的根目录，
+          # 不能是「zip 里套 zip」。所以上传的是解开的目录内容（build/root），
+          # 而不是 build/${NAME}.zip —— 后者下下来还要再解一层，手机上多一步。
+          ver=$(sed -n 's/^version=//p' build/root/module.prop)
+          echo "VERSION=${ver}" >> "$GITHUB_ENV"
+          echo "产物名 build-${ver}"
       - name: 解包验收
         run: |
           set -euo pipefail
@@ -182,12 +195,15 @@ jobs:
       - name: 存档产物
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.NAME }}
-          path: |
-            build/${{ env.NAME }}.zip
-            build/verify.md
+          # 三类产物的前缀（主人 2026-11-05 第四次强调，不再改）：
+          #   build      → 母版 Magisk 模块（本工作流，可直刷）
+          #   selffont   → 自研字体的 Magisk 模块（字体还不合格，暂不出）
+          #   selfrounds → Selfrounds 字体本身（build.yml 的预览产物）
+          name: build-${{ env.VERSION }}
+          path: build/root
           retention-days: 30
           if-no-files-found: error
+          overwrite: true
 
   cleanup-artifacts:
     needs: mother
