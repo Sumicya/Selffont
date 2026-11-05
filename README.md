@@ -33,7 +33,7 @@ Android 个人字体模块：**Selfrounds CJK**（自研，SIL OFL 1.1 衍生物
 
 ### 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。Release 只放最新一版的 zip 与 `SHA256SUMS.txt`，地址是 `https://github.com/Sumicya/Selffont/releases/latest`，免登录可直接下（Actions artifact 要登录、`build-` 留 30 天，别从那里下）。
+KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。**目前没有公开下载地址**：包只存在于 Actions artifact 里（要登录 GitHub、`build-` 保留 30 天、手机上不好下）。发版是对外动作，等主人点头再开，代码里不留自动发版的口子。
 
 管理器安装：KernelSU → 模块 → 从存储安装 → 选解压出的 zip → 重启。Magisk：模块 → 从本地安装 → 选同一个 zip → 重启（不重启也能先看效果时，用下面的热切换）。
 
@@ -205,7 +205,7 @@ CI 有四条工作流，**一条工作流一个名字、一类产物**，不许�
 清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；四条工作流顶层的 `CLEANUP_APPLY: "true"` 保持一致。
 
 - **artifact/run**：四条工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py`，各自用自己的并发组（`selffont-build` / `selffont-selffont` / `selffont-selfrounds` / `selffont-hotswap`，`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`。artifact 只有一条判据，照规范六·3：全仓未过期产物按 `created_at` 保留最新 5 个，超出当轮删——不看名字、前缀、段数、来源或号源。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
-- **Release/tag**：`build.yml` 验收通过后由「发布公开直链」这一步 `gh release create "${VERSION}"` 挂上 `build-<五段版本>.zip` 与 `SHA256SUMS.txt`（tag = 五段版本，只挂这一个版本的包）；同名 Release 先删再建，重跑不撞名。`cleanup-releases` job 声明 `contents: write`，跟着每一次 build 跑（不分分支），保留最新一个 Release，删除不再关联保留 Release 的 tag——所以全仓 Release 恒为一个、永远是最新一版；构建失败时不清任何东西（保住的仍是最新那个）。
+- **Release/tag**：四条工作流都**不创建** Release 与 tag（自检 `no_auto_publish` 盯着）。`cleanup-releases` 只在 `build.yml` 里，只跑清理：保留最新一个 Release、删除不再关联保留 Release 的 tag。2026-11-06 我擅自加过一步 `gh release create`，出了 `26.11.6.1.326`，已撤回并删除——发版要主人点头。
 - **安全与失败处理**：所有待执行对象和端点先完整打印，再开始删除；checkout 一律默认浅克隆（取号与清理都只读 API，不再读 git 历史）。403 明确打印对象、端点和状态，标为未执行并继续；复核会注明清理未完成，不将权限缺口说成成功。403 以外的失败使 job 标红。Release/tag 清理删除 tag 前还会重新核对 Release 仍否引用该 tag，避免 Release 删除失败后误删其 tag。
 
 ```sh
@@ -239,7 +239,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 - 本地跑不了这一步：MFGA 基础包在 Release 附件里，302 到 `release-assets.githubusercontent.com`
   之后 TLS 直接断，只有 runner 有完整网络。
 - `module-id` 用独立的 `selffont-bench`，与发行件各比各的 versionCode，互不压制。
-- 验收通过后**上传 Actions artifact 并挂 Release**：artifact 给重跑与排障看，Release 是给人下载的直链（免登录、不随运行记录清理而消失）。一个版本一个 tag，旧的在 `cleanup-releases` 里删，所以 latest 永远是最新一版。
+- 只上传 Actions artifact，不发 Release、不打 tag：出包是内部动作，对外发版另说，另说要主人点头才算数。
 
 ### 产物构成（为什么约 100 MB）
 
