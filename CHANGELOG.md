@@ -16,6 +16,7 @@
   不分分支也不会堆：`cleanup-releases` 每次 build 都跑，按 `created_at` 只留最新 1 个；
   构建失败时没有新 Release，保留的仍是最新那个，一个都不会被删。
 - 权限跟着改：`build` job 的 `permissions.contents` 从 `read` 改成 `write`（只这一步需要写）。
+- 附件名对齐：出包那步的 zip 叫 `build-<母版 SHA8>-<run_number>.zip`（如 `build-97e9dd4-326.zip`），artifact 叫 `build-<五段版本>`。`326` 第一次发出去时我照抄了前者，对外两个名字对不上；改成上传前复制成 `build-<五段版本>.zip` 并按这个名字算 `SHA256SUMS.txt`，从 `327` 起一致。
 - 自检加第 16 项 `release_link`：README 里出现 Release 下载承诺，`build.yml` 就必须有
   `gh release create`、tag 必须是 `${VERSION}`、附件必须带 `.zip` 与 `SHA256SUMS.txt`；
   README 里再出现「CI 不创建 Release」直接红。文档承诺与流水线动作从此互相钉住。
