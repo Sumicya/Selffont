@@ -102,3 +102,32 @@ integration`）——令牌是 GitHub App 集成，没有 `workflow_dispatch` �
 新包会按 `cleanup.py` 的「留最新 5 个」规则入列，被挤掉的是 `probe-8b15bc44`（764 KB）
 和旧的 `maruko-mother-97e9dd4-10`；母版字节不变（`MOTHER_SHA256` 钉死），新包与旧包
 内容等价。
+
+## 四、重出的结果（母版包 #11）
+
+| 项 | 值 |
+|---|---|
+| 产物名 | `maruko-mother-97e9dd4-11` |
+| 产物 id | `13379223225` |
+| 大小 | 115.73 MB（121,356,208 → 121,3xx,xxx 量级，按 API 取整显示） |
+| 创建 | 2026-11-05T01:22:21Z |
+| 运行 | https://github.com/Sumicya/Selffont/actions/runs/41947713781 |
+| 作业 | mother ✅、cleanup-artifacts ✅ |
+| 下载 | https://api.github.com/repos/Sumicya/Selffont/actions/artifacts/13379223225/zip |
+
+包内的 `解包验收` 步骤本身带断言（包内汉字字件 sha256 == `MOTHER_SHA256`、字节数 20,084,736、
+`font_fallback.xml` 引用该文件、`fonts-insert.xml` 有插入行），这一步骤通过才算 job success，
+所以字节层面的结论由工作流自己给出。**但本沙箱取不到它的验收摘要**：日志与产物都落在
+`*.blob.core.windows.net`，这里握手断开（EOF）。
+
+### 挤掉顺序：我上一轮说错了两次
+
+- **00:39 的列表**：`selfrounds-68857a67` / `selfrounds-0bc16fe7` / `selfrounds-46e63567` /
+  `selfrounds-7b9fd36a` / `maruko-mother-97e9dd4-10`；最老是母版件（11-02 05:13），
+  probe 已在 Build #295 时被删掉。
+- **Build #296（e4eac1d，01:20）** 新增 `selfrounds-e4eac1d8` 后按时间淘汰，**删掉的正是
+  `maruko-mother-97e9dd4-10`** —— 我上一轮写「只会挤掉探测件」是拿 00:39 之前的旧列表算的，
+  算的时候 probe 已经没了。所以在 01:20–01:22 这两分钟里，仓里**一个母版包都没有**。
+- **Mother #11（01:22）** 灌出 `maruko-mother-97e9dd4-11`，母版包恢复，且是最新一件。
+
+教训写成一句：产物列表要现取现算，别用十分钟前的列表推十分钟后的淘汰。
