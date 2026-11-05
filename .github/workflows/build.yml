@@ -77,6 +77,18 @@ jobs:
         run: |
           set -o pipefail
           python build.py --query-ci 2>&1 | tee build.log
+      - name: 失败时把日志写进运行摘要
+        if: failure()
+        # 运行日志本体走 results-receiver / blob.core.windows.net，本机取不到（握手 EOF），
+        # 产物里的 build-log 也一样要过同一个域名。摘要走的是页面 HTML，能直接读，
+        # 所以失败时把日志尾巴抄一份到摘要里——不然只知道「exit 1」，不知道为什么。
+        run: |
+          {
+            echo '### build.log 末尾 120 行'
+            echo '```'
+            if [ -f build.log ]; then tail -n 120 build.log; else echo '（没有 build.log）'; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: 失败时上传构建日志
         if: failure()
         uses: actions/upload-artifact@v7
