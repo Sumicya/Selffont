@@ -3,9 +3,13 @@
 # 只上传 Actions artifact，不发 Release、不打 tag、不改 latest：出包是内部动作，对外发布要人点头。
 #
 # 清理只按规范六·3：全仓按 created_at 留最新 5 个，不看名字、不看段数、不单列，母版件也在这 5 个里。
-# 触发：推一个 `mother-*` tag。`gh workflow run mother.yml` 返回 404 的原因查过：默认分支上只有
-# `build.yml`（`gh api …/workflows?ref=main` 只回一条，取 mother.yml 得 404），手动触发要求工作流
-# 文件在默认分支，跟令牌权限无关。
+# 触发：改本文件后推一次，或用 Actions 页面的 Run workflow。2026-11-05 实测 `gh workflow run`
+# 返回 403 `Resource not accessible by integration`——本仓令牌是 GitHub App 集成，没有
+# workflow_dispatch 权限（不是文件不在默认分支的问题，那个 404 是另一回事）。所以重出母版包
+# 走「改本文件→push」这条路：`paths` 只盯这一个文件，其它提交不会顺带重出 121 MB 的包。
+#
+# 2026-11-05 重出一次：旧 artifact `maruko-mother-97e9dd4-10` 已产出三天，母版字节未变
+# （MOTHER_SHA256 钉死），重灌只为让它排在「保留最新 5 个」的窗口里。
 name: Mother
 
 on:
