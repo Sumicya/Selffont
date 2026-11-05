@@ -70,13 +70,26 @@ class FlattenPen(BasePen):
         self._cur = []
 
 
+def fold_area(poly):
+    """自交的环折返掉了多少面积（字体单位²）。
+
+    有折返不等于**看得见**：环在 0.01 单位² 量级上自己蹭一下，24 步展平能查出
+    invalid，可屏幕上一个像素都没有。判「要不要修」要用这个数，不是 FAIL 的条数。
+    """
+    try:
+        return abs(poly.area - poly.buffer(0).area)
+    except Exception:
+        return float("inf")
+
+
 def check_glyph(font, gname):
-    """返回 ``(自交轮廓序号, 零面积残留轮廓序号)``，两类分开，见文件头说明。"""
+    """返回 ``(自交轮廓序号, 零面积残留轮廓序号, 折返面积最大的一处)``。"""
     glyphSet = font.getGlyphSet()
     pen = FlattenPen(glyphSet)
     glyphSet[gname].draw(pen)
     problems = []
     degenerate = []
+    worst = 0.0
     for ci, pts in enumerate(pen.contours):
         if len(pts) < 3 or len(set(pts)) < 3:
             degenerate.append(ci)
@@ -92,7 +105,8 @@ def check_glyph(font, gname):
                 degenerate.append(ci)
             else:
                 problems.append(ci)
-    return problems, degenerate
+                worst = max(worst, fold_area(poly))
+    return problems, degenerate, worst
 
 
 def main(argv):
@@ -118,10 +132,11 @@ def main(argv):
                 print(f"{name}: {ch} missing from cmap, skip")
                 continue
             gname = cmap[ord(ch)]
-            problems, degenerate = check_glyph(font, gname)
+            problems, degenerate, worst = check_glyph(font, gname)
             if problems:
                 any_fail = True
-                print(f"FAIL {name}: {ch} ({gname}) self-intersects in contour(s) {problems}")
+                print(f"FAIL {name}: {ch} ({gname}) self-intersects in contour(s) {problems}"
+                      f" 折返 {worst:.3f} 单位²")
             elif degenerate:
                 print(f"degenerate {name}: {ch} ({gname}) zero-area contour(s) {degenerate}")
             else:
