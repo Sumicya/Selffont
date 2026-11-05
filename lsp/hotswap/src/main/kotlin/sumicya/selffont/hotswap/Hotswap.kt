@@ -3,6 +3,7 @@ package sumicya.selffont.hotswap
 import android.graphics.Typeface
 import android.util.Log
 import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
 import java.io.File
 import java.util.zip.ZipFile
@@ -31,7 +32,7 @@ class Hotswap : XposedModule() {
 
     override fun onPackageLoaded(param: PackageLoadedParam) {
         val tag = "$TAG/${param.packageName.substringAfterLast('.')}"
-        val loader = param.classLoader
+        val loader = param.defaultClassLoader
         try {
             val typeface = loader.loadClass("android.graphics.Typeface")
 
@@ -39,7 +40,7 @@ class Hotswap : XposedModule() {
             val create = typeface.getDeclaredMethod(
                 "create", String::class.java, Int::class.javaPrimitiveType
             )
-            hook(create).intercept { chain ->
+            hook(create).intercept { chain: XposedInterface.Chain ->
                 if (!installed) install(tag)
                 chain.proceed()
             }
@@ -49,7 +50,7 @@ class Hotswap : XposedModule() {
                 val m = runCatching {
                     typeface.getDeclaredMethod("createFromFile", loader.loadClass(name))
                 }.getOrNull() ?: continue
-                hook(m).intercept { chain ->
+                hook(m).intercept { chain: XposedInterface.Chain ->
                     val arg = chain.getArg(0)
                     val path = (arg as? File)?.name ?: arg as? String
                     val swapped = path?.let { redirect(it, tag) }
