@@ -1,3 +1,19 @@
+## 2026-11-06（十）· 清理：工作流文件已删的，运行记录一条不留
+
+- 现场（现读）：`/actions/workflows` 列出 **7** 个、`/actions/runs` **31** 条，而 `main` 上只有
+  `.github/workflows/build.yml`；pr-check / probe / mother / hotswap / selffont / selfrounds 六个文件早删了，
+  只剩历史挂在 Actions 页面里。
+- 卡点：沙箱令牌是 GitHub App 安装令牌（`X-OAuth-Scopes` 为空），`DELETE /actions/runs/<id>`、
+  `DELETE /actions/artifacts/<id>`、`POST .../dispatches` 一律 **403 `Resource not accessible by integration`**；
+  能删的只有 CI 里的 `GITHUB_TOKEN`（`build.yml` 的 `cleanup-artifacts` job 声明 `actions: write`）。
+- 改法（不新建工作流）：`cleanup.py` 加 `workflow_file_exists()`——按默认分支查 `.github/workflows/<path>`，
+  取不到（404）就判定这条工作流只剩历史，**该工作流的运行一条不留**；文件还在的仍按「每工作流留 5 条」。
+- 结果：运行 `42131453491` 的 `cleanup-artifacts` 删掉 26 条历史后，复查 `workflows total_count=1`（只剩 Build）、
+  `runs total_count=5`（全部是 build），artifact 3 个（`Selffont-母版-26.11.6.1.330/331` 5 天有效 + 旧的
+  `build-26.11.6.1.329` 30 天）。selfrounds 的运行随规则一并清掉，它的 artifact 也随运行消失——这是「只剩 Build」的必然代价。
+- 执行侧日志取不回（`results-receiver.actions.githubusercontent.com` TLS EOF），所以没有逐条 DELETE 的 HTTP 码，
+  只有删除前后的计数与 404 复查。
+
 ## 2026-11-06（九）· 母版产物改名与保留期：`build-<版本>` → `Selffont-母版-<版本>`，30 天 → 5 天
 
 - 产物名：`build-<五段版本>` → `Selffont-母版-<五段版本>`。命名规则：前缀必须是项目名 `Selffont`，
