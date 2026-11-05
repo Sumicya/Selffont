@@ -71,7 +71,7 @@ class Hotswap : XposedModule() {
         val fonts = extract(tag)
         if (fonts.isEmpty()) {
             installed = true          // 没有字体就别每次调用都去找一遍
-            Log.i(tag, "模块里没有 assets/fonts/*.ttf，不替换")
+            Log.i(tag, "模块里没有 assets/fonts/<家族名>.ttf，不替换")
             return true
         }
         try {
@@ -110,7 +110,7 @@ class Hotswap : XposedModule() {
             .getOrNull()
     }
 
-    /** 模块 APK 的 assets/fonts/*.ttf → 本进程缓存目录；返回「家族名 → 文件」。 */
+    /** 模块 APK 的 assets/fonts/<家族名>.ttf → 本进程缓存目录；返回「家族名 → 文件」。 */
     private fun extract(tag: String): Map<String, File> {
         val cache = cacheDir() ?: return emptyMap()
         val out = linkedMapOf<String, File>()
