@@ -29,6 +29,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      statuses: write   # 失败时把 build.log 最后一行写进 commit status（日志宿主取不到）
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -79,15 +80,24 @@ jobs:
           python build.py --query-ci 2>&1 | tee build.log
       - name: 失败时把日志尾巴报成注解
         if: failure()
-        # 摘要页那块在 GitHub 页面上是「### Uh oh! There was an error while loading」，
-        # 读不到；注解（::error::）在运行页的 Annotations 里直接显示，能被抓下来。
+        # 摘要页那块在 GitHub 页面上是「### Uh oh! There was an error while loading」，读不到；
+        # 注解（::error::）在运行页的 Annotations 里直接显示，能抓下来。多行拼成一条注解会被
+        # 页面截成一句，所以逐行发（最多 10 条）；异常那一行另发一条 commit status，
+        # description 有 140 字，正好装得下。
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          if [ -f build.log ]; then
-            msg=$(tail -n 25 build.log | sed 's/%/%25/g; s/\r//g' | paste -sd'\n' - | sed 's/\n/%0A/g')
-            echo "::error title=build.log 末尾 25 行::$msg"
-          else
+          if [ ! -f build.log ]; then
             echo "::error title=build.log::没有 build.log"
+            exit 0
           fi
+          tail -n 6 build.log | while IFS= read -r line; do
+            echo "::error title=build.log::${line}"
+          done
+          desc=$(tail -n 1 build.log | cut -c1-120)
+          gh api -X POST "repos/${REPO}/statuses/${GITHUB_SHA}" \
+            -f state=failure -f context=build-log -f description="$desc" >/dev/null || true
       - name: 失败时把日志写进运行摘要
         if: failure()
         # 运行日志本体走 results-receiver / blob.core.windows.net，本机取不到（握手 EOF），
