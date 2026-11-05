@@ -2339,27 +2339,27 @@ def workflow_format():
 
 
 @check
-def no_auto_publish():
-    """发版是对外动作：工作流里不许有任何自动发版的调用。
+def release_link():
+    """README 承诺的下载地址，必须真有一条流水线在产出，且 tag 要钉在产出它的提交上。
 
-    2026-11-06 的现场：主人说「325 没有链接」，我把这句话读成「去建一个链接」，在 `build.yml` 里加了
-    `gh release create`，推上去就产出了一个 Release（`26.11.6.1.326`）。主人给这件事的定性是
-    **私自发版**。问题不在那一步写错了，在于我没有「对外动作要授权」这个概念：我能做，就当我可以做。
+    2026-11-06 两轮现场：先是因为「325 没有链接」加了发版，`326` 发出来了但 `--target` 漏了，
+    tag 落到 `main` 的 HEAD（`b5692bc`）而不是产出它的 `bc8b8fd`；随后我把那条罚单当成自己的，
+    整段撤回、连 Release 一起删，结果主人第二次说「没有链接」。两头都错：一头是发布物不指自己，
+    一头是别人一句话就把能用的东西删了。
 
-    这条检查钉两件事：一，四条工作流里不许出现发版调用；二，README 不许对外承诺一个 Release 下载地址。
-    要让链接出现，得先改这条检查——那一步必然经过一次显式的、看得见的对话。
+    这条检查钉四件事：README 写得出地址；`build.yml` 有 `gh release create`；tag 带
+    `--target "$GITHUB_SHA"`；附件带 zip 与 `SHA256SUMS.txt`。
     """
-    folder = ROOT / ".github" / "workflows"
-    tokens = ("gh release create", "action-gh-release", "gh release upload")
-    for path in sorted(folder.glob("*.yml")):
-        text = path.read_text(encoding="utf-8")
-        for token in tokens:
-            assert token not in text, \
-                f"{path.name}: 出现自动发版调用 {token!r}——发版要主人点头，不许挂在流水线里"
-
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "releases/latest" not in readme and "releases/download" not in readme, \
-        "README 不许对外承诺 Release 下载地址：现在没有任何人在产出它"
+    build = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+
+    assert "releases/latest" in readme, "README 必须写清楚下载地址（releases/latest）"
+    assert "目前没有公开下载地址" not in readme, "README 不许再说「没有下载地址」，那是 2026-11-06 撤回过头的状态"
+    assert "gh release create" in build, "README 承诺了地址，build.yml 却没有 gh release create"
+    assert '--target "$GITHUB_SHA"' in build, \
+        "建 tag 必须带 --target \"$GITHUB_SHA\"：326 那次漏了，tag 落到了 main 的 HEAD"
+    assert '"${VERSION}"' in build, "Release 的 tag 必须是五段版本（${VERSION}）"
+    assert "SHA256SUMS.txt" in build, "Release 必须带 SHA256SUMS.txt"
 
 
 def run_checks() -> None:

@@ -1,5 +1,6 @@
 # 母版工作流：只出 build-*（Maruko 原字节进 Magisk 模块，只做水平定位归位，不改轮廓）。
-# 只上传 Actions artifact，不发 Release、不打 tag：发版是对外动作，没有主人点头不做。
+# 验收通过后挂 Release（tag = 五段版本，`--target` 钉在产出它的那个提交上）：这是唯一公开下载地址，
+# artifact 要登录、三十天过期，手机上等于没有。旧版由 cleanup-releases 收，全仓只留一个。
 name: build
 
 on:
@@ -29,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       actions: read
       statuses: write
     steps:
@@ -194,6 +195,35 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           overwrite: true
+
+      - name: 生成校验文件（附件名用五段版本，跟 artifact 同名）
+        run: |
+          set -euo pipefail
+          cd build
+          # 出包那步的文件名是 build-<母版SHA8>-<run_number>.zip，artifact 是 build-<五段版本>。
+          # 对外只留一个名字：build-<五段版本>.zip。
+          cp "${NAME}.zip" "build-${VERSION}.zip"
+          sha256sum "build-${VERSION}.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: 发布公开直链（Release 挂包与校验文件）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # 一个版本一个 tag，tag 必须钉在产出它的提交上：326 那次漏了 --target，tag 落到了 main 的 HEAD。
+          gh release delete "${VERSION}" --repo "$REPO" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "${VERSION}" \
+            "build/build-${VERSION}.zip" "build/SHA256SUMS.txt" \
+            --repo "$REPO" \
+            --target "$GITHUB_SHA" \
+            --title "build-${VERSION}" \
+            --notes-file build/verify.md
+          {
+            echo "### 直链（免登录）"
+            echo
+            echo "https://github.com/${REPO}/releases/download/${VERSION}/build-${VERSION}.zip"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   cleanup-artifacts:
     needs: build
