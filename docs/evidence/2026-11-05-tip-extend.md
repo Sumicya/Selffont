@@ -126,7 +126,12 @@ python tools/fig_position.py --master 母版.ttf --ours /tmp/before/preview.ttf 
     --out docs/evidence/2026-11-05-tip-extend.png
 ```
 
-图：`docs/evidence/2026-11-05-tip-extend.png`（母版 / 补尖前 / 补尖后 三行，八列同字）。
+两张图，都是同字、同尺寸、并排、放大：
+
+- `docs/evidence/2026-11-05-tip-extend.png`：母版 / 补尖前 / 补尖后 三行，八列同字，按**字格**对齐
+  （灰框字身格、蓝线基线、红竖线左右边距），画的就是「放没放正」。
+- `docs/evidence/2026-11-05-tip-overlay.png`：母版 / 补尖前 / 补尖后 / 叠加 四列，每行一字，
+  按**墨迹**放大到同一尺寸（绿=母版、红=补尖后）。
 
 ## 八、未验证
 
