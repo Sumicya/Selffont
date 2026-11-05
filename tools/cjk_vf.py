@@ -705,23 +705,6 @@ def _glyph_from_rings(rings, flags):
     return glyph
 
 
-_FILLETS = None
-
-
-def fillet_patches() -> dict:
-    """凹角补丁：`tools/fillet_patches.json` 里按码位存的补丁环（`tools/fillet.py` 生成）。
-
-    补丁只加环、不改已有坐标，所以笔宽与端头一个点都不动；同一块补丁原样加进三档，
-    三档点数仍然逐一相同（gvar 的增量为 0）。文件不存在时返回空字典——不带补丁也能建。
-    """
-    global _FILLETS
-    if _FILLETS is None:
-        import json
-        path = Path(__file__).resolve().parent / "fillet_patches.json"
-        _FILLETS = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    return _FILLETS
-
-
 def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
              style: str = "Regular", ps_name: str = "SelfroundsCJK",
              version: str | None = None) -> bytes:
@@ -759,13 +742,8 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         if is_han(codepoint):
             settle_junction_widths(data)
         rings, flags = _glyph_rings_all(data, codepoint)
-        # 凹角补圆（2026-10-31）：追加补丁环。nonzero 填充下绕向必须与笔画环一致
-        # （design_cjk 的所有笔画环都是 −1），否则与原有环抵消成洞——第一版就是这样翻车的。
-        add = fillet_patches().get(str(codepoint))
-        if add:
-            rings = {w: list(rr) + [[(float(x), float(y)) for x, y in poly] for poly in add]
-                     for w, rr in rings.items()}
-            flags = {w: list(ff) + [[1] * len(poly) for poly in add] for w, ff in flags.items()}
+        # 凹角补圆（2026-10-31 ~ 2026-11-05）已停用：主人「不要内圆角」。补丁数据、
+        # 注入点、生成工具一起删了，要恢复得从 git 历史取（fillet.py 与 fillet_patches.json）。
         rings = align_face_height(rings)
         # 逐字摆回母版的位置与高度（2026-11-05 主人指令「修水平高度加定位」）：
         # 重建出来的整块会漂，600 字里横/纵各约 100 字差 5 单位以上，`日` 上沿少 64 单位。
