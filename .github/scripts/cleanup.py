@@ -78,6 +78,22 @@ def repo_id() -> int:
     return int(result.stdout.strip())
 
 
+def workflow_file_exists(path: str) -> bool:
+    """这条运行所属的工作流，yml 还在不在默认分支上。
+
+    2026-11-06 的现场：main 上只剩 `.github/workflows/build.yml`，另外六个工作流文件早就删了，
+    但 `/actions/workflows` 仍把它们列成 7 个、运行记录仍挂在名下——历史不会自己消失。
+    文件没了的工作流只剩历史，留着它等于让「已删除」这件事在 Actions 页面里显示成没发生。
+    """
+    result = subprocess.run(["gh", "api", f"repos/{REPO}/contents/{path}", "--jq", ".sha"],
+                            capture_output=True, text=True)
+    if result.returncode == 0:
+        return True
+    if "HTTP 404" in result.stderr or "Not Found" in result.stderr:
+        return False
+    sys.exit(f"读取 {path} 失败（gh 退出码 {result.returncode}）：{result.stderr.strip()}")
+
+
 def run_time(row: dict) -> str:
     """排序统一用 run_started_at；一直排队没真正开始过时该字段缺失，退回 created_at。"""
     return row.get("run_started_at") or row.get("created_at") or ""
@@ -170,14 +186,20 @@ def clean_actions() -> None:
     print(f"=== {PROJECT} 清理：{MODEL}；artifact 全仓最多 {KEEP_ARTIFACTS} 个（只按 created_at）；"
           f"run 每工作流最多 {KEEP_RUNS} 条；本次运行 {RUN_ID} ===")
 
-    # run：每个工作流保留最新 5 条；超限且未完成先取消，其余删除。
+    # run：工作流文件还在 → 保留最新 5 条；文件已从默认分支删除 → 一条不留（只剩历史的不能装成活着的）。
     for path, rows in sorted(by_workflow.items()):
+        keep = KEEP_RUNS
+        if not path:
+            keep = KEEP_RUNS          # 取不到路径时不猜，按常规上限处理
+        elif not workflow_file_exists(path):
+            keep = 0
+            print(f"工作流文件已删除：{path}（默认分支上取不到）→ 该工作流的运行一条不留")
         ordered = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
         for index, row in enumerate(ordered):
             label = (f"{path} {stamp(row)} run_number={row['run_number']} id={row['id']} "
                      f"status={row['status']}")
-            if index < KEEP_RUNS:
-                print(f"保留[run] {label}（最新 {index + 1}/{KEEP_RUNS}）")
+            if index < keep:
+                print(f"保留[run] {label}（最新 {index + 1}/{keep}）")
                 continue
             if row["id"] == RUN_ID:
                 print(f"保留[run] {label}（本次运行自己）")
