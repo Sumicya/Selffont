@@ -25,6 +25,10 @@ FRAME = (-40, 1040, -160, 900)
 #  · 全角类占满一个 em —— 这是汉字排版的栅格约定，不是某个字体的偏好；
 #  · 半角类按本字实际墨宽 + 两侧固定侧距，侧距取 0.06 em；
 #  · 没有墨的空白字符取四分之一 em（全角空白由上面的全角类接走）。
+# 母版 MarukoGothicCJKsc-Regular.ttf 的 hhea 与 win 度量，逐字位置以它为基准。
+HHEA_ASCENT = 1160
+HHEA_DESCENT = -288
+
 FULL_WIDTH = ((0x2E80, 0x303F), (0x3040, 0x9FFF), (0xF900, 0xFAFF),
               (0xFE30, 0xFE4F), (0xFF00, 0xFF60), (0xFFE0, 0xFFE6),
               (0x20000, 0x2FA1F))
@@ -717,6 +721,7 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
     import sys as _sys
 
     _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import box_align
     from fontTools.fontBuilder import FontBuilder
     from fontTools.pens.ttGlyphPen import TTGlyphPen
     from fontTools.ttLib import newTable
@@ -750,6 +755,11 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
                      for w, rr in rings.items()}
             flags = {w: list(ff) + [[1] * len(poly) for poly in add] for w, ff in flags.items()}
         rings = align_face_height(rings)
+        # 逐字摆回母版的位置与高度（2026-11-05 主人指令「修水平高度加定位」）：
+        # 重建出来的整块会漂，600 字里横/纵各约 100 字差 5 单位以上，`日` 上沿少 64 单位。
+        # 对齐是仿射变换，三档共用同一组系数，点数与对应关系一个不动。
+        if rings.get(WEIGHT_DEFAULT):
+            rings = box_align.apply(rings, codepoint)
         # 非全角字形（拉丁、数字、标点）的侧距按边缘形状给，并把轮廓平移到该侧距上。
         # 汉字不动：它自带全角框，墨迹位置属于字面的一部分（2026-10-28 主人定）。
         if not any(low <= codepoint <= high for low, high in FULL_WIDTH) and rings.get(WEIGHT_DEFAULT):
@@ -842,7 +852,11 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         # 这个值**不改轮廓、不改字宽**，只让 hmtx 与 glyf 自洽。
         metrics[name] = (advance_by_name.get(name, 1000), int(getattr(glyph, "xMin", 0)))
     builder.setupHorizontalMetrics(metrics)
-    builder.setupHorizontalHeader(ascent=880, descent=-120)
+    # 竖向度量照母版（2026-11-05 主人指令「修水平高度加定位」）：
+    # 母版 hhea 1160/−288、OS/2 typo 880/−120、win 1160/288、x 高 479、大写高 700。
+    # 本版原来把 hhea 也写成 880/−120、win 880/120，行高只有母版的 0.75 倍，
+    # 同一段字在本版里行距更挤、行盒更矮——量具看不出，渲染出来一眼就偏。
+    builder.setupHorizontalHeader(ascent=HHEA_ASCENT, descent=HHEA_DESCENT)
     builder.setupNameTable({
         "familyName": family, "styleName": style,
         "uniqueFontIdentifier": f"{family} {style} 1.000",
@@ -852,8 +866,9 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         "copyright": "Derived from Maruko Gothic (max32002/maruko-gothic, SIL OFL 1.1).",
         "licenseDescription": "SIL Open Font License 1.1",
     })
-    builder.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWinAscent=880, usWinDescent=120,
-                     sxHeight=500, sCapHeight=700, achVendID="SLFF",
+    builder.setupOS2(sTypoAscender=880, sTypoDescender=-120,
+                     usWinAscent=HHEA_ASCENT, usWinDescent=-HHEA_DESCENT,
+                     sxHeight=479, sCapHeight=700, achVendID="SLFF",
                      usWeightClass=WEIGHT_DEFAULT)
     builder.setupPost()
     builder.addOpenTypeFeatures(kern_features(kern_profiles))

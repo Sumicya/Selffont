@@ -14,6 +14,10 @@
 ----
     python tools/fig_position.py --master 母版.ttf --ours 本版.ttf \
         --chars "门口国团日一" --out 图.png
+    # 三行对照（母版 / 修前 / 修后）
+    python tools/fig_position.py --master 母版.ttf \
+        --ours 修前.ttf --label 修前 --ours2 修后.ttf --label2 修后 \
+        --chars "门口国团日一" --out 图.png
     python tools/fig_position.py --master 母版.ttf --chars "门口国团日一" --out 图.png
 """
 from __future__ import annotations
@@ -79,13 +83,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="画字格对齐图（花：母版 vs 本版）")
     ap.add_argument("--master", type=Path, required=True)
     ap.add_argument("--ours", type=Path, default=None)
+    ap.add_argument("--ours2", type=Path, default=None)
+    ap.add_argument("--label", default="本版")
+    ap.add_argument("--label2", default="本版（修后）")
     ap.add_argument("--chars", default="门口国团日一")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--cell", type=int, default=260)
     args = ap.parse_args()
 
     chars = args.chars
-    rows = 1 if args.ours is None else 2
+    rows = 1 if args.ours is None else (3 if args.ours2 is not None else 2)
     W = 80 + len(chars) * args.cell
     H = 210 + rows * (args.cell + 60)
     img = Image.new("RGB", (W, H), "white")
@@ -99,7 +106,10 @@ def main() -> None:
 
     draw_row(img, d, args.master, chars, 210, args.cell, "母版", f_lab)
     if args.ours is not None:
-        draw_row(img, d, args.ours, chars, 210 + args.cell + 60, args.cell, "本版", f_lab)
+        draw_row(img, d, args.ours, chars, 210 + args.cell + 60, args.cell, args.label, f_lab)
+    if args.ours2 is not None:
+        draw_row(img, d, args.ours2, chars, 210 + 2 * (args.cell + 60), args.cell,
+                 args.label2, f_lab)
 
     img.save(args.out)
     print("写出", args.out, img.size)

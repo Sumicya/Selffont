@@ -118,7 +118,11 @@ jobs:
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
         with:
-          name: maruko-${{ env.VERSION }}
+          # 三类产物各用一个固定前缀，别混（主人 2026-11-05 定）：
+          #   Build 工作流 → 母版包 `maruko-<版本>`（在 mother.yml 里传）
+          #   Build 工作流 → 正式包 `Selffont-<版本>`（本行，README:191 的约定）
+          #   预览产物     → 自版包 `selfrounds-<SHA8>`（下面那一处）
+          name: Selffont-${{ env.VERSION }}
           path: build/root
           retention-days: 5
           if-no-files-found: error
@@ -127,7 +131,7 @@ jobs:
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
         with:
-          name: maruko-sha256-${{ steps.sha.outputs.sum8 }}
+          name: Selffont-sha256-${{ steps.sha.outputs.sum8 }}
           path: build/SHA256SUMS.txt
           retention-days: 5
           if-no-files-found: error
