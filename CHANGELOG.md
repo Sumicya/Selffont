@@ -1,3 +1,18 @@
+## 2026-11-05（三·补）· 热切换做成 LSPosed 模块：`sumicya.selffont.hotswap`
+
+- 定名（主人 2026-11-05）：工作流 `hotswap`，包名 `sumicya.selffont.hotswap`，产物 `hotswap-<SHA8>`。
+  源码 `lsp/hotswap/`，用法 `docs/hotswap-lsposed.md`。
+- 路线照 README「进程内（LSPosed）」：挂载四条路真机全断（overlay EINVAL / bind 不能新增文件 /
+  `/system/fonts` 开机快照 / `cmd font update` 要系统签名），只剩进程内。三个落点：
+  `Typeface.create(String,int)` 首次调用时装好 `sSystemFontMap`、`createFromFile(String|File)`
+  按 basename 重定向、反射直接换家族。全部 try/catch + `exceptionMode=protective`。
+- 字体放模块自己的 `assets/fonts/<家族名>.ttf`，不放 `/data/adb`（root 专属，应用读不到）。
+  换字 = 装新 APK + 重启目标应用，不重启整机。
+- 已验：CI 编出 APK 770,775 B（`hotswap-6bbde783`），验收步骤断言包名 = `sumicya.selffont.hotswap`
+  并打印 xposed 元数据，通过。**未验**：真机上 `sSystemFontMap` 是否可写、替换条数、系统 UI 开销。
+- 编译三次失败都记着：Kotlin 注释里的 `fonts/*.ttf` 开了嵌套注释（整文件被吃）、
+  `PackageLoadedParam` 没有 `classLoader` 只有 `defaultClassLoader`、lambda 需显式标 `Chain` 类型。
+
 ## 2026-11-05（三·补）· 折返面积：319 条自交里只有 58 条超过 100 单位²
 
 - 更正三小时前那条口径：`FAIL` 只判「展平后多边形非简单」，0.001 单位² 也算。给

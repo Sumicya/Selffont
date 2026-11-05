@@ -82,8 +82,9 @@ residue_count() {
 
 cmd_status() {
     n=$(residue_count)
-    say "运行期换字体：本机不支持（四条路的真机证据见 README「热切换」一节）"
-    say "换字体请改模块后**重启**；这个脚本只报告与清场，不挂任何东西。"
+    say "挂载路线：本机不支持（四条路的真机证据见 README「热切换」一节）"
+    say "要运行期换字体用 LSPosed 模块 sumicya.selffont.hotswap（工作流 hotswap）"
+    say "换字体请改模块后重启；这个脚本只报告与清场，不挂任何东西。"
     say "残留挂载层：$n"
     if [ "$n" -gt 0 ]; then
         our_layers | while IFS='|' read -r id mp why; do
@@ -139,6 +140,6 @@ case "${1:-status}" in
     panic)     cmd_panic ;;
     -h|--help|help) awk 'NR > 1 && /^set -u$/ { exit } NR > 1' "$SELF"; exit 0 ;;
     *)
-        say "本机不支持运行期换字体。用法：sh hotswap.sh [status|panic]" >&2
+        say "用法：sh hotswap.sh [status|panic]；换字体用 LSPosed 模块 sumicya.selffont.hotswap" >&2
         exit 2 ;;
 esac
