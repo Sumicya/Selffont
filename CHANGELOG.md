@@ -1,3 +1,15 @@
+## 2026-11-06（九）· 母版产物改名与保留期：`build-<版本>` → `Selffont-母版-<版本>`，30 天 → 5 天
+
+- 产物名：`build-<五段版本>` → `Selffont-母版-<五段版本>`。命名规则：前缀必须是项目名 `Selffont`，
+  后缀只许 `<版本>` / `<档位>-<版本>` / `<SHA8>` / `sha256-<SHA8>` 四种；母版走「档位-版本」，档位写「母版」。
+- 保留期：`retention-days: 30` → `5`。Actions 产物总量上限 5 个，30 天只会把额度占满，把可用的最新包挤掉。
+- 自检第 15 项第 8 条跟着改：旧判据是「每个 job 必须有一件以 job 名命名的产物」，改名后失效（job 还叫 `build`）；
+  改成「一个 job 的非诊断产物前缀只许一个」+「这件工作流名下的前缀只许一个」。新增第 8b 条：
+  `build.yml` 的产物名必须是 `Selffont-母版-${{ env.VERSION }}`、`retention-days` 必须是 `5`，否则红。
+- 另外三条（`selffont-` / `selfrounds-` / `hotswap-`）暂不改：后缀集里没有「档位-SHA8」这一档，
+  硬套会让 `selfrounds` 与 `hotswap` 都变成 `Selffont-<SHA8>` 而撞名；等主人给后缀集补一档再动。
+- 命令侧：README 里下载 artifact 的 `startswith("build-")` 改成 `startswith("Selffont-母版-")`。
+
 ## 2026-11-06（八）· 链接恢复，tag 钉在产出它的提交上
 
 - 主人在（七）之后说的两点：那条「Selffont 私自发版／六篇六万字」的账，是**贴给 selfs 那边的提示词**，
