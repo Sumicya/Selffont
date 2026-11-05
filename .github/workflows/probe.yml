@@ -1,5 +1,5 @@
 # 探针工作流（B 线）：只编 lsp/ 这个独立 Gradle 工程，不跑字体构建的任何脚本。
-name: Probe
+name: probe
 
 on:
   push:
@@ -7,6 +7,14 @@ on:
       - 'lsp/**'
       - '.github/workflows/probe.yml'
   workflow_dispatch:
+
+env:
+  SEGMENTS: '5'
+  CLEANUP_APPLY: 'true'
+
+concurrency:
+  group: selffont-probe
+  cancel-in-progress: false
 
 jobs:
   probe:
@@ -87,6 +95,8 @@ jobs:
           name: probe-${{ env.SHA8 }}
           path: lsp/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+          retention-days: 5
+          overwrite: true
 
   cleanup-artifacts:
     needs: probe
@@ -96,9 +106,6 @@ jobs:
     permissions:
       actions: write
       contents: read
-    concurrency:
-      group: selffont-cleanup          # 与 build.yml / mother.yml 共用同一把锁
-      cancel-in-progress: false
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7

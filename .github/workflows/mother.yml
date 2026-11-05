@@ -2,7 +2,7 @@
 # 只上传 artifact：不发 Release、不打 tag、不改 latest。出包是内部动作，对外发布要人点头。
 # 触发：push 本文件（paths 只盯这一个）或 Actions 页 Run workflow；`gh workflow run` 实测 403。
 # 清理按规范：全仓按 created_at 留最新 5 个，母版件也在这 5 个里。
-name: build
+name: mother
 
 on:
   push:
@@ -25,6 +25,14 @@ env:
   MOTHER_NAME: 'MarukoGothicCJKsc-Regular.ttf'
   MOTHER_REF: ${{ inputs.ref || '97e9dd4' }}
   MOTHER_DAY: ${{ inputs.day || '1' }}
+
+env:
+  SEGMENTS: '5'
+  CLEANUP_APPLY: 'true'
+
+concurrency:
+  group: selffont-mother
+  cancel-in-progress: false
 
 jobs:
   mother:
@@ -213,9 +221,6 @@ jobs:
     permissions:
       actions: write
       contents: read
-    concurrency:
-      group: selffont-cleanup          # 与 build.yml / pr-check.yml 共用同一把锁
-      cancel-in-progress: false
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7

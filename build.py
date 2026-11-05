@@ -2143,6 +2143,74 @@ def supplemental_font_reference():
     assert NOTO_MUSIC_SOURCE["minimum_outline_mappings"] >= 200
 
 
+@check
+def workflow_format():
+    """§12 工作流格式：每个 workflow 同一套，几个、几种由仓里定。
+
+    这条检查故意不看文件内容做了什么，只看七样格式——name、注释行数、顶层 env、
+    并发组、清理 job、步骤名、artifact 三样。任何一样不齐就红，红了不许推送。
+    """
+    import re
+    import yaml
+
+    folder = ROOT / ".github" / "workflows"
+    names = {}
+    for path in sorted(folder.glob("*.yml")):
+        stem = path.stem
+        text = path.read_text(encoding="utf-8")
+        data = yaml.safe_load(text)
+
+        # 1. name 与文件名一致、不重复
+        assert data.get("name") == stem, f"{path.name}: name={data.get('name')!r} 应等于文件名 {stem!r}"
+        assert stem not in names, f"工作流名重复：{stem}"
+        names[stem] = path
+
+        # 2. 顶部注释 1–5 行
+        head = []
+        for line in text.splitlines():
+            if line.startswith("#"):
+                head.append(line)
+            else:
+                break
+        assert 1 <= len(head) <= 5, f"{path.name}: 顶部注释 {len(head)} 行，要求 1–5 行"
+
+        # 3. 顶层 env 两键
+        env = data.get("env") or {}
+        assert env.get("SEGMENTS") == "5" or env.get("SEGMENTS") == 5, f"{path.name}: 顶层 env 缺 SEGMENTS"
+        assert str(env.get("CLEANUP_APPLY")).lower() == "true", f"{path.name}: 顶层 env 缺 CLEANUP_APPLY"
+
+        # 4. 并发组 <仓>-<用途>、cancel-in-progress 为 false
+        conc = data.get("concurrency") or {}
+        assert conc.get("group") == f"selffont-{stem}", \
+            f"{path.name}: 并发组 {conc.get('group')!r}，要求 selffont-{stem}"
+        assert str(conc.get("cancel-in-progress")).lower() == "false", f"{path.name}: cancel-in-progress 必须为 false"
+
+        # 5. 自带清理 job：if: always()、调 cleanup.py（同组由第 4 条的顶层并发组保证）
+        cleanup = [job for job in (data.get("jobs") or {}).values()
+                   if ".github/scripts/cleanup.py" in str(job)]
+        assert cleanup, f"{path.name}: 没有调 .github/scripts/cleanup.py 的清理 job"
+        for job in cleanup:
+            assert "always()" in str(job.get("if", "")), f"{path.name}: 清理 job 必须挂 if: always()"
+
+        # 6. 步骤名中文
+        for job_name, job in (data.get("jobs") or {}).items():
+            for step in job.get("steps", []):
+                label = step.get("name")
+                assert label, f"{path.name}/{job_name}: 有步骤没有 name"
+                assert re.search(r"[\u4e00-\u9fff]", label), f"{path.name}/{job_name}: 步骤名不是中文：{label!r}"
+
+        # 7. artifact 三样
+        for job_name, job in (data.get("jobs") or {}).items():
+            for step in job.get("steps", []):
+                if "upload-artifact" not in str(step.get("uses", "")):
+                    continue
+                with_ = step.get("with") or {}
+                for key in ("retention-days", "if-no-files-found", "overwrite"):
+                    assert key in with_, f"{path.name}/{job_name}: artifact 缺 {key}"
+                assert with_["if-no-files-found"] == "error", \
+                    f"{path.name}/{job_name}: if-no-files-found 必须是 error"
+
+
 def run_checks() -> None:
     failed = 0
     for fn in CHECKS:

@@ -12,6 +12,14 @@ on:
       - '.github/workflows/hotswap.yml'
   workflow_dispatch:
 
+env:
+  SEGMENTS: '5'
+  CLEANUP_APPLY: 'true'
+
+concurrency:
+  group: selffont-hotswap
+  cancel-in-progress: false
+
 jobs:
   hotswap:
     runs-on: ubuntu-24.04
@@ -108,6 +116,7 @@ jobs:
           path: lsp/hotswap/build/outputs/apk/**/*.apk
           retention-days: 5
           if-no-files-found: error
+          overwrite: true
 
   cleanup-artifacts:
     needs: hotswap
@@ -117,9 +126,6 @@ jobs:
     permissions:
       actions: write
       contents: read
-    concurrency:
-      group: selffont-cleanup
-      cancel-in-progress: false
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7

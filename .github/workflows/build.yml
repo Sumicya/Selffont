@@ -1,5 +1,5 @@
 # 出包工作流：push 跑预览子集（96 秒），[full] 提交或手动触发跑全量。不发 Release、不打 tag。
-name: Build
+name: build
 
 on:
   push:
@@ -25,6 +25,10 @@ on:
 env:
   SEGMENTS: '5'
   CLEANUP_APPLY: 'true'
+
+concurrency:
+  group: selffont-build
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -124,7 +128,8 @@ jobs:
           name: build-log-${{ github.run_id }}
           path: build.log
           retention-days: 2
-          if-no-files-found: ignore
+          if-no-files-found: error
+          overwrite: true
       - name: 确认产物名
         if: steps.mode.outputs.full == '1'
         run: |
@@ -167,6 +172,7 @@ jobs:
           retention-days: 5
           if-no-files-found: error
           overwrite: true
+          overwrite: true
       - name: 上传哈希
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
@@ -194,9 +200,6 @@ jobs:
     permissions:
       actions: write
       contents: read
-    concurrency:
-      group: selffont-cleanup
-      cancel-in-progress: false
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -215,9 +218,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-    concurrency:
-      group: selffont-cleanup
-      cancel-in-progress: false
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7

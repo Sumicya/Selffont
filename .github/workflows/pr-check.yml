@@ -1,5 +1,5 @@
 # PR 校验工作流：只跑自检，不取号、不出包、不上传产物。
-name: PR check
+name: pr-check
 
 on:
   pull_request:
@@ -7,6 +7,10 @@ on:
 env:
   SEGMENTS: '5'
   CLEANUP_APPLY: 'true'
+
+concurrency:
+  group: selffont-pr-check
+  cancel-in-progress: false
 
 jobs:
   check:
@@ -27,14 +31,12 @@ jobs:
         run: python build.py --check
 
   cleanup-artifacts:
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       actions: write
       contents: read
-    concurrency:
-      group: selffont-cleanup
-      cancel-in-progress: false
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7

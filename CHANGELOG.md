@@ -1,3 +1,16 @@
+## 2026-11-05（三·补）· 五个工作流统一成同一套格式，并把格式变成会红的自检第 15 项
+
+- §12 落地（Selffont 这一侧，八个文件实为五个）：`name` 全部等于文件名且不重复
+  （`mother.yml` 原来叫 `build` 与 `build.yml` 撞名）、顶部注释压到 1–5 行、顶层 `env` 两键补齐
+  （`hotswap`/`mother`/`probe` 原来没有）、并发组从一套 `selffont-cleanup` 拆成
+  `selffont-<文件名>` 且 `cancel-in-progress: false`、清理 job 全部 `if: always()` 并调
+  `.github/scripts/cleanup.py`、artifact 三样补齐（`hotswap`/`probe` 缺 `overwrite`，
+  `probe` 缺 `retention-days`，`build-log` 那处 `if-no-files-found: ignore` 改 `error`）。
+- **并行**：并发组共用一套时，五个工作流的清理 job 互相排队；拆开之后互不相干，push 一次五个
+  工作流同时跑。这也是原来「跑一次要等一次」的原因，不是 CPU 核数。
+- 新增自检 `workflow_format`（第 15 项）：name/注释/env/并发组/清理 job/步骤名/artifact 三样，
+  七样任一不齐就红。**它现在真的会红**——第一次跑就抓到 `pr-check` 的组名与缺 `if: always()`。
+
 ## 2026-11-05（三·补）· 热切换做成 LSPosed 模块：`sumicya.selffont.hotswap`
 
 - 定名（主人 2026-11-05）：工作流 `hotswap`，包名 `sumicya.selffont.hotswap`，产物 `hotswap-<SHA8>`。
