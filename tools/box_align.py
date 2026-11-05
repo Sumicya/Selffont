@@ -125,6 +125,39 @@ def main() -> int:
 
     table = load()
     print(f"对齐表 {len(table)} 字")
+    if args.report and args.ours:
+        # 只报「某一轴因为差得太多而不缩放」的字：那是母版带残墨、或者本版真缺笔画的地方，
+        # 需要人看一眼，不能靠拉伸凑过去。
+        from fontTools.ttLib import TTFont as _TTFont
+
+        skipped, clipped, seen = [], [], 0
+        with _TTFont(str(args.ours), lazy=True) as fo:
+            cmap, glyf = fo.getBestCmap(), fo["glyf"]
+            for cp, name in cmap.items():
+                if cp not in table:
+                    continue
+                g = glyf[name]
+                if g.numberOfContours <= 0:
+                    continue
+                g.recalcBounds(glyf)
+                box = (g.xMin, g.yMin, g.xMax, g.yMax)
+                sx, sy, _ = factors(box, table[cp])
+                want_x = (table[cp][2] - table[cp][0]) / max(1, box[2] - box[0])
+                want_y = (table[cp][3] - table[cp][1]) / max(1, box[3] - box[1])
+                seen += 1
+                if sx == 1.0 and abs(want_x - 1) > SCALE_SKIP:
+                    skipped.append((cp, "x", want_x))
+                elif abs(want_x - 1) > SCALE_CLAMP:
+                    clipped.append((cp, "x", want_x))
+                if sy == 1.0 and abs(want_y - 1) > SCALE_SKIP:
+                    skipped.append((cp, "y", want_y))
+                elif abs(want_y - 1) > SCALE_CLAMP:
+                    clipped.append((cp, "y", want_y))
+        print(f"比过 {seen} 字：某轴不缩放（差 >{SCALE_SKIP:.0%}）{len(skipped)} 处，"
+              f"夹到 ±{SCALE_CLAMP:.0%} 的 {len(clipped)} 处")
+        for cp, axis, ratio in skipped[:40]:
+            print(f"  不缩放 {chr(cp)} 轴{axis} 目标/现值 {ratio:.3f}")
+        return 0
     if args.chars and args.master and args.ours:
         with TTFont(str(args.master), lazy=True) as fm, TTFont(str(args.ours), lazy=True) as fo:
             cms, co = fm.getBestCmap(), fo.getBestCmap()
