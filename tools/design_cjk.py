@@ -681,30 +681,15 @@ def _spacing(points):
     return float(_np.median(seg)) if len(seg) else 0.0
 
 
-def _round_cap(center, angle_from, half, steps, reach=None):
-    """端头：从 angle_from 起**顺时针**扫 180°，只返回中间的点。
+def _round_cap(center, angle_from, half, steps):
+    """半圆端头：从 angle_from 起**顺时针**扫 180°，只返回中间的点。
 
     方向不能反：端头必须朝笔画的「前方」凸出去。写反的话半圆绕到笔画背后，
     收笔处就凹成一个 V 形缺口（自测图里一眼可见）。
-
-    `reach` 给定时是**半椭圆**：横向（切向）半轴 = reach、纵向（法向）半轴仍是 half。
-    母版的撇尖、捺脚是尖的，骨架在离尖几十单位处就收住了，圆头补不满那个尖；
-    半椭圆能在**点数不变**的前提下把端头拉长到母版的实际墨沿（见 `tools/tip_extend.py`）。
-    reach == half 时与原半圆逐点相同。
     """
     import math
-    reach = half if reach is None else reach
-    if abs(reach - half) < 1e-9:
-        return [(center[0] + half * math.cos(angle_from - math.pi * k / steps),
-                 center[1] + half * math.sin(angle_from - math.pi * k / steps)) for k in range(1, steps)]
-    ca, sa = math.cos(angle_from), math.sin(angle_from)   # n̂ = (ca, sa)，t̂ = (sa, -ca)
-    out = []
-    for k in range(1, steps):
-        phi = math.pi * k / steps
-        n = half * math.cos(phi)
-        t = reach * math.sin(phi)
-        out.append((center[0] + n * ca + t * sa, center[1] + n * sa - t * ca))
-    return out
+    return [(center[0] + half * math.cos(angle_from - math.pi * k / steps),
+             center[1] + half * math.sin(angle_from - math.pi * k / steps)) for k in range(1, steps)]
 
 
 def _area(ring):
@@ -874,11 +859,8 @@ def stroke_contours(stroke, weight, glyph=None):
     import math
     h_end = halves[-1]
     h_start = halves[0]
-    ext_start, ext_end = stroke.get("_ext", (0.0, 0.0))
-    end = _round_cap(axis[-1], math.atan2(normals[-1][1], normals[-1][0]), h_end, ARC_STEPS,
-                     reach=h_end + ext_end)
-    start = _round_cap(axis[0], math.atan2(normals[0][1], normals[0][0]) + math.pi, h_start, ARC_STEPS,
-                       reach=h_start + ext_start)
+    end = _round_cap(axis[-1], math.atan2(normals[-1][1], normals[-1][0]), h_end, ARC_STEPS)
+    start = _round_cap(axis[0], math.atan2(normals[0][1], normals[0][0]) + math.pi, h_start, ARC_STEPS)
     return [_as_cw(left + end + right[::-1] + start)]
 
 

@@ -734,7 +734,6 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
 
     _sys.path.insert(0, str(Path(__file__).resolve().parent))
     import box_align
-    import tip_extend
     from fontTools.fontBuilder import FontBuilder
     from fontTools.pens.ttGlyphPen import TTGlyphPen
     from fontTools.ttLib import newTable
@@ -759,10 +758,6 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         data = glyphs.pop(codepoint)
         if is_han(codepoint):
             settle_junction_widths(data)
-        # 收笔尖补齐（2026-11-05）：母版的撇尖/捺脚是尖的，骨架在离尖几十单位处就收住了，
-        # 圆头补不满。按母版字面框把该补的自由端拉成半椭圆（点数不动，三档共用一个缺口）。
-        if is_han(codepoint):
-            tip_extend.apply(data, codepoint)
         rings, flags = _glyph_rings_all(data, codepoint)
         # 凹角补圆（2026-10-31）：追加补丁环。nonzero 填充下绕向必须与笔画环一致
         # （design_cjk 的所有笔画环都是 −1），否则与原有环抵消成洞——第一版就是这样翻车的。
