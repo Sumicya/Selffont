@@ -127,17 +127,28 @@ jobs:
                   main = max(adv, key=adv.get)
                   return n, main, sum(v for k, v in adv.items() if k != main), bad, statistics.median(off)
 
-          primary_blob = None
-          with zipfile.ZipFile(path) as z:
-              for n_ in fonts:
-                  if "Maruko" not in n_ and n_.endswith(".ttf"):
-                      primary_blob = z.read(n_)
-                      primary_name = n_.rsplit("/", 1)[-1]
-                      break
           hn, hm, hx, hb, ho = horiz(cjk)
           assert hn > 20000 and hm == 1000, f"母版汉字不是 1000 格：{hn} 字 / 主 advance {hm}"
           assert hb == 0, f"母版 lsb≠xMin {hb} 处"
-          pn, pm, px, pb, po = horiz(primary_blob)
+          # 包里可能还有其他中日韩字件（主字体副本、补充字体）。按汉字字形数取最多的那一件报，
+          # 少于 100 个汉字的（音乐符号、Roboto 之类）不是这套水平格的对象，跳过。
+          best = (0, "", None)
+          with zipfile.ZipFile(path) as z:
+              for n_ in fonts:
+                  if not n_.lower().endswith((".ttf", ".otf")) or "Maruko" in n_:
+                      continue
+                  try:
+                      got = horiz(z.read(n_))
+                  except Exception:
+                      continue
+                  if got[0] > best[0]:
+                      best = (got[0], n_.rsplit("/", 1)[-1], got)
+          if best[2] is None or best[0] < 100:
+              pn, pm, px, pb, po = 0, 0, 0, 0, 0.0
+              primary_name = "（包内无第二件汉字字件）"
+          else:
+              primary_name = best[1]
+              pn, pm, px, pb, po = best[2]
 
           fields = dict(line.split("=", 1) for line in prop.splitlines() if "=" in line)
           cjk_sum = hashlib.sha256(cjk).hexdigest()
@@ -162,8 +173,8 @@ jobs:
               f"| fonts-insert.xml | {sum(1 for l in insert.splitlines() if '<font' in l)} 行 |",
               f"| 包内 /system/fonts 字件 | {len(fonts)} 个 |",
               f"| 水平·母版汉字 | {hn:,} 字，主 advance **{hm}**，非 {hm} 的 {hx} 字，lsb≠xMin {hb} 处，墨心偏离中位 {ho:.1f} |",
-              f"| 水平·主字体({primary_name}) | {pn:,} 字，主 advance **{pm}**，非 {pm} 的 {px} 字，lsb≠xMin {pb} 处，墨心偏离中位 {po:.1f} |",
-              f"| 两件同一格 | {'是' if hm == pm else f'否（母版 {hm} / 主字体 {pm}）——混排会错位'} |",
+              f"| 水平·其次多的汉字字件 `{primary_name}` | {pn:,} 字，主 advance **{pm}**，非 {pm} 的 {px} 字，lsb≠xMin {pb} 处，墨心偏离中位 {po:.1f} |",
+              f"| 两件同一格 | {'是' if hm == pm and pn else ('（只有一件，不适用）' if not pn else '否——混排会错位')} |",
           ]
           print("\n".join(lines))
           PY
