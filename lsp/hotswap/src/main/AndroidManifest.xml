@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 没有 Activity：纯 Hook 模块，装完在 LSPosed 管理器里勾作用域即可。 -->
+</manifest>

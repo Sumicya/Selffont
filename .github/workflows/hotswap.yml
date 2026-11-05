@@ -1,0 +1,120 @@
+# 热切换工作流：只编 lsp 工程里的 :hotswap（LSPosed 模块，包名 sumicya.selffont.hotswap）。
+# 产物 hotswap-<SHA8> 是可直接装的 APK；字体从 lsp/hotswap/src/main/assets/fonts/*.ttf 编进去。
+# 不发 Release、不打 tag：装完在 LSPosed 管理器里勾作用域，重启目标应用生效（不用重启整机）。
+name: hotswap
+
+on:
+  push:
+    paths:
+      - 'lsp/hotswap/**'
+      - 'lsp/settings.gradle.kts'
+      - 'lsp/build.gradle.kts'
+      - '.github/workflows/hotswap.yml'
+  workflow_dispatch:
+
+jobs:
+  hotswap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 准备 JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 装编译所需的 SDK 组件
+        run: |
+          set -x
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SM=""
+          for c in "$(command -v sdkmanager || true)" \
+                   "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+                   "$SDK/cmdline-tools/bin/sdkmanager" \
+                   "$SDK/tools/bin/sdkmanager"; do
+            if [ -n "$c" ] && [ -x "$c" ]; then SM="$c"; break; fi
+          done
+          echo "sdkmanager=$SM"
+          if [ -z "$SM" ]; then echo "::error::找不到 sdkmanager"; exit 1; fi
+          (yes || true) | "$SM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
+          "$SM" --sdk_root="$SDK" --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: 准备 Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: 编 APK（debug 签名，可直接装）
+        working-directory: lsp
+        run: gradle --no-daemon :hotswap:assembleDebug
+
+      - name: 验收：包名、xposed 元数据、编进去的字体
+        working-directory: lsp
+        run: |
+          set -euo pipefail
+          APK=$(find hotswap/build/outputs/apk -name '*.apk' | head -1)
+          test -n "$APK"
+          BYTES=$(stat -c %s "$APK")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "APK=$APK"
+          echo "字节数=$BYTES"
+          echo "sha256=$SHA"
+          # 包名必须就是 sumicya.selffont.hotswap：装错了 LSPosed 认不出模块。
+          AAPT=$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -name aapt2 | head -1)
+          PKG=$("$AAPT" dump badging "$APK" 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          echo "包名=$PKG"
+          test "$PKG" = "sumicya.selffont.hotswap"
+          unzip -l "$APK" | grep -E 'META-INF/xposed|assets/fonts' || true
+          unzip -p "$APK" META-INF/xposed/module.prop
+          FONTS=$(unzip -l "$APK" | grep -c 'assets/fonts/.*\.ttf' || true)
+          echo "编进 APK 的字体件=$FONTS"
+          {
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| APK | \`$(basename "$APK")\` |"
+            echo "| 大小 | $BYTES B |"
+            echo "| sha256 | \`$SHA\` |"
+            echo "| 包名 | \`$PKG\` |"
+            echo "| 字体件 | $FONTS |"
+          } | tee build-summary.md
+          cp build-summary.md "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=hotswap::bytes=$BYTES sha256=$SHA fonts=$FONTS"
+
+      - name: 记短 SHA（产物名用）
+        run: echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: hotswap-${{ env.SHA8 }}
+          path: lsp/hotswap/build/outputs/apk/**/*.apk
+          retention-days: 5
+          if-no-files-found: error
+
+  cleanup-artifacts:
+    needs: hotswap
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: selffont-cleanup
+      cancel-in-progress: false
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 清理超限产物与运行记录
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          CLEANUP_SCOPE: actions
+          CLEANUP_APPLY: 'true'
+        run: python3 .github/scripts/cleanup.py
