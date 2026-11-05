@@ -1,15 +1,7 @@
-# 母版直通包：把 Maruko Gothic 原始字节装进 Magisk 模块，只做挂载与配置，不改任何轮廓。
-# 用途只有一个——给判据当基准：刷它，看到的汉字就是母版本身。
-# 只上传 Actions artifact，不发 Release、不打 tag、不改 latest：出包是内部动作，对外发布要人点头。
-#
-# 清理只按规范六·3：全仓按 created_at 留最新 5 个，不看名字、不看段数、不单列，母版件也在这 5 个里。
-# 触发：改本文件后推一次，或用 Actions 页面的 Run workflow。2026-11-05 实测 `gh workflow run`
-# 返回 403 `Resource not accessible by integration`——本仓令牌是 GitHub App 集成，没有
-# workflow_dispatch 权限（不是文件不在默认分支的问题，那个 404 是另一回事）。所以重出母版包
-# 走「改本文件→push」这条路：`paths` 只盯这一个文件，其它提交不会顺带重出 121 MB 的包。
-#
-# 2026-11-05 重出一次：旧 artifact `maruko-mother-97e9dd4-10` 已产出三天，母版字节未变
-# （MOTHER_SHA256 钉死），重灌只为让它排在「保留最新 5 个」的窗口里。
+# 母版直通包：Maruko Gothic 原始字节进 Magisk 模块，只挂载与配置、不改轮廓；用途是给判据当基准。
+# 只上传 artifact：不发 Release、不打 tag、不改 latest。出包是内部动作，对外发布要人点头。
+# 触发：push 本文件（paths 只盯这一个）或 Actions 页 Run workflow；`gh workflow run` 实测 403。
+# 清理按规范：全仓按 created_at 留最新 5 个，母版件也在这 5 个里。
 name: Mother
 
 on:
@@ -112,6 +104,41 @@ jobs:
               insert = z.read("fonts-insert.xml").decode()
               fonts = sorted(n for n in names if n.startswith("system/fonts/"))
 
+          from fontTools.ttLib import TTFont
+          import io, statistics
+
+          def horiz(blob):
+              """包内一件汉字字体的水平度量：字形数、主 advance、非 1000 的字形、lsb≠xMin、墨心偏离中位。"""
+              with TTFont(io.BytesIO(blob), lazy=True) as f:
+                  cmap, hmtx, glyf = f.getBestCmap(), f["hmtx"], f["glyf"]
+                  adv, off, bad, n = {}, [], 0, 0
+                  for cp, gname in cmap.items():
+                      if not (0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF):
+                          continue
+                      a, lsb = hmtx[gname]
+                      g = glyf[gname]
+                      if g.numberOfContours <= 0:
+                          continue
+                      n += 1
+                      adv[a] = adv.get(a, 0) + 1
+                      if lsb != getattr(g, "xMin", lsb):
+                          bad += 1
+                      off.append(abs((g.xMin + g.xMax) / 2 - a / 2))
+                  main = max(adv, key=adv.get)
+                  return n, main, sum(v for k, v in adv.items() if k != main), bad, statistics.median(off)
+
+          primary_blob = None
+          with zipfile.ZipFile(path) as z:
+              for n_ in fonts:
+                  if "Maruko" not in n_ and n_.endswith(".ttf"):
+                      primary_blob = z.read(n_)
+                      primary_name = n_.rsplit("/", 1)[-1]
+                      break
+          hn, hm, hx, hb, ho = horiz(cjk)
+          assert hn > 20000 and hm == 1000, f"母版汉字不是 1000 格：{hn} 字 / 主 advance {hm}"
+          assert hb == 0, f"母版 lsb≠xMin {hb} 处"
+          pn, pm, px, pb, po = horiz(primary_blob)
+
           fields = dict(line.split("=", 1) for line in prop.splitlines() if "=" in line)
           cjk_sum = hashlib.sha256(cjk).hexdigest()
           want = os.environ["MOTHER_SHA256"]
@@ -134,6 +161,9 @@ jobs:
               + (f"，族名 `{family.group(1)}`" if family else "") + " |",
               f"| fonts-insert.xml | {sum(1 for l in insert.splitlines() if '<font' in l)} 行 |",
               f"| 包内 /system/fonts 字件 | {len(fonts)} 个 |",
+              f"| 水平·母版汉字 | {hn:,} 字，主 advance **{hm}**，非 {hm} 的 {hx} 字，lsb≠xMin {hb} 处，墨心偏离中位 {ho:.1f} |",
+              f"| 水平·主字体({primary_name}) | {pn:,} 字，主 advance **{pm}**，非 {pm} 的 {px} 字，lsb≠xMin {pb} 处，墨心偏离中位 {po:.1f} |",
+              f"| 两件同一格 | {'是' if hm == pm else f'否（母版 {hm} / 主字体 {pm}）——混排会错位'} |",
           ]
           print("\n".join(lines))
           PY
