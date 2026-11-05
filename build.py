@@ -2309,6 +2309,14 @@ def workflow_format():
                 assert with_["if-no-files-found"] == "error", \
                     f"{path.name}/{job_name}: if-no-files-found 必须是 error"
 
+        # 8a. 冻结要能被检查：自版那条工作流不许挂 push
+        if stem == "selffont":
+            triggers = data.get("on") or data.get(True) or {}
+            if isinstance(triggers, str):
+                triggers = {triggers: None}
+            assert "push" not in triggers, \
+                "selffont.yml 冻结中，不许挂 push（job 级 if 挡不住，实测 2026-11-06 白跑一次 53 分钟）"
+
         # 8. 名字与产物一对一：四类前缀各归各的工作流，工作流名与 job 名必须是自己的产物
         for job_name, job in (data.get("jobs") or {}).items():
             prefixes = set()

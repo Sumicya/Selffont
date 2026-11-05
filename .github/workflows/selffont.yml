@@ -1,16 +1,12 @@
 # 自版工作流：只出 selffont-*（自研字体打成的 Magisk 模块）。字体不合格，冻结中，默认不出：手动触发或提交信息带 [selffont] 才跑。
 name: selffont
 
+# 冻结的落地方式就是这一行：**只留 workflow_dispatch，不挂 push**。
+# 上一版想用 job 级 if 挡 push（提交信息带 [selffont] 才跑），实测没挡住——
+# 2026-11-06 21:20Z 那次 push 的提交信息里没有 [selffont]，job 照样起来了，
+# 一路跑到「内建自检」，那是一次 53 分钟的全量构建，白烧。
+# 表达式能不能挡住不是靠推的，所以改成结构上根本触发不了：想出自版，去 Actions 点按钮。
 on:
-  push:
-    paths:
-      - 'build.py'
-      - 'fonts.xml'
-      - 'module/**'
-      - 'tools/design_cjk*'
-      - 'tools/cjk_vf.py'
-      - 'requirements.txt'
-      - '.github/workflows/selffont.yml'
   workflow_dispatch:
 
 env:
@@ -24,9 +20,6 @@ concurrency:
 
 jobs:
   selffont:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[selffont]')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:

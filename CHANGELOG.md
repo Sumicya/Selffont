@@ -1,3 +1,16 @@
+## 2026-11-06（五）· 自版冻结改成结构上的：只留 workflow_dispatch
+
+- 事实：第七次拆完四条工作流后，`selffont.yml` 用了 job 级 `if` 挡 push
+  （`contains(head_commit.message, '[selffont]')`）。`ccb465b` 这次 push 的提交信息里没有这个串，
+  **job 照样起来了**，一路跑到「内建自检」，`gh api .../cancel` 返回
+  `403 Resource not accessible by integration`，取消不掉——一次 53 分钟的全量构建白烧。
+- 原因不猜：表达式在 GitHub 侧的真实求值我在沙箱里看不到，只能看到结果（job 起来了）。
+  所以不调表达式，改成**结构上触发不了**：`on` 只留 `workflow_dispatch`，push 已经不在这条
+  工作流的触发面里。想出自版去 Actions 点按钮。
+- 自检第 15 项加 8a：`selffont.yml` 的 `on` 里出现 `push` 就红。冻结从此是被检查的，
+  不是靠我记得。
+- 同轮：`build-26.11.6.1.324`（120,950,276 B）与 `selfrounds-ccb465bc`（9,704 B）已出。
+
 ## 2026-11-06（四）· 第七次：四类产物四条工作流，build 里不许再躺着 selfrounds
 
 - 主人的判据原话：**「怎么 build 还有 selfrounds」**。第六次我只做到「一个文件里两个 job 各叫各的名字」，
