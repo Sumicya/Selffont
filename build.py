@@ -2338,6 +2338,36 @@ def workflow_format():
             f"{path.name}: 前缀 {stem}- 归 {sorted(ARTIFACT_OWNER[f'{stem}-'])}，不含本文件"
 
 
+@check
+def release_link():
+    """README 承诺的下载地址，必须真有一条流水线在产出。
+
+    2026-11-06 的现场：README 从 10 月就写着「Release 只放最新一版的 zip 与 SHA256SUMS.txt」，
+    而 `build.yml` 从头到尾没有一步创建 Release——文档承诺了一个不存在的地址。主人问
+    「325 没有链接」时，我手里只有一个要登录、30 天过期、还得在 Actions 页面里翻的 artifact。
+    编号不是地址：编号只对知道规则的人有意义，地址对任何人都能用。
+
+    这条检查把「文档承诺」和「流水线动作」钉在一起：README 里出现 Release 下载承诺，
+    `build.yml` 就必须有 `gh release create`，tag 必须是五段版本，附件必须带 zip 与校验文件。
+    另外顺着查一层：README 不许再写「CI 不创建 Release」这种与事实相反的句子。
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    build = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+
+    promised = "releases/latest" in readme or "Release 只放最新一版" in readme
+    if not promised:
+        return
+
+    assert "gh release create" in build, \
+        "README 承诺了 Release 下载地址，build.yml 却没有 gh release create——地址没人产出"
+    assert '"${VERSION}"' in build, \
+        "Release 的 tag 必须是五段版本（${VERSION}），不是别的名字"
+    assert ".zip" in build and "SHA256SUMS.txt" in build, \
+        "README 承诺 Release 带 zip 与 SHA256SUMS.txt，build.yml 必须两样都挂"
+    assert "CI 不创建 Release" not in readme, \
+        "README 还在写「CI 不创建 Release」，与 build.yml 现在发布 Release 的事实相反"
+
+
 def run_checks() -> None:
     failed = 0
     for fn in CHECKS:

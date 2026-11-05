@@ -1,3 +1,27 @@
+## 2026-11-06（六）· 出包必须给地址：build 验收通过后挂 Release
+
+- 事实：`build-26.11.6.1.325` 出包成功，我报的是「120,950,274 B」，**一个编号，不是地址**。
+  主人回：「325 没有链接。」查下来根子是文档与流水线早就分叉了——README 从 10 月起就写着
+  「Release 只放最新一版的 zip 与 `SHA256SUMS.txt`」，同一份 README 的另一节又写着「CI 不创建
+  Release、tag 或正式 asset」，而 `build.yml` 顶层注释写的是「不发 Release、不打 tag」。
+  三处互相矛盾，实际能以链接形式拿到的只有 Actions artifact：要登录、`build-` 30 天过期、
+  还得在页面里翻。手机上没有这条路。
+- 改法：`build` job 增加两步——「生成校验文件」(`sha256sum` → `build/SHA256SUMS.txt`) 与
+  「发布公开直链（Release 挂包与校验文件）」。tag 用五段版本（`${VERSION}`），附件是
+  `build-<五段版本>.zip` 与 `SHA256SUMS.txt`，说明取验收表 `build/verify.md`。同名 Release
+  先删（含 tag）再建，重跑不撞名；旧版由既有的 `cleanup-releases` 删，全仓 Release 恒为一个，
+  所以 `releases/latest` 永远是最新一版。放行条件仍是验收四条断言，不过不上传。
+- 触发面：发布那一步和 `cleanup-releases` 都**不限默认分支**（原来照抄了「只在默认分支」）。
+  理由是这次要看的东西在分支上：限了分支，本分支出的 326 就没有 Release，等于又交了一个编号。
+  不分分支也不会堆：`cleanup-releases` 每次 build 都跑，按 `created_at` 只留最新 1 个；
+  构建失败时没有新 Release，保留的仍是最新那个，一个都不会被删。
+- 权限跟着改：`build` job 的 `permissions.contents` 从 `read` 改成 `write`（只这一步需要写）。
+- 自检加第 16 项 `release_link`：README 里出现 Release 下载承诺，`build.yml` 就必须有
+  `gh release create`、tag 必须是 `${VERSION}`、附件必须带 `.zip` 与 `SHA256SUMS.txt`；
+  README 里再出现「CI 不创建 Release」直接红。文档承诺与流水线动作从此互相钉住。
+- README 三处同步：安装节的下载地址改成 `releases/latest`（并注明 artifact 30 天、要登录）；
+  Release/tag 那节改写成「验收通过后创建」；母版直通包那节改成「artifact 与 Release 各司其职」。
+
 ## 2026-11-06（五）· 自版冻结改成结构上的：只留 workflow_dispatch
 
 - 事实：第七次拆完四条工作流后，`selffont.yml` 用了 job 级 `if` 挡 push

@@ -1,4 +1,6 @@
-# 母版工作流：只出 build-*（Maruko 原字节进 Magisk 模块，只做水平定位归位，不改轮廓）。不发 Release、不打 tag。
+# 母版工作流：只出 build-*（Maruko 原字节进 Magisk 模块，只做水平定位归位，不改轮廓）。
+# 验收通过后挂一个 Release（tag = 五段版本），公开直链免登录、不随 Actions 记录清空而失效；
+# 旧 Release 由 cleanup-releases 收，最多只留一个。
 name: build
 
 on:
@@ -28,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       actions: read
       statuses: write
     steps:
@@ -193,6 +195,30 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           overwrite: true
+      - name: 生成校验文件
+        run: |
+          set -euo pipefail
+          cd build
+          sha256sum "${NAME}.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: 发布公开直链（Release 挂包与校验文件）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # 一个版本一个 tag；同名 Release 先删（含 tag），重跑不会撞。
+          gh release delete "${VERSION}" --repo "$REPO" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "${VERSION}" \
+            "build/${NAME}.zip" "build/SHA256SUMS.txt" \
+            --repo "$REPO" \
+            --title "build-${VERSION}" \
+            --notes-file build/verify.md
+          {
+            echo "### 直链（免登录）"
+            echo
+            echo "https://github.com/${REPO}/releases/download/${VERSION}/$(basename "build/${NAME}.zip")"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   cleanup-artifacts:
     needs: build
@@ -215,7 +241,7 @@ jobs:
 
   cleanup-releases:
     needs: build
-    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
