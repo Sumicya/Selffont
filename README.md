@@ -230,9 +230,11 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 
 ### 母版直通包（`build-*`，可直刷）
 
-`build.yml` 的 `build` job 每次都出这一份：汉字是 Maruko Gothic `97e9dd4` 的原始字节，
-形状一个点没改，拉丁与符号仍走文渊圆体。与 `selffont-*`（自研字体模块）不是一回事，
-前者是母版、后者是自研；也不是 `selfrounds-*`，那只是字体文件本身。
+`build.yml` 的 `build` job 每次都出这一份：汉字取自 Maruko Gothic `97e9dd4`，
+**轮廓一个点没改，只把偏出字格中线的字整体平移归位**（母版满格字里 10.3% 墨心偏离中线
+超过 20 单位、最远 ±54.5，见 [`docs/metrics.md`](docs/metrics.md) 的「水平定位」一节），
+拉丁与符号仍走文渊圆体。与 `selffont-*`（自研字体模块）不是一回事，前者是母版、
+后者是自研；也不是 `selfrounds-*`，那只是字体文件本身。
 
 - 本地跑不了这一步：MFGA 基础包在 Release 附件里，302 到 `release-assets.githubusercontent.com`
   之后 TLS 直接断，只有 runner 有完整网络。

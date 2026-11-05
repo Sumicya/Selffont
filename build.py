@@ -861,6 +861,20 @@ def run_day(row: dict) -> date:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(CLOCK).date()
 
 
+# 与 .github/scripts/cleanup.py 的 KEEP_RUNS 一致：每个工作流只留最新 5 条运行记录。
+# 达到这个数就说明历史已被删过，当日更早的运行可能不在了——见 AnchorUnavailable。
+KEEP_RUNS = 5
+
+
+class AnchorUnavailable(RuntimeError):
+    """当日首条运行号取不到：运行记录已达保留上限，更早的当日运行可能已被清理删掉。
+
+    规范 §222「取不到即退出，不降级、不编数」。过去这里静默回落成当日序号 1，
+    于是同一天会产出重复的当日序号，清理按「重复当日序号」再删掉更早那个包——
+    编出来的数会把证据一起吃掉。
+    """
+
+
 def artifact_anchor(name: str, date: str) -> int | None:
     """产物名 `selffont-yy.m.d.d0.r0` 反推当日首条运行号 `r0 - d0 + 1`；口径不合返回 None。
 
@@ -891,13 +905,19 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
     `run_number`），当日序号 = 当前 `run_number - R_first + 1`。失败运行同样占号，
     `pull_request` 运行永不计入。锚点比当前号还大（旧运行已删）时钳到当前号，序号不小于 1。
 
+    两个锚点都可能被清理吃掉（运行记录每工作流只留 5 条、artifact 每仓只留 5 个）。
+    所以再加一条：**没有产物锚点、运行记录又已顶到保留上限**时抛 `AnchorUnavailable`，
+    宁可不出包也不编数——静默回落成当日序号 1 会产出重复号，清理再按「重复当日序号」
+    删掉更早那个包，编出来的数连证据一起吃。
+
     纯函数：只吃 API 读到的数据，不碰网络也不碰 git，自检用合成数据覆盖各分支。
     """
     total = int(check_number(str(run_number), "总序号", 1))
     moment = now.astimezone(CLOCK)
     date = f"{moment.year % 100}.{moment.month}.{moment.day}"
     today = moment.date()
-    anchors = []
+    today_runs: list[int] = []
+    older_days = 0
     for row in runs:
         if row.get("event") == "pull_request" or not row.get("run_number"):
             continue
@@ -906,11 +926,28 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
         except (TypeError, ValueError):
             continue
         if started == today:
-            anchors.append(int(row["run_number"]))
+            today_runs.append(int(row["run_number"]))
+        else:
+            older_days += 1
+    anchors = list(today_runs)
+    artifact_anchors = []
     for row in artifacts:
         anchor = artifact_anchor(row.get("name", ""), date)
         if anchor is not None:
-            anchors.append(anchor)
+            artifact_anchors.append(anchor)
+    anchors.extend(artifact_anchors)
+    # 清理按 run_started_at 从旧到新删。只要还留着一条**往日**的运行，就能证明今天没有任何
+    # 运行被删过（今天的一定比昨日的新），现存最小号就是真首条；反之若 5 条全是今天的，
+    # 今天的首条可能已经被挤掉了，这时没有产物锚点就证不出来。
+    capped_to_today = len(runs) >= KEEP_RUNS and today_runs and older_days == 0
+    if not artifact_anchors and capped_to_today:
+        # 没有产物锚点可证，而运行记录已经顶到保留上限：今天更早的那几条可能被删了，
+        # 拿现存最小号当首条会算小当日序号。宁可不出包，不编数。
+        raise AnchorUnavailable(
+            f"当日锚点取不到：build.yml 现存 {len(runs)} 条运行已达保留上限 {KEEP_RUNS}，" 
+            f"且现存 {KEEP_RUNS} 条全是今天的，今日首条可能已被挤掉；现存最小 run_number={min(today_runs)}，"
+            f"当前 {total}。按规范「取不到即退出，不降级、不编数」停止出包。"
+            "下一轮先攒推送（一次会话一次推送），让运行数落回上限内再出包。")
     first = min(min(anchors), total) if anchors else total
     day = total - first + 1
     check_number(str(day), "当日序号", 1)
@@ -932,7 +969,10 @@ def query_ci_version() -> tuple[str, str, str]:
     now = datetime.now(timezone.utc).astimezone(CLOCK)
     runs = gh_json(f"repos/{repo}/actions/workflows/build.yml/runs?per_page=100", "workflow_runs")
     artifacts = gh_json(f"repos/{repo}/actions/artifacts?per_page=100", "artifacts")
-    date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now)
+    try:
+        date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now)
+    except AnchorUnavailable as error:
+        sys.exit(f"[取号失败] {error}")
     print(f"[取号] head={os.environ.get('GITHUB_SHA', '未提供')} "
           f"run_id={os.environ.get('GITHUB_RUN_ID', '未提供')} run_number={total} R_first={first} "
           f"当日序号={day} 版本={date}.{day}.{total}（UTC+8 {now:%Y-%m-%d %H:%M:%S}）", file=sys.stderr)
@@ -1036,15 +1076,16 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             # 刷过基准件的机器再也装不回正规包，除非卸载。2026-11-01 那次 90 万序号就是这么来的。
             if module_id:
                 prop = re.sub(r"^id=.*$", lambda _m: f"id={module_id}", prop, flags=re.M)
-            prop = re.sub(r"^name=.*$", lambda _m: "name=Selffont 母版直通", prop, flags=re.M)
+            prop = re.sub(r"^name=.*$", lambda _m: "name=Selffont 母版直通（水平定位修正）", prop, flags=re.M)
             prop = re.sub(
                 r"^description=.*$",
-                lambda _m: ("description=母版直通包：汉字用 %s 原字节（sha256 %s…），"
+                lambda _m: ("description=母版直通包：汉字取自 %s（源 sha256 %s…），"
+                            "轮廓一个点没改，只把偏出字格中线的字整体平移归位；"
                             "拉丁与符号仍走文渊圆体；只做基准对照，不是发行件；"
                             f"模块 id 为 {module_id or '（同发行件）'}，与发行件分开，刷它不挡正规包更新。"
                             % (passthrough_name, digest)),
                 prop, flags=re.M)
-            warnings.append(f"母版直通：{passthrough_name} 原样进包（不改轮廓、不改名），"
+            warnings.append(f"母版直通：{passthrough_name} 进包（轮廓不改、只整体平移归位），"
                             "只用于基准测量，不是发行件。")
         else:
             glyphs = cjk_glyphs() if cjk else {}
@@ -1845,7 +1886,23 @@ def ci_version_numbering():
     assert ci_version_numbers([], [art(f"{PROJECT}-{today}.3", 1),
                                    art(f"{PROJECT}-{yesterday}.3.500", 2)], 210, now) \
         == (today, 1, 210, 210)
-    # 8) 当日序号 0、总序号小于当日序号的畸形名忽略，不当锚点。
+    # 8) 运行记录顶到保留上限（5 条）且留下来的全是今天的：首条可能已被挤掉，必须抛。
+    capped = [run(number, f"2026-10-27T0{number % 10}:10:00+00:00") for number in (206, 207, 208, 209, 210)]
+    try:
+        ci_version_numbers(capped[:5], [], 210, now)
+        raise AssertionError("顶到保留上限还编出数来")
+    except AnchorUnavailable:
+        pass
+    # 9) 同上但有产物锚点：产物名绝对值可证，照常算（496..500 与 503 同一条序列）。
+    late = [run(number, f"2026-10-27T0{number % 10}:10:00+00:00") for number in (496, 497, 498, 499, 500)]
+    assert ci_version_numbers(late, [art(f"{PROJECT}-{today}.3.500", 1)], 503, now)[1] == 8
+    # 10) 今日只四条、总数没到上限：没有被删过，照常算。
+    assert ci_version_numbers(capped[:4], [], 210, now)[1] == 5
+    # 11) 顶到上限但还留着往日运行：往日那条被删光了才会删到今天的，所以今天的首条可证。
+    mixed = [run(206, "2026-10-26T12:00:00+00:00")] + capped[1:]
+    assert ci_version_numbers(mixed, [], 210, now)[1] == 4
+
+    # 11) 当日序号 0、总序号小于当日序号的畸形名忽略，不当锚点。
     assert ci_version_numbers([], [art(f"{PROJECT}-{today}.0.500", 1),
                                    art(f"{PROJECT}-{today}.5.3", 2)], 210, now) == (today, 1, 210, 210)
     # 9) 锚点比当前号还大（旧运行已删）时钳到当前号，当日序号不小于 1。
