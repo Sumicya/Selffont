@@ -1,7 +1,7 @@
 # 母版直通包：Maruko Gothic 原始字节进 Magisk 模块，只挂载与配置、不改轮廓；用途是给判据当基准。
 # 只上传 artifact：不发 Release、不打 tag、不改 latest。出包是内部动作，对外发布要人点头。
 # 触发：push 本文件（paths 只盯这一个）或 Actions 页 Run workflow；`gh workflow run` 实测 403。
-# 清理按规范：全仓按 created_at 留最新 5 个，母版件也在这 5 个里。
+# 清理按规范：全仓按 created_at 留最新 5 个，母版件也在这 5 个里；产物名 build-<版本>。
 name: mother
 
 on:
