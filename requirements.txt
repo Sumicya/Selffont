@@ -10,3 +10,6 @@ numpy==2.4.6
 scipy==1.17.1
 scikit-image==0.26.0
 skia-pathops==0.9.2
+# build.py --check 的 workflow_format 要按 YAML 读 .github/workflows/*.yml（含重复键检测）；
+# 只为自检用，构建与出包不 import。
+pyyaml==6.0.3
