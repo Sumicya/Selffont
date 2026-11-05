@@ -1,3 +1,20 @@
+## 2026-11-06 · 工作流命名收口：`build` 就是出 `build-*` 的那条，`mother` 这个词从 CI 里消失
+
+- 事实：上一轮我把母版直通包放进单独的 `mother.yml`，产物叫 `build-*`——工作流名与产物名
+  对不上;主人第五次强调后，自己把 `mother.yml`／`pr-check.yml`／`probe.yml` 三个文件删了
+  （`3f705c6`，理由「与主包重叠」，都是回声）。本轮按这个事实收口。
+- 改法：母版直通搬进 `build.yml`，新增 `pack` job（与 `build` job 并行、互不 `needs`），
+  产物 `build-<五段版本>`，`retention-days: 30`，验收时断言包内汉字字件 sha256 仍是母版原字节
+  `e3709389…` 且大小 20,084,736 B。
+- 前缀三类别：`build-*`＝母版 Magisk 模块（每次 push 都出）、`selfrounds-*`＝字体文件本身、
+  `selffont-*`＝自研字体模块（手动勾选才出，字体不合格）；`hotswap-*` 是第四类，独立工作流。
+  旧的 `Selffont-sha256-*` 一并改成 `selffont-sha256-*`。
+- `paths-ignore` 去掉 `probe.yml` 那条；`cleanup-artifacts`／`cleanup-releases` 的 `needs`
+  改成 `[build, pack]`；README 的工作流表按两个工作流重写。
+- 版本号：`build-*` 的总序号取 `build.yml` 的 `run_number`，与 `selfrounds` 同源；
+  `--day` 固定 1（原来靠 `mother.yml` 的 `day` 输入，合并后不再有第二个输入口）。
+- 验：`build.py --check` 15 项全过（含本轮新增的 `workflow_format` 七样格式检查）。
+
 ## 2026-11-05（三·补）· 五个工作流统一成同一套格式，并把格式变成会红的自检第 15 项
 
 - §12 落地（Selffont 这一侧，八个文件实为五个）：`name` 全部等于文件名且不重复

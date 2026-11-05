@@ -189,18 +189,28 @@ gh api -H "Accept: application/vnd.github.raw" \
 - **本地不出 CI 号**：`--query-ci` 只在 CI 里成立，本地打包必须显式传齐 `--date/--day/--build`，数的可追溯性由打包的人负责。
 - `module/module.prop` 在仓库里保持 `version=dev` / `versionCode=0` 只是入库默认值，盖戳时被覆盖，自检核对盖戳格式与 versionCode 一致。
 
-CI 固定两个工作流：`build.yml`（`Build`，只接 `push`[不限分支] / `workflow_dispatch`）三个 job——`build` 只读（`contents: read` + `actions: read`），取号出包上传；`cleanup-artifacts`（`needs: build` + `if: always()`）清产物与运行记录；`cleanup-releases`（`if: always()` 且限默认分支，只授 `contents: write`）清 Release 与孤立 tag。`pr-check.yml`（`PR check`，只接 `pull_request`）的 `check` job 只跑自检、不取号不出包，`cleanup-artifacts` job 不带 `needs`、始终运行。artifact 名 = `Selffont-<版本>`，**包内根目录就是 `module.prop`，网页下载下来可直接刷**（构建仍先产出 `build/Selffont-<版本>.zip`，CI 解开后上传目录内容），`retention-days: 5` 只是时间兜底，`overwrite: true` 让重试不撞名。
+CI 只有两个工作流，各出一类东西（名字与产物前缀一一对应）：
+
+| 工作流 | `name:` | job | 产物 | 是什么 |
+| --- | --- | --- | --- | --- |
+| `.github/workflows/build.yml` | `build` | `build` / `pack` / `cleanup-artifacts` / `cleanup-releases` | `build-<五段版本>`、`selfrounds-<SHA8>`、`selffont-<版本>`（手动勾才出）、`build-log-<run_id>`（失败时） | 母版 Magisk 模块（可直刷）、Selfrounds 字体文件、自研模块 |
+| `.github/workflows/hotswap.yml` | `hotswap` | `hotswap` / `cleanup-artifacts` | `hotswap-<SHA8>` | LSPosed 热切换模块（`sumicya.selffont.hotswap`） |
+
+`build` 与 `pack` 两个 job **并行**（互不 `needs`）：`pack` 出母版模块（约 2 分钟，母版字节直通，不改轮廓），`build` 出 selfrounds 字体（push 走预览子集约 96 秒，手动 `full` 才跑全量约 53 分钟）。`cleanup-artifacts`（`needs: [build, pack]` + `if: always()`）与 `cleanup-releases`（`if: always()` 且限默认分支，只授 `contents: write`）收尾。artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷；`build-` 留 30 天，其余 5 天只是兜底，`overwrite: true` 让重试不撞名。
+
+三个前缀不许混：`build`＝母版 Magisk 模块、`selffont`＝自研字体模块（默认关，字体不合格）、`selfrounds`＝Selfrounds 字体本身；`hotswap` 是第四类，独立工作流。
 
 清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；两个工作流顶层的 `CLEANUP_APPLY: "true"` 保持一致。
 
-- **artifact/run**：两个工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py` 与同一个 `selffont-cleanup` concurrency 锁（`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`。artifact 只有一条判据，照规范六·3：全仓未过期产物按 `created_at` 保留最新 5 个，超出当轮删——不看名字、前缀、段数、来源或号源。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
+- **artifact/run**：两个工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py`，各自用自己的并发组（`selffont-build` / `selffont-hotswap`，`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`。artifact 只有一条判据，照规范六·3：全仓未过期产物按 `created_at` 保留最新 5 个，超出当轮删——不看名字、前缀、段数、来源或号源。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
 - **Release/tag**：`build.yml` 的独立 `cleanup-releases` job 只在默认分支运行，只声明 `contents: write`；保留最新一个 Release，删除不再关联保留 Release 的 `Selffont-` 前缀 tag。CI 不创建 Release、tag 或正式 asset。
 - **安全与失败处理**：所有待执行对象和端点先完整打印，再开始删除；checkout 一律默认浅克隆（取号与清理都只读 API，不再读 git 历史）。403 明确打印对象、端点和状态，标为未执行并继续；复核会注明清理未完成，不将权限缺口说成成功。403 以外的失败使 job 标红。Release/tag 清理删除 tag 前还会重新核对 Release 仍否引用该 tag，避免 Release 删除失败后误删其 tag。
 
 ```sh
-# 下载最近一次 build.yml 运行的 artifact；artifact 包内根目录直接是 module.prop，可直接刷
+# 下载最近一次 build.yml 运行里的母版模块（build-*）；包内根目录直接是 module.prop，可直接刷
 RUN=$(gh api 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=20' --jq '.workflow_runs[0].id')
-set -- $(gh api "repos/Sumicya/Selffont/actions/runs/$RUN/artifacts" --jq '.artifacts[0] | "\(.id) \(.name)"')
+set -- $(gh api "repos/Sumicya/Selffont/actions/runs/$RUN/artifacts" \
+  --jq '.artifacts[] | select(.name | startswith("build-")) | "\(.id) \(.name)"' | head -1)
 curl -fL -H "Authorization: token $(gh auth token)" -o "$2.zip" \
   "https://api.github.com/repos/Sumicya/Selffont/actions/artifacts/$1/zip"
 ls -l "$2.zip" && unzip -p "$2.zip" module.prop
@@ -212,28 +222,20 @@ gh api --paginate repos/Sumicya/Selffont/actions/artifacts \
   --jq '.artifacts[] | "\(.created_at) \(.id) \(.name) \(.size_in_bytes)"'
 gh api --paginate repos/Sumicya/Selffont/actions/workflows/build.yml/runs \
   --jq '.workflow_runs[] | "\(.created_at) \(.id) \(.run_number) \(.status)"'
-gh api --paginate repos/Sumicya/Selffont/actions/workflows/pr-check.yml/runs \
+gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
   --jq '.workflow_runs[] | "\(.created_at) \(.id) \(.run_number) \(.status)"'
 ```
 
-### 母版直通包（基准件，不是发行件）
+### 母版直通包（`build-*`，可直刷）
 
-想拿**母版原样**当系统字体对照时，用直通包：汉字是 Maruko Gothic `97e9dd4` 的原始字节，
-形状一个点没改，拉丁与符号仍走文渊圆体。
-
-```sh
-# 触发：改这个工作流文件本身（任何分支），或者用 GitHub 网页上的 Run workflow
-touch .github/workflows/mother.yml && git commit -am '触发母版包' && git push
-# 产物
-gh run list --workflow=mother.yml -R Sumicya/Selffont --limit 1
-```
+`build.yml` 的 `pack` job 每次都出这一份：汉字是 Maruko Gothic `97e9dd4` 的原始字节，
+形状一个点没改，拉丁与符号仍走文渊圆体。与 `selffont-*`（自研字体模块）不是一回事，
+前者是母版、后者是自研；也不是 `selfrounds-*`，那只是字体文件本身。
 
 - 本地跑不了这一步：MFGA 基础包在 Release 附件里，302 到 `release-assets.githubusercontent.com`
   之后 TLS 直接断，只有 runner 有完整网络。
-- 包内 `module.prop` 的 name/description 由 `build.py` 改写成「母版直通」，总序号从 90 万起，
-  KernelSU 里不会把发行件当成更新。
+- `module-id` 用独立的 `selffont-bench`，与发行件各比各的 versionCode，互不压制。
 - 只上传 Actions artifact，不发 Release、不打常驻 tag、不改 latest：出包是内部动作，对外发布另说。
-- 触发也改了：任何分支只要改动 `.github/workflows/mother.yml` 就跑一次，不再需要推 tag。
 
 ### 产物构成（为什么约 100 MB）
 

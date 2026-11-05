@@ -1,4 +1,4 @@
-# 出包工作流：push 跑预览子集（96 秒），[full] 提交或手动触发跑全量。不发 Release、不打 tag。
+# 出包工作流：每次出母版 Magisk 模块 build-* 与 selfrounds 字体；手动勾 selffont 才出自研模块。不发 Release、不打 tag。
 name: build
 
 on:
@@ -7,8 +7,7 @@ on:
       - '**.md'
       - 'docs/**'
       - 'bad/**'
-      - 'lsp/**'          # B 线（探针）只在 probe.yml 里编，字体 job 不跟着跑
-      - '.github/workflows/probe.yml'
+      - 'lsp/**'          # LSPosed 模块在 hotswap.yml 里编，字体 job 不跟着跑
       - 'LICENSE'
       - '.gitignore'
   workflow_dispatch:
@@ -25,6 +24,10 @@ on:
 env:
   SEGMENTS: '5'
   CLEANUP_APPLY: 'true'
+  # 母版来源钉死：CJK SC 的 Regular，20,084,736 B，sha256 与 docs/metrics.md 同一份。
+  MOTHER_SHA256: 'e3709389bce13fa75af28cc2370b6175520d97f74dfbf3894ca24838f47241b7'
+  MOTHER_NAME: 'MarukoGothicCJKsc-Regular.ttf'
+  MOTHER_REF: '97e9dd4'
 
 concurrency:
   group: selffont-build
@@ -163,8 +166,8 @@ jobs:
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
         with:
-          # 三类产物各用一个固定前缀，别混（主人 2026-11-05 第四次强调）：
-          #   build      → 母版 Magisk 模块（mother.yml）
+          # 三类产物各用一个固定前缀，别混（主人第五次强调）：
+          #   build      → 母版 Magisk 模块（同文件的 pack job，可直刷）
           #   selffont   → 自研字体 Magisk 模块（本行；默认关，字体不合格）
           #   selfrounds → Selfrounds 字体本身（下面那一处）
           name: selffont-${{ env.VERSION }}
@@ -176,7 +179,7 @@ jobs:
         if: steps.mode.outputs.full == '1'
         uses: actions/upload-artifact@v7
         with:
-          name: Selffont-sha256-${{ steps.sha.outputs.sum8 }}
+          name: selffont-sha256-${{ steps.sha.outputs.sum8 }}
           path: build/SHA256SUMS.txt
           retention-days: 5
           if-no-files-found: error
@@ -191,8 +194,98 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  # 母版 Magisk 模块：母版原字节直接进模块，只做挂载与配置，不改一个轮廓。
+  # 与上面的 build job 并行（互不 needs），push 一次两个 job 同时起跑。
+  pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read         # 只出 artifact，不发 Release、不打 tag、不改 latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+      - name: 准备 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: 安装字体工具
+        run: python -m pip install -r requirements.txt
+      - name: 内建自检
+        run: python build.py --check
+      - name: 取自母版原始字节
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          gh api "repos/max32002/maruko-gothic/contents/CJK%20SC/${MOTHER_NAME}?ref=${MOTHER_REF}" \
+            -H "Accept: application/vnd.github.raw" > "work/${MOTHER_NAME}"
+          sum=$(sha256sum "work/${MOTHER_NAME}" | cut -d' ' -f1)
+          echo "尺寸 $(stat -c%s "work/${MOTHER_NAME}") B  sha256 $sum"
+          [ "$sum" = "$MOTHER_SHA256" ] || {
+            echo "母版字节与钉子不符：母版可能已换包，先核对再出包。" >&2
+            exit 1
+          }
+      - name: 出包（母版直通）
+        run: |
+          set -euo pipefail
+          date=$(TZ=Asia/Shanghai date +%y.%-m.%-d)
+          name="build-${MOTHER_REF}-${{ github.run_number }}"
+          python build.py --passthrough-mother "work/${MOTHER_NAME}" \
+            --date "$date" --day 1 --build "${{ github.run_number }}" --module-id selffont-bench \
+            --output "build/${name}.zip"
+          echo "NAME=${name}" >> "$GITHUB_ENV"
+      - name: 解包为可直刷目录
+        run: |
+          set -euo pipefail
+          rm -rf build/root
+          unzip -oq "build/${NAME}.zip" -d build/root
+          test -f build/root/module.prop
+          test -f build/root/customize.sh
+          # artifact 下下来就是模块 zip：module.prop 必须在根目录，不能「zip 里套 zip」，
+          # 所以上传解开的目录内容，而不是 build/${NAME}.zip。
+          ver=$(sed -n 's/^version=//p' build/root/module.prop)
+          echo "VERSION=${ver}" >> "$GITHUB_ENV"
+          echo "产物名 build-${ver}"
+      - name: 验收母版字节
+        run: |
+          set -euo pipefail
+          python - <<'PY' | tee build/verify.md
+          import hashlib, os, zipfile
+
+          name, mother = os.environ["NAME"], os.environ["MOTHER_NAME"]
+          raw = open(f"build/{name}.zip", "rb").read()
+          with zipfile.ZipFile(f"build/{name}.zip") as z:
+              cjk = z.read(f"system/fonts/{mother}")
+              prop = z.read("module.prop").decode()
+              fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
+          got = hashlib.sha256(cjk).hexdigest()
+          want = os.environ["MOTHER_SHA256"]
+          assert got == want, f"包内汉字字件不是母版原字节：{got}"
+          assert len(cjk) == 20084736, len(cjk)
+          fields = dict(l.split("=", 1) for l in prop.splitlines() if "=" in l)
+          print("\n".join([
+              "| 项 | 值 |", "| --- | --- |",
+              f"| 包 | `{name}.zip` |",
+              f"| 包 sha256 | `{hashlib.sha256(raw).hexdigest()}` |",
+              f"| 包大小 | {len(raw):,} B |",
+              f"| 版本 | `{fields.get('version')}`（versionCode {fields.get('versionCode')}） |",
+              f"| 汉字字件 | `{mother}` {len(cjk):,} B，与母版原字节一致 |",
+              f"| 包内 /system/fonts 字件 | {len(fonts)} 个 |",
+          ]))
+          PY
+          cp build/verify.md "$GITHUB_STEP_SUMMARY"
+      - name: 上传母版模块
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ env.VERSION }}
+          path: build/root
+          retention-days: 30
+          if-no-files-found: error
+          overwrite: true
+
   cleanup-artifacts:
-    needs: build
+    needs: [build, pack]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -211,7 +304,7 @@ jobs:
         run: python3 .github/scripts/cleanup.py
 
   cleanup-releases:
-    needs: build
+    needs: [build, pack]
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
