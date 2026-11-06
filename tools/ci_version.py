@@ -165,7 +165,16 @@ def query_ci_version() -> tuple[str, str, str]:
                            f"RUN_NUMBER={run_number!r}")
     now = datetime.now(timezone.utc).astimezone(CLOCK)
     workflow = (os.environ.get("CI_WORKFLOW") or "build.yml").strip()
-    runs = gh_json(f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=100", "workflow_runs")
+    try:
+        runs = gh_json(f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=100", "workflow_runs")
+    except RuntimeError as error:
+        # 工作流一次都没跑过时，`/workflows/<文件名>` 还没注册（404）。退回全仓运行列表按 path 过滤：
+        # 只要它跑起来过，这里就一定取得到；表里没有，仍然照样抛错——不拿空列表冒充「没有历史」。
+        if "HTTP 404" not in str(error):
+            raise
+        path_suffix = f"/{workflow}"
+        runs = [row for row in gh_json(f"repos/{repo}/actions/runs?per_page=100", "workflow_runs")
+                if str(row.get("path", "")).endswith(path_suffix)]
     artifacts = gh_json(f"repos/{repo}/actions/artifacts?per_page=100", "artifacts")
     try:
         date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now)

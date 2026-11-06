@@ -1,5 +1,6 @@
 # 热切换工作流：只编 lsp 工程里的 :hotswap（LSPosed 模块，包名 sumicya.selffont.hotswap）。
 # 产物 hotswap-<五段版本> 是可直接装的 APK；字体从 lsp/hotswap/src/main/assets/fonts/*.ttf 编进去。
+# 版本号由 tools/ci_version.py 读**本工作流自己**的运行序列（不带 SHA）；发版是手工动作，这里不建 Release。
 # 不发 Release、不打 tag：装完在 LSPosed 管理器里勾作用域，重启目标应用生效（不用重启整机）。
 name: hotswap
 
