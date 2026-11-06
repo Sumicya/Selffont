@@ -53,13 +53,21 @@ jobs:
       - name: 出预览字体
         run: |
           set -euo pipefail
-          echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
           python build.py --preview '鬱響鬢Ay?' --preview-out build/preview
           ls -l build/preview
+      - name: 取版本号（五段，不带 SHA）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 号源与 build.yml 同一套实现（tools/ci_version.py），只是读自己这条工作流的运行列表。
+          VERSION=$(python3 tools/ci_version.py --workflow selfrounds.yml)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "产物名 selfrounds-${VERSION}"
       - name: 上传 selfrounds
         uses: actions/upload-artifact@v7
         with:
-          name: selfrounds-${{ env.SHA8 }}
+          name: selfrounds-${{ env.VERSION }}
           path: build/preview
           retention-days: 3
           if-no-files-found: error

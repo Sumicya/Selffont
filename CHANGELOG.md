@@ -1,3 +1,23 @@
+## 2026-11-06（十二）· 删掉发版能力，产物名去 SHA：`selfrounds-`／`hotswap-` 改用五段版本
+
+- 删除（`build.yml`，265 → 213 行，10,883 → 8,879 B）：
+  - 第 199–226 行「生成校验文件」+「发布公开直链」两步整段删。校验文件只做 Release 附件用，没有 Release 就是死代码。
+  - 第 33 行 `contents: write` → `contents: read`。**不能整行删**：`permissions:` 里没写的权限一律 `none`，
+    删了 `contents` 会让 `actions/checkout` 拿不到仓库内容、在「检出仓库」就 403。
+  - 第 247–265 行 `cleanup-releases` job 整段删（它只为自动发版服务）。
+  - 顶部 2–3 行注释改成只讲 artifact。
+- `grep -rnE 'gh release|action-gh-release|push --tags' .github` 现在为空（退出码 1）。
+- 产物名去 SHA（规范 `29ad85f` §13「后缀只许 <版本>」）：`selfrounds-<SHA8>` → `selfrounds-<五段版本>`、
+  `hotswap-<SHA8>` → `hotswap-<五段版本>`。取号不复制实现：新增 `tools/ci_version.py`（**纯标准库**，
+  不 import fontTools），把 `check_number`／`gh_json`／`run_day`／`artifact_anchor`／`ci_version_numbers`／
+  `query_ci_version` 整块从 `build.py` 搬过去，`build.py` 改为导入同一份——两处各写一遍迟早算出差一个数。
+  `selfrounds.yml`／`hotswap.yml` 各加一步 `VERSION=$(python3 tools/ci_version.py --workflow <自己>)`。
+- 自检：第 16 项 `release_link` → `no_auto_publish`（`.github` 里出现发版调用、README 出现 Release 下载地址、
+  产物名带 `SHA8`/`GITHUB_SHA`、后缀不是 `${{ env.VERSION }}` 都红；`log-<run_id>` 是诊断件，不受后缀约束）。
+- `build.py --check` 的「版本 26.9.30.2.9」是自检夹具固定传参（`build_num="9" day="2" date="26.9.30"`），
+  不是仓里版本。现在打印后面直接标「（自检夹具，非发行版）」，不再让人对不上号。
+- 现存 Release `26.11.6.1.331` 仍在（没有收到删它的指令，也没动它）。此后流水线不再产出新的。
+
 ## 2026-11-06（十一）· 母版产物名按主人口径改回 `build-<版本>`
 
 - 主人的口径：`.github/workflows/build.yml` 第 193 行回到 `name: build-${{ env.VERSION }}`，自检跟着回到 `build-`。

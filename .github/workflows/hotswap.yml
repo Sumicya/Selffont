@@ -1,5 +1,5 @@
 # 热切换工作流：只编 lsp 工程里的 :hotswap（LSPosed 模块，包名 sumicya.selffont.hotswap）。
-# 产物 hotswap-<SHA8> 是可直接装的 APK；字体从 lsp/hotswap/src/main/assets/fonts/*.ttf 编进去。
+# 产物 hotswap-<五段版本> 是可直接装的 APK；字体从 lsp/hotswap/src/main/assets/fonts/*.ttf 编进去。
 # 不发 Release、不打 tag：装完在 LSPosed 管理器里勾作用域，重启目标应用生效（不用重启整机）。
 name: hotswap
 
@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read      # 取版本号要读自己这条工作流的运行列表
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
@@ -106,13 +107,20 @@ jobs:
           cp build-summary.md "$GITHUB_STEP_SUMMARY"
           echo "::notice title=hotswap::bytes=$BYTES sha256=$SHA fonts=$FONTS"
 
-      - name: 记短 SHA（产物名用）
-        run: echo "SHA8=${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+      - name: 取版本号（五段，不带 SHA）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 号源与 build.yml 同一套实现（tools/ci_version.py），只是读自己这条工作流的运行列表。
+          VERSION=$(python3 tools/ci_version.py --workflow hotswap.yml)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "产物名 hotswap-${VERSION}"
 
       - name: 上传产物
         uses: actions/upload-artifact@v7
         with:
-          name: hotswap-${{ env.SHA8 }}
+          name: hotswap-${{ env.VERSION }}
           path: lsp/hotswap/build/outputs/apk/**/*.apk
           retention-days: 5
           if-no-files-found: error

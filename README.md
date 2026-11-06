@@ -33,7 +33,7 @@ Android 个人字体模块：**Selfrounds CJK**（自研，SIL OFL 1.1 衍生物
 
 ### 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。**下载地址**：`https://github.com/Sumicya/Selffont/releases/latest`（免登录、不会过期；Actions artifact 要登录、`build-*` 只留 5 天，手机上等于没有）。每个版本一个 tag，`--target` 钉在产出它的那个提交上。
+KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。**没有公开下载地址**：流水线只出 Actions artifact（要登录 GitHub、`build-*` 5 天过期），不建 Release、不打 tag——发版是手工动作，见「CI 与产物」。
 
 管理器安装：KernelSU → 模块 → 从存储安装 → 选解压出的 zip → 重启。Magisk：模块 → 从本地安装 → 选同一个 zip → 重启（不重启也能先看效果时，用下面的热切换）。
 
@@ -83,7 +83,7 @@ su -c 'sh /data/adb/modules/selffont-mother/hotswap.sh panic'    # 只摘能认�
 
 **还剩一条没验的路**：进程内（LSPosed）——反射读 `Typeface.sSystemFontMap` 换家族、hook
 `Typeface.createFromFile` 重定向文件。**已实现**为模块 `sumicya.selffont.hotswap`（工作流 `hotswap`，
-产物 `hotswap-<SHA8>`，可直装），用法与判读表见 [`docs/hotswap-lsposed.md`](docs/hotswap-lsposed.md)。
+产物 `hotswap-<五段版本>`，可直装），用法与判读表见 [`docs/hotswap-lsposed.md`](docs/hotswap-lsposed.md)。
 **未真机验证。**
 
 ### 进程内路线（探针，未验）
@@ -195,8 +195,8 @@ CI 有四条工作流，**一条工作流一个名字、一类产物**，不许�
 | --- | --- | --- | --- | --- |
 | `.github/workflows/build.yml` | `build` | `build` / `cleanup-artifacts` / `cleanup-releases` | `build-<五段版本>` | 母版 Magisk 模块（可直刷） |
 | `.github/workflows/selffont.yml` | `selffont` | `selffont` / `cleanup-artifacts` | `selffont-<五段版本>` | 自研字体模块（**冻结**，手动触发或 `[selffont]` 才跑） |
-| `.github/workflows/selfrounds.yml` | `selfrounds` | `selfrounds` / `cleanup-artifacts` | `selfrounds-<SHA8>` | Selfrounds 字体文件本身 |
-| `.github/workflows/hotswap.yml` | `hotswap` | `hotswap` / `cleanup-artifacts` | `hotswap-<SHA8>` | LSPosed 热切换模块（`sumicya.selffont.hotswap`） |
+| `.github/workflows/selfrounds.yml` | `selfrounds` | `selfrounds` / `cleanup-artifacts` | `selfrounds-<五段版本>` | Selfrounds 字体文件本身 |
+| `.github/workflows/hotswap.yml` | `hotswap` | `hotswap` / `cleanup-artifacts` | `hotswap-<五段版本>` | LSPosed 热切换模块（`sumicya.selffont.hotswap`） |
 
 `log-<run_id>` 是失败时的诊断件，四条都可能出，不算交付物，也不占四类前缀。
 
@@ -205,7 +205,7 @@ CI 有四条工作流，**一条工作流一个名字、一类产物**，不许�
 清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；四条工作流顶层的 `CLEANUP_APPLY: "true"` 保持一致。
 
 - **artifact/run**：四条工作流的 `cleanup-artifacts` job 共用同一份 `.github/scripts/cleanup.py`，各自用自己的并发组（`selffont-build` / `selffont-selffont` / `selffont-selfrounds` / `selffont-hotswap`，`cancel-in-progress: false`），均声明 `actions: write` + `contents: read`。artifact 只有一条判据，照规范六·3：全仓未过期产物按 `created_at` 保留最新 5 个，超出当轮删——不看名字、前缀、段数、来源或号源。每个工作流的 run 最多保留最新 5 条，超限的未完成 run 先取消、转成 completed 后由下一轮删除；当前运行永不取消、不删除。
-- **Release/tag**：只有 `build.yml` 在验收通过后创建 Release（`gh release create "${VERSION}" --target "$GITHUB_SHA"`），附件是 `build-<五段版本>.zip` 与 `SHA256SUMS.txt`；同名先删再建，重跑不撞名。`cleanup-releases` 保留最新一个、删除不再关联保留 Release 的 tag，所以 `releases/latest` 永远是最新一版。自检 `release_link` 盯着这两件事。
+- **Release/tag**：四条工作流**都不创建** Release 与 tag（自检 `no_auto_publish` 盯着：`.github` 里出现 `gh release` / `action-gh-release` / `push --tags` 就红）。发版是手工动作，`cleanup.py` 的 `CLEANUP_SCOPE=releases` 仍可手工清理超出的 Release 与孤立 tag。
 - **安全与失败处理**：所有待执行对象和端点先完整打印，再开始删除；checkout 一律默认浅克隆（取号与清理都只读 API，不再读 git 历史）。403 明确打印对象、端点和状态，标为未执行并继续；复核会注明清理未完成，不将权限缺口说成成功。403 以外的失败使 job 标红。Release/tag 清理删除 tag 前还会重新核对 Release 仍否引用该 tag，避免 Release 删除失败后误删其 tag。
 
 ```sh
@@ -239,7 +239,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 - 本地跑不了这一步：MFGA 基础包在 Release 附件里，302 到 `release-assets.githubusercontent.com`
   之后 TLS 直接断，只有 runner 有完整网络。
 - `module-id` 用独立的 `selffont-bench`，与发行件各比各的 versionCode，互不压制。
-- 上传 Actions artifact 并挂 Release：artifact 给重跑与排障，Release 是给人下载的直链（免登录、不过期）。tag 用 `--target "$GITHUB_SHA"` 钉在产出它的提交上。
+- 只上传 Actions artifact（5 天），不发 Release、不打 tag、不建直链。
 
 ### 产物构成（为什么约 100 MB）
 
