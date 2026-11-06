@@ -1,3 +1,15 @@
+## 2026-11-06（十一）· 母版产物名按主人口径改回 `build-<版本>`
+
+- 主人的口径：`.github/workflows/build.yml` 第 193 行回到 `name: build-${{ env.VERSION }}`，自检跟着回到 `build-`。
+  （十）之前那条「前缀必须是项目名 `Selffont`」的命名规则**作废**：`Selffont-母版-<版本>` 只活了三次运行
+  （`26.11.6.1.330`／`.331` 两个 artifact 是这个名字）。
+- 改动四处：`build.yml:193` 名字；`build.py:2221` 的 `ARTIFACT_OWNER` 键；`build.py:8b` 的名字断言；
+  README 三处（安装节、工作流表、下载命令里的 `startswith`）。
+- **保留期不动**：`retention-days: 5` 保持，8b 里那条「必须是 5」的断言照旧。
+- 没有补「档位-SHA8」那一档，没有新建工作流，没有 `gh release`／`push --tags`，没有 sleep/while，没有 force push。
+- 这次提交带 `[skip ci]`：主人这一轮明说「不要发版」，而 `build.yml` 里的发布步骤在 push 时会自动建 Release，
+  所以先让这次改动不触发运行；命名要到下一次普通推送才会在产物列表里出现。
+
 ## 2026-11-06（十）· 清理：工作流文件已删的，运行记录一条不留
 
 - 现场（现读）：`/actions/workflows` 列出 **7** 个、`/actions/runs` **31** 条，而 `main` 上只有

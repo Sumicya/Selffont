@@ -33,7 +33,7 @@ Android 个人字体模块：**Selfrounds CJK**（自研，SIL OFL 1.1 衍生物
 
 ### 安装 / 卸载
 
-KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。**下载地址**：`https://github.com/Sumicya/Selffont/releases/latest`（免登录、不会过期；Actions artifact 要登录、`Selffont-母版-*` 只留 5 天，手机上等于没有）。每个版本一个 tag，`--target` 钉在产出它的那个提交上。
+KSU 装 zip，重启（模块 ID `selffont-mother`；安装脚本替换设备实际会读的框架配置（AOSP 的 `font_fallback*.xml`、ColorOS 的 `fonts_base.xml` / `fonts_ule.xml`），并在 `/system/etc/fonts.xml` 上做只插不换的最小插入（Skia 程序靠它）；`fonts_customization.xml` 不碰；框架配置一份都没有的设备中止安装）。卸载 = KSU 删模块 + 重启。**下载地址**：`https://github.com/Sumicya/Selffont/releases/latest`（免登录、不会过期；Actions artifact 要登录、`build-*` 只留 5 天，手机上等于没有）。每个版本一个 tag，`--target` 钉在产出它的那个提交上。
 
 管理器安装：KernelSU → 模块 → 从存储安装 → 选解压出的 zip → 重启。Magisk：模块 → 从本地安装 → 选同一个 zip → 重启（不重启也能先看效果时，用下面的热切换）。
 
@@ -193,14 +193,14 @@ CI 有四条工作流，**一条工作流一个名字、一类产物**，不许�
 
 | 工作流 | `name:` | job | 产物 | 是什么 |
 | --- | --- | --- | --- | --- |
-| `.github/workflows/build.yml` | `build` | `build` / `cleanup-artifacts` / `cleanup-releases` | `Selffont-母版-<五段版本>` | 母版 Magisk 模块（可直刷） |
+| `.github/workflows/build.yml` | `build` | `build` / `cleanup-artifacts` / `cleanup-releases` | `build-<五段版本>` | 母版 Magisk 模块（可直刷） |
 | `.github/workflows/selffont.yml` | `selffont` | `selffont` / `cleanup-artifacts` | `selffont-<五段版本>` | 自研字体模块（**冻结**，手动触发或 `[selffont]` 才跑） |
 | `.github/workflows/selfrounds.yml` | `selfrounds` | `selfrounds` / `cleanup-artifacts` | `selfrounds-<SHA8>` | Selfrounds 字体文件本身 |
 | `.github/workflows/hotswap.yml` | `hotswap` | `hotswap` / `cleanup-artifacts` | `hotswap-<SHA8>` | LSPosed 热切换模块（`sumicya.selffont.hotswap`） |
 
 `log-<run_id>` 是失败时的诊断件，四条都可能出，不算交付物，也不占四类前缀。
 
-四条工作流各有自己的并发组（`selffont-<文件名>`、`cancel-in-progress: false`），互不排队；`build` 约 2 分钟，`selfrounds` 约 96 秒（预览子集），`selffont` 全量约 53 分钟且默认不跑。`cleanup-artifacts`（`if: always()`）各自收尾，`cleanup-releases` 只在 `build.yml`，跟着每一次 build 跑（不分分支）。artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷；`Selffont-母版-*` 与其余三条一律留 5 天（Actions 产物总量上限 5 个，30 天纯占额度），`overwrite: true` 让重试不撞名。
+四条工作流各有自己的并发组（`selffont-<文件名>`、`cancel-in-progress: false`），互不排队；`build` 约 2 分钟，`selfrounds` 约 96 秒（预览子集），`selffont` 全量约 53 分钟且默认不跑。`cleanup-artifacts`（`if: always()`）各自收尾，`cleanup-releases` 只在 `build.yml`，跟着每一次 build 跑（不分分支）。artifact 包内根目录就是 `module.prop`，网页下载下来可直接刷；`build-*` 与其余三条一律留 5 天（Actions 产物总量上限 5 个，30 天纯占额度），`overwrite: true` 让重试不撞名。
 
 清理统一由 `.github/scripts/cleanup.py` 执行，按 `CLEANUP_SCOPE` 分两种互不混权的任务；四条工作流顶层的 `CLEANUP_APPLY: "true"` 保持一致。
 
@@ -212,7 +212,7 @@ CI 有四条工作流，**一条工作流一个名字、一类产物**，不许�
 # 下载最近一次 build.yml 运行里的母版模块（build-*）；包内根目录直接是 module.prop，可直接刷
 RUN=$(gh api 'repos/Sumicya/Selffont/actions/workflows/build.yml/runs?per_page=20' --jq '.workflow_runs[0].id')
 set -- $(gh api "repos/Sumicya/Selffont/actions/runs/$RUN/artifacts" \
-  --jq '.artifacts[] | select(.name | startswith("Selffont-母版-")) | "\(.id) \(.name)"' | head -1)
+  --jq '.artifacts[] | select(.name | startswith("build-")) | "\(.id) \(.name)"' | head -1)
 curl -fL -H "Authorization: token $(gh auth token)" -o "$2.zip" \
   "https://api.github.com/repos/Sumicya/Selffont/actions/artifacts/$1/zip"
 ls -l "$2.zip" && unzip -p "$2.zip" module.prop

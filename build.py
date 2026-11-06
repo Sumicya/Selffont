@@ -2216,19 +2216,14 @@ def supplemental_font_reference():
 # selfrounds 出字体本身、hotswap 出热切换——**四条工作流，四条名字，四类前缀，不许混在一条里**。
 # `log-` 是失败时的诊断件，不是交付物，四条都可能出。
 #
-# 2026-11-06 改母版产物名：`build-<版本>` → `Selffont-母版-<版本>`。前缀必须是项目名 `Selffont`，
-# 后缀只许 `<版本>` / `<档位>-<版本>` / `<SHA8>` / `sha256-<SHA8>` 四种。母版走「档位-版本」这一种。
-# 另外三条仍用旧前缀：同样的后缀集里没有「档位-SHA8」这一档，硬套会让 selfrounds 与 hotswap 撞名，
-# 所以它们先保持原样，改法等主人给后缀集补一档。
+# 母版产物名按主人口径走 `build-<版本>`（2026-11-06 曾改成 `Selffont-母版-<版本>`，已按主人要求改回）。
 ARTIFACT_OWNER = {
-    "Selffont-母版-": {"build.yml"},
+    "build-": {"build.yml"},
     "selffont-": {"selffont.yml"},
     "selfrounds-": {"selfrounds.yml"},
     "log-": {"build.yml", "selffont.yml", "selfrounds.yml", "hotswap.yml"},
     "hotswap-": {"hotswap.yml"},
 }
-PRODUCT_PREFIX = "Selffont-"
-PRODUCT_SUFFIX = re.compile(r"^(母版|自研|热切换|Selfrounds)-\$\{\{|^[0-9a-f]{8}\$\{\{|^sha256-")
 
 
 @check
@@ -2338,12 +2333,11 @@ def workflow_format():
                     f"{path.name}/{job_name}: 产物 {label!r} 只属于 {sorted(owner)}，不该在这里出"
                 prefixes.add(prefix)
             if prefixes:
-                # 一个 job 只许出一类产物：旧写法是「必须有一件以 job 名命名」，改名成 Selffont-母版- 之后
-                # 这条判据失效（job 还叫 build），改成「这个 job 的非诊断产物前缀只许一个」。
+                # 一个 job 只许出一类产物：非诊断产物前缀只许一个（`log-` 是诊断件，不计）。
                 products = prefixes - {"log-"}
                 assert len(products) <= 1, \
                     f"{path.name}/{job_name}: 一个 job 出了 {sorted(products)} 多类产物，一类都不许多"
-        # 工作流名必须等于自己的产物名（`build-` 那条例外已随改名消失：产物前缀现在是项目名）。
+        # 工作流名必须等于自己的产物名（`build`↔`build-` 正是这一条）。
         if stem in {p.rstrip("-") for p in ARTIFACT_OWNER}:
             assert path.name in ARTIFACT_OWNER[f"{stem}-"], \
                 f"{path.name}: 前缀 {stem}- 归 {sorted(ARTIFACT_OWNER[f'{stem}-'])}，不含本文件"
@@ -2352,18 +2346,15 @@ def workflow_format():
             assert owned, f"{path.name}: 这件工作流一件属于自己的产物都没有（{sorted(ARTIFACT_OWNER)}）"
             assert len(owned) == 1, f"{path.name}: 它名下有 {owned} 多个前缀，一条工作流只许一类产物"
 
-        # 8b. 母版产物的名字规则（2026-11-06）：前缀必须是项目名 Selffont，后缀只许
-        # <版本> / <档位>-<版本> / <SHA8> / sha256-<SHA8>；母版是「档位-版本」，档位固定写「母版」。
+        # 8b. 母版产物的名字与保留期（按主人口径）：名字是 `build-<版本>`，保留期 5 天。
         if stem == "build":
             for step in (data.get("jobs") or {}).get("build", {}).get("steps", []):
                 if "upload-artifact" not in str(step.get("uses", "")):
                     continue
                 with_ = step.get("with") or {}
                 label = str(with_.get("name", ""))
-                assert label.startswith(PRODUCT_PREFIX), \
-                    f"{path.name}: 产物名 {label!r} 前缀不是项目名 {PRODUCT_PREFIX!r}"
-                assert label == f"Selffont-母版-${{{{ env.VERSION }}}}", \
-                    f"{path.name}: 母版产物名必须是 Selffont-母版-<版本>，收到 {label!r}"
+                assert label == f"build-${{{{ env.VERSION }}}}", \
+                    f"{path.name}: 母版产物名必须是 build-<版本>，收到 {label!r}"
                 assert str(with_.get("retention-days")) == "5", \
                     f"{path.name}: 母版产物 retention-days 必须是 5（30 天太占，Actions 产物总量上限 5 个）"
 

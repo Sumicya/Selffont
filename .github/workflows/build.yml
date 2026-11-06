@@ -190,7 +190,7 @@ jobs:
       - name: 上传母版模块
         uses: actions/upload-artifact@v7
         with:
-          name: Selffont-母版-${{ env.VERSION }}
+          name: build-${{ env.VERSION }}
           path: build/root
           retention-days: 5
           if-no-files-found: error
