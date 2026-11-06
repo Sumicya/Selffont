@@ -79,19 +79,30 @@ def repo_id() -> int:
 
 
 def workflow_file_exists(path: str) -> bool:
-    """这条运行所属的工作流，yml 还在不在默认分支上。
+    """这条运行所属的工作流，yml 还在不在**本次运行的提交**上；取不到再看默认分支。
 
     2026-11-06 的现场：main 上只剩 `.github/workflows/build.yml`，另外六个工作流文件早就删了，
     但 `/actions/workflows` 仍把它们列成 7 个、运行记录仍挂在名下——历史不会自己消失。
-    文件没了的工作流只剩历史，留着它等于让「已删除」这件事在 Actions 页面里显示成没发生。
+
+    只看默认分支会误杀：`selfrounds.yml`／`hotswap.yml`／`selffont.yml` 只活在会话分支上，
+    在 main 上查不到，于是**正在跑的那条也被别的 job 的清理当成「只剩历史」删掉**（实测
+    `42136626218` 直接 404、`42136626046` 被标 cancelled）。所以先按本次运行的 `GITHUB_SHA`
+    查：文件在，就是活着的工作流，按常规保留 5 条；两个 ref 都查不到，才算真的只剩历史。
     """
-    result = subprocess.run(["gh", "api", f"repos/{REPO}/contents/{path}", "--jq", ".sha"],
-                            capture_output=True, text=True)
-    if result.returncode == 0:
-        return True
-    if "HTTP 404" in result.stderr or "Not Found" in result.stderr:
-        return False
-    sys.exit(f"读取 {path} 失败（gh 退出码 {result.returncode}）：{result.stderr.strip()}")
+    refs = []
+    sha = (os.environ.get("GITHUB_SHA") or "").strip()
+    if sha:
+        refs.append(sha)
+    refs.append(None)                     # 默认分支兜底
+    for ref in refs:
+        endpoint = f"repos/{REPO}/contents/{path}" + (f"?ref={ref}" if ref else "")
+        result = subprocess.run(["gh", "api", endpoint, "--jq", ".sha"],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            return True
+        if "HTTP 404" not in result.stderr and "Not Found" not in result.stderr:
+            sys.exit(f"读取 {endpoint} 失败（gh 退出码 {result.returncode}）：{result.stderr.strip()}")
+    return False
 
 
 def run_time(row: dict) -> str:
