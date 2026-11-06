@@ -1787,6 +1787,14 @@ def ci_version_numbering():
     assert artifact_anchor(f"{PROJECT}-{today}.2.700", today) == 699
     assert artifact_anchor(f"{PROJECT}-26.10.27", today) is None
     assert artifact_anchor(f"build-{today}.1.320", today) is None, "母版序列不许进自版号源"
+    # 每条工作流只认自己那一类产物：母版读 `build-`，自版读 `selffont-`，两边互不串号。
+    assert artifact_anchor(f"build-{today}.1.320", today, "build-") == 320
+    assert artifact_anchor(f"{PROJECT}-{today}.1.320", today, "build-") is None
+    assert ci_version_numbers([], [art(f"build-{today}.1.320", 1)], 324, now, "build-") \
+        == (today, 5, 324, 320)
+    # 母版那条：5 条当日运行顶到保留上限、但有 `build-` 产物锚点，照常算（不撞 AnchorUnavailable）。
+    capped_build = [run(number, f"2026-10-27T0{number % 10}:10:00+00:00") for number in (320, 321, 322, 323, 324)]
+    assert ci_version_numbers(capped_build, [art(f"build-{today}.1.320", 2)], 324, now, "build-")[1] == 5
 
 
 # ---------------------------------------------------------------- 火狐（Gecko）接入

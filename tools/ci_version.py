@@ -19,6 +19,16 @@ from datetime import date, datetime, timedelta, timezone
 CLOCK = timezone(timedelta(hours=8))   # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
 PROJECT = "selffont"                   # 产物名的项目段：<项目名>-<版本>
 
+# 每条工作流只认**自己**那一类产物当前导锚点。全仓四类产物同名同段，混着读会把两条号源搅在一起：
+# build.yml 出的是 `build-*`，2026-11-06 之前这里写死 `selffont-`，于是母版那条永远找不到锚点——
+# 当日运行攒到 5 条（保留上限）就撞 AnchorUnavailable，母版不再出包。这是实测踩出来的，不是推演。
+ARTIFACT_PREFIX = {
+    "build.yml": "build-",
+    "selffont.yml": "selffont-",
+    "selfrounds.yml": "selfrounds-",
+    "hotswap.yml": "hotswap-",
+}
+
 
 def check_number(value: str, label: str, minimum: int = 0) -> str:
     if not value.isdigit() or int(value) < minimum:
@@ -69,16 +79,15 @@ class AnchorUnavailable(RuntimeError):
     """
 
 
-def artifact_anchor(name: str, date: str) -> int | None:
+def artifact_anchor(name: str, date: str, prefix: str = f"{PROJECT}-") -> int | None:
     """产物名 `selffont-yy.m.d.d0.r0` 反推当日首条运行号 `r0 - d0 + 1`；口径不合返回 None。
 
-    前缀必须是 `PROJECT-`：全仓四类产物（`build-` 母版、`selffont-` 自版、`selfrounds-` 字体、
-    `hotswap-` 热切换）。`build-26.11.6.1.320` 也是五段，不卡前缀就会被当成当日首个产物，
-    把两条号源搅在一起——名字各指各的东西，取号才不会被别的序列带偏。
+    前缀由调用方按工作流给（`ARTIFACT_PREFIX`），默认 `selffont-`。全仓四类产物各是各的序列：
+    `build-26.11.6.1.320` 也是五段，不卡前缀就会被当成当日首个产物，把两条号源搅在一起。
     """
-    if not name.startswith(f"{PROJECT}-"):
+    if not name.startswith(prefix):
         return None
-    version = name.split("-", 1)[1]
+    version = name[len(prefix):]
     parts = version.split(".")
     if len(parts) != 5 or ".".join(parts[:3]) != date:
         return None
@@ -90,7 +99,7 @@ def artifact_anchor(name: str, date: str) -> int | None:
 
 
 def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
-                       now: datetime) -> tuple[str, int, int, int]:
+                       now: datetime, prefix: str = f"{PROJECT}-") -> tuple[str, int, int, int]:
     """差值锚定法取号：返回 (日期, 当日序号, 总序号, 当日首条运行号 R_first)。
 
     总序号取 `run_number` 原值（同一 run 重试时 GitHub 不换 run_number，版本号自然不变）。
@@ -126,7 +135,7 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
     anchors = list(today_runs)
     artifact_anchors = []
     for row in artifacts:
-        anchor = artifact_anchor(row.get("name", ""), date)
+        anchor = artifact_anchor(row.get("name", ""), date, prefix)
         if anchor is not None:
             artifact_anchors.append(anchor)
     anchors.extend(artifact_anchors)
@@ -176,8 +185,9 @@ def query_ci_version() -> tuple[str, str, str]:
         runs = [row for row in gh_json(f"repos/{repo}/actions/runs?per_page=100", "workflow_runs")
                 if str(row.get("path", "")).endswith(path_suffix)]
     artifacts = gh_json(f"repos/{repo}/actions/artifacts?per_page=100", "artifacts")
+    prefix = ARTIFACT_PREFIX.get(workflow, f"{PROJECT}-")
     try:
-        date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now)
+        date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now, prefix)
     except AnchorUnavailable as error:
         sys.exit(f"[取号失败] {error}")
     print(f"[取号] head={os.environ.get('GITHUB_SHA', '未提供')} "
