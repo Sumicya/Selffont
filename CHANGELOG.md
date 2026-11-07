@@ -1,3 +1,25 @@
+## 2026-11-08（十六）· Skia 那条路默认关：Flutter（FlClash）界面没字的直接成因
+
+- 现场（代码原样，skia 主分支 `src/ports/`）：`SkFontMgr_android_parser.cpp` 第 32 行
+  `LMP_SYSTEM_FONTS_FILE "/system/etc/fonts.xml"`、第 780 行 `parse_config_file`；
+  `SkFontMgr_android.cpp` `find_family_style_character` 的判据只有一句
+  `if (face->unicharToGlyph(character) != 0) return face;` —— **有码位就命中**，
+  既不检查字形有没有轮廓，也不会因为这张字件排在前面就继续往下找设备自己的 Noto/OPPO。
+  安装脚本从 2026-10-28 起把主字体插到这份文件的默认链最前面；Flutter 走 SkiaFontMgr，
+  于是凡主字体 cmap 里有的字都由它画。缺字不再落设备链 → 界面大片无字；
+  `usWin`（1307/529）高于行框时 Skia 按行框裁字形框 → 大字号被切成一个个方块。
+- 改法：新增 `module/skia.sh`（`status|on|off|apply`），默认 `Selffont:skia=off`，
+  `customize.sh` 安装时只调一次 `skia.sh apply`，**默认不产出模块内的
+  `system/etc/fonts.xml`**；要试插写标记 `/data/adb/selffont-skia.state`，重启后
+  由 `customize.sh` 那次 apply 落地，撤掉同理。`action.sh` 的「操作」按钮加了
+  `skia` 动作（一次点击切 on/off 并打印状态）。
+- 自检：`runtime_scripts` 加四条断言——默认不许有 `system/etc/fonts.xml`、
+  安装输出必须含 `Selffont:skia=off`、`skia.sh on` 后照旧只插不换（原文件逐行为子序列、
+  插 4 处）、`skia.sh off` 必须删掉那份文件；`module_hotswap` 加一条：Skia 开关必须交给
+  `skia.sh`，`action.sh` 里不许出现 `mount`。`build.py --check` 16 项全过。
+- 未验证：真机（一加 / ColorOS 16 / Android 16）上 off→on 的可视差异这轮没测，只有代码路径；
+  FlClash 里的实际渲染要装包后看。
+
 ## 2026-11-07（十五）· 竖向定位：补上没修的那一半（水平早就修了，竖向一直没修）
 
 - 现场（现读，母版 `97e9dd4` 原字节）：25,909 个**满宽满高**汉字里，墨心 `(yMin+yMax)/2`

@@ -87,59 +87,13 @@ for partition in system system_ext product; do
     done
 done
 
-# Skia 那份（/system/etc/fonts.xml）**只插不换**：设备自己那份里有 OPPO Sans 等 OEM 字件，
-# 整份盖掉等于把它们删掉（真机反馈：天气小组件落到 OPPO Sans）。这里在设备那份的副本上
-# 做最小插入——默认链、sans-serif、中日韩语言族的最前面加我们的字件，其余行一个字节不动。
+# Skia 那份（/system/etc/fonts.xml）默认**不动**，开关在 skia.sh。
+# 理由与真机症状写在 skia.sh 头注：Skia 的逐字回退「有码位即命中」，插到默认链最前面会让
+# Flutter（FlClash 这类）界面大片没字；默认 off 时它用设备自己的链，一定有字。
+# 要试插：sh /data/adb/modules/MFGA/skia.sh on（重启生效），撤：... skia.sh off。
 insert="$MODPATH/fonts-insert.xml"
-skia="设备没有 /system/etc/fonts.xml：Flutter / WebView 不跟系统换字"
-if [ -f "$ROOT/system/etc/fonts.xml" ]; then
-    if [ -s "$insert" ]; then
-        mkdir -p "$MODPATH/system/etc"
-        awk -v rowsfile="$insert" '
-            function cjk(tag,   s, n, a, i, v) {
-                if (!match(tag, /lang="[^"]*"/)) return 0
-                s = substr(tag, RSTART + 6, RLENGTH - 7)
-                n = split(s, a, ",")
-                for (i = 1; i <= n; i++) {
-                    v = a[i]; sub(/-.*$/, "", v); gsub(/[ \t]/, "", v)
-                    if (tolower(v) == "zh" || tolower(v) == "ja" || tolower(v) == "ko") return 1
-                }
-                return 0
-            }
-            BEGIN {
-                while ((getline row < rowsfile) > 0) rows = rows row "\n"
-                close(rowsfile)
-            }
-            {
-                print
-                if (!opened && index($0, "<familyset") > 0) {
-                    print "    <family>"
-                    printf "%s", rows
-                    print "    </family>"
-                    opened = 1
-                    next
-                }
-                if ($0 ~ /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/) {
-                    if (index($0, "name=\"sans-serif\"") > 0 || cjk($0)) printf "%s", rows
-                }
-            }
-            ' "$ROOT/system/etc/fonts.xml" > "$MODPATH/system/etc/fonts.xml" 2>/dev/null
-        # 校验插进去了几条：拿插入行里的字件文件名去数（不写死 Selffont，
-        # 自检夹具用的就是别的名字）。grep -c 没命中会先打印 0 再返回 1，
-        # 写成 `|| echo 0` 会拿到两行的 "0\n0"，[ -gt 0 ] 直接报 Illegal number。
-        marker=$(sed -n 's|.*>\([^<]*\)</font>.*|\1|p' "$insert" | head -n 1)
-        touched=$(grep -c -F "$marker" "$MODPATH/system/etc/fonts.xml" 2>/dev/null || true)
-        [ -n "$touched" ] || touched=0
-        if [ "${touched:-0}" -gt 0 ]; then
-            skia="已插 $touched 处（默认链 / sans-serif / 中日韩语言族，OEM 字件原样保留）"
-        else
-            rm -f "$MODPATH/system/etc/fonts.xml"
-            skia="失败：设备 fonts.xml 插不进去，Flutter / WebView 不跟系统换字"
-            ui_print "!!! Selffont: Skia 配置没插进去。系统字体照换，但 Flutter / WebView / 部分"
-            ui_print "!!!   小组件走的是 /system/etc/fonts.xml，它们会继续用原字体。"
-        fi
-    fi
-fi
+skia=$(sh "$MODPATH/skia.sh" apply 2>&1)
+echo "$skia" | grep -q '未插' || ui_print "$skia"
 
 # 安装结果落盘：安装日志在管理器里一闪而过，真机上没人抢得到这几行。
 # 落到 /data/adb（不在模块里，卸载模块也还在），重启后 `cat` 就能回答「到底换了没、换了几处」。

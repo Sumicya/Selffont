@@ -1488,7 +1488,8 @@ def build_end_to_end():
         with zipfile.ZipFile(output) as archive:
             members = set(archive.namelist())
             for expected in ("module.prop", "LICENSES.md", "customize.sh",
-                             "firefox.sh", "web-fonts.sh", "action.sh", "hotswap.sh", "geckoview-config.yaml",
+                             "firefox.sh", "web-fonts.sh", "action.sh", "hotswap.sh", "skia.sh",
+                             "geckoview-config.yaml",
                              "font_fallback.xml", "fonts-insert.xml", "licenses/WenYuan-OFL.txt",
                              "system/fonts/NotoMusic-Regular.ttf", "licenses/NotoMusic-OFL.txt",
                              "system/fonts/P-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
@@ -1930,6 +1931,14 @@ def runtime_scripts():
                          "system/system_ext/etc/fonts_base.xml", "system/system_ext/etc/fonts_ule.xml"):
             target = modpath / relative
             assert target.read_text() == "<familyset modern/>", f"{relative} 应放新语法"
+        # 默认 off：模块里不许有 system/etc/fonts.xml——插进去会让 Flutter（Skia）界面大片没字，
+        # 详见 module/skia.sh 头注。开关 on/off 走 skia.sh，这里两条都验。
+        assert not (modpath / "system/etc/fonts.xml").exists(), \
+            "默认不许产出 Skia 配置：它会让 Flutter 界面没字（Selffont:skia=off）"
+        assert "Selffont:skia=off" in result.stdout, "安装时应报告 Skia 那条路是关的：" + result.stdout
+        env_on = dict(env, SELFFONT_SKIA_STATE=str(tmp / "skia.state"))
+        on = sh([str(modpath / "skia.sh"), "on"], env_on)
+        assert on.returncode == 0, on.stderr
         # Skia 只读 /system/etc/fonts.xml（SkFontMgr_android_parser.cpp 写死）；插入而不替换：
         # 原有每一行（含 OEM 字件、注释、自闭合族）逐字保留，只在我们该管的三类族里加行。
         skia = (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8")
@@ -1955,8 +1964,10 @@ def runtime_scripts():
                 f"{directory} 的 fonts.xml 不该被替换"
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 4 份字体配置" in result.stdout, "应报告替换数量：" + result.stdout
-        assert "Skia 配置 /system/etc/fonts.xml：已插 4 处" in result.stdout, \
-            "应报告 Skia 插入位置数：" + result.stdout
+        assert "Skia /system/etc/fonts.xml：已插 4 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
+        off = sh([str(modpath / "skia.sh"), "off"], env_on)
+        assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
+            "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"
 
         # 设备一份可替换配置都没有（Android 15 以下）→ 中止安装，不假装成功。
         for relative in ("system/etc/font_fallback.xml", "system/etc/font_fallback_cjkvf.xml",
@@ -2351,7 +2362,7 @@ def module_hotswap():
       1. `module/hotswap.sh` 里**不许出现任何发起挂载的语句**（要的是 `mount -t overlay`
          与 `mount --bind` 这两个字符串一个都不出现），只许用 `umount` 去摘残留；
       2. 四个子命令只剩 `status` 与 `panic`；`on`/`off`/`toggle`/`verify` 存在即判失败；
-      3. `action.sh` 的按钮只接 `status` 与 `panic`，没有「切换」「web」这些动作；
+      3. `action.sh` 的按钮只接 `status` / `skia` 开关与 `panic`，没有运行期挂载切换与 `web` 动作；
       4. 四条判死证据的原文都在脚本注释与 README 里（`Invalid argument`、
          `Read-only file system`、探针不出现、`install-debug-cert`）。
     """
@@ -2373,8 +2384,10 @@ def module_hotswap():
     action = (module / "action.sh").read_text(encoding="utf-8")
     for gone in ('"$MODDIR/hotswap.sh" toggle', "web)", "hotswap.sh\" on", "hotswap.sh\" off"):
         assert gone not in action, f"action.sh 还留着切换动作：{gone}"
-    assert "hotswap.sh\" status" in action or "hotswap.sh\" status" in action
+    assert "hotswap.sh\" status" in action
     assert "panic" in action and "本机不支持运行期换字体" in action
+    # Skia 开关是标记文件 + 重启落地，不是运行期挂载：它必须走 skia.sh，不许自己写挂载。
+    assert "skia.sh" in action and "mount" not in action, "action.sh 的 Skia 开关必须交给 skia.sh"
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for evidence in ("Invalid argument", "Read-only file system", "install-debug-cert"):
