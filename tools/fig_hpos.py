@@ -94,16 +94,73 @@ def draw_cell(img: Image.Image, d: ImageDraw.ImageDraw, path: Path, ch: str,
             d.text((x0 + 2, base + 10), label, font=lab_font, fill=MID)
 
 
+def distribution(path: Path) -> list[float]:
+    """全库满格字的 |dcx|（墨宽 ≥ 850、advance 1000 的汉字），直方图的口径。"""
+    out: list[float] = []
+    with TTFont(str(path), lazy=True) as f:
+        cmap, glyf = f.getBestCmap(), f["glyf"]
+        for cp, gname in cmap.items():
+            if not (0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF):
+                continue
+            g = glyf[gname]
+            if g.numberOfContours > 0 and g.xMax - g.xMin >= 850:
+                out.append(abs((g.xMin + g.xMax) / 2 - 500))
+    return out
+
+
+def draw_dist(master: Path, fixed: Path, out: Path) -> None:
+    a, b = distribution(master), distribution(fixed)
+    top = 60
+    bins = list(range(0, 65, 5))
+    ha = [sum(1 for v in a if lo <= v < lo + 5) for lo in bins]
+    hb = [sum(1 for v in b if lo <= v < lo + 5) for lo in bins]
+    W, H = 1660, 720
+    img = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(img)
+    f_t = ImageFont.truetype(str(master), 30)
+    f_s = ImageFont.truetype(str(master), 21)
+    f_x = ImageFont.truetype(str(master), 17)
+    d.text((60, 18), "母版定位：满格字 |墨心−500| 分布，修复前 / 修复后", font=f_t, fill=INK)
+    d.text((60, 56), f"{len(a):,} 个满格字（advance 1000、墨宽 ≥850）；纵轴=字数，横轴=|dcx| 单位（em/1000）",
+           font=f_s, fill=(110, 110, 110))
+    x0, y0, w, h = 110, H - 120, 1300, 430
+    peak = max(max(ha), max(hb)) or 1
+    d.line([x0, y0, x0 + w, y0], fill=GREY, width=2)
+    d.line([x0, y0, x0, y0 - h - 20], fill=GREY, width=2)
+    bw = w / len(bins)
+    for i, lo in enumerate(bins):
+        for val, colour, off in ((ha[i], (150, 150, 150), 0), (hb[i], (36, 104, 210), bw / 2)):
+            hh = (val / peak) * h
+            d.rectangle([x0 + i * bw + off, y0 - hh, x0 + i * bw + off + bw / 2 - 2, y0], fill=colour)
+        d.text((x0 + i * bw + 4, y0 + 8), f"{lo}", font=f_x, fill=(90, 90, 90))
+    d.text((x0 + w - 60, y0 + 30), "|dcx|", font=f_x, fill=(90, 90, 90))
+    for yy, val in ((y0 - h, peak), (y0 - h / 2, peak // 2), (y0, 0)):
+        d.text((x0 - 60, yy - 8), f"{val:,}", font=f_x, fill=(90, 90, 90))
+    for label, vals, colour, row in (("母版原样", ha, (150, 150, 150), 0),
+                                    ("只平移后", hb, (36, 104, 210), 1)):
+        m = sum(vals) or 1
+        over = sum(1 for v in (a if row == 0 else b) if v > 20)
+        d.rectangle([1010, 120 + row * 56, 1034, 144 + row * 56], fill=colour)
+        d.text((1044, 118 + row * 56),
+               f"{label}：|dcx|>20 共 {over:,} 字（{100*over/m:.2f}%）  最大 {max(a if row == 0 else b):.1f}",
+               font=f_s, fill=INK)
+    img.save(out)
+    print("写出", out, img.size)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="母版定位（墨心 vs 字格中线）修复前后对照图")
     ap.add_argument("--master", type=Path, required=True, help="母版原样")
     ap.add_argument("--fixed", type=Path, required=True, help="fix_hpos.py 输出的修复件")
     ap.add_argument("--chars", default="匕名爿㔾乁扁門國團日田回")
-    ap.add_argument("--mode", choices=("grid", "text", "overlay"), default="grid")
+    ap.add_argument("--mode", choices=("grid", "text", "overlay", "dist"), default="grid")
     ap.add_argument("--cell", type=int, default=190, help="每格像素边长（1 倍）")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
+    if args.mode == "dist":
+        draw_dist(args.master, args.fixed, args.out)
+        return
     chars = args.chars
     m_dcx = dcx_table(args.master, chars)
     x_dcx = dcx_table(args.fixed, chars)
@@ -145,7 +202,7 @@ def main() -> None:
                           label=f"dcx {v:+.0f}", lab_font=f_small)
             elif args.mode == "text":
                 path = args.master if ri == 0 else args.fixed
-                draw_cell(img, d, path, ch, x0, base, cell, INK)
+                draw_cell(img, d, path, ch, x0, base, cell, INK, show_guides=False)
             else:
                 draw_cell(img, d, args.fixed, ch, x0, base, cell, INK,
                           ghost=args.master,

@@ -36,8 +36,11 @@
 2. **`2026-11-07-mother-hpos-overlay.png`**（1676×540）——同一格里叠影：灰=母版原样，黑=修复后，
    格下写 `改前 → 改后`。一眼看出往哪边挪了、挪了多少。
 3. **`2026-11-07-mother-hpos-text.png`**（5332×704）——整段文字（含 `扁 個 則 侶 蹽 畸 窗 國`），
-   修复前后同字号，看的是整行观感而不是单字数字。
+   修复前后同字号、不画辅助线，看的是整行观感而不是单字数字。
 4. **`2026-11-07-mother-hpos-zoom.png`**（1940×1264）——`匕 乁 扁 平` 放大 2 倍，给细节。
+5. **`2026-11-07-mother-hpos-dist.png`**（1660×720）——全库 26,560 个满格字的 `|dcx|` 直方图，
+   灰=母版原样、蓝=只平移后；右边两行是总数与最大值。这是四张实字图之外唯一的全量视图：
+   前四张证明「改对了」，这张证明「改到哪儿为止」。
 
 `日`（U+65E5）在图上 `dcx +14` 且修复后没动，这是对的：母版给它右上角吊了一块 55×45 的残墨，
 `fix_hpos` 用去残墨的字面框量，所以判它没偏；按 glyf bbox 量才读出 +14.5。这张图不裁墨迹，
@@ -78,6 +81,7 @@ python tools/fig_hpos.py --master work/MarukoGothicCJKsc-Regular.ttf \
 python tools/fig_hpos.py … --mode overlay --chars "匕名爿㔾乁扁" --out …-overlay.png
 python tools/fig_hpos.py … --mode text --chars "春眠不觉晓…窗國" --out …-text.png
 python tools/fig_hpos.py … --mode grid --cell 460 --chars "匕乁扁平" --out …-zoom.png
+python tools/fig_hpos.py … --mode dist --out docs/evidence/2026-11-07-mother-hpos-dist.png
 ```
 
 `tools/fig_hpos.py` 是本轮新增的：上一张定位图（`2026-11-06-hpos-text.png`）只有 1 倍整段文字，
