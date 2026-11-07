@@ -1,4 +1,4 @@
-# 母版工作流：只出 build-<五段版本>（Maruko 原字节进 Magisk 模块，只做水平定位归位，不改轮廓）。
+# 母版工作流：只出 build-<五段版本>（Maruko 原字节进 Magisk 模块，只做水平/竖向定位归位，不改轮廓）。
 # 只上传 Actions artifact（5 天）：不发 Release、不打 tag、不建直链——发版是手工动作，流水线里没有这条路径。
 name: build
 
@@ -69,23 +69,26 @@ jobs:
             echo "母版字节与钉子不符：母版可能已换包，先核对再出包。" >&2
             exit 1
           }
-      - name: 修水平定位（只平移，不缩放、不改轮廓）
+      - name: 修水平与竖向定位（只平移，不缩放、不改轮廓）
         run: |
           set -euo pipefail
-          # 母版 27,559 个汉字全是 1000 宽的字格，但墨迹不都落在格子中间：满格字里 10.3%
-          # 的墨心偏离 500 超过 20 单位（=2% em），最远 ±54.5；且整体偏左。
-          # 只做一件事：整字沿 x 平移，让墨心落到 500。轮廓相对彼此一个点不动。
+          # 母版 27,559 个汉字全是 1000 宽的字格，但墨迹不都落在格子中间。
+          # 横向：满格字里 10.3% 的墨心偏离 500 超过 20 单位（=2% em），最远 ±54.5，整体偏左。
+          # 竖向：满宽满高字里 |墨心−设计中线 377.5|>20 的有 1,594 个，最远 47（幵 珥 羽 平 雨 研），
+          # 屏幕上就是「有的字浮高、有的下沉」。两步都只做一件事：整字平移，轮廓相对彼此一个点不动。
           # 输出保持原文件名：包内字件名与 fonts.xml 的引用都靠它。
-          mkdir -p build work/hpos
+          mkdir -p build work/hpos work/vpos
           python tools/fix_hpos.py "work/${MOTHER_NAME}" -o "work/hpos/${MOTHER_NAME}" \
             | tee build/hpos.md
+          python tools/fix_vpos.py "work/hpos/${MOTHER_NAME}" -o "work/vpos/${MOTHER_NAME}" \
+            | tee -a build/hpos.md
           cp build/hpos.md "$GITHUB_STEP_SUMMARY"
-      - name: 出包（母版 + 水平定位修正）
+      - name: 出包（母版 + 水平/竖向定位修正）
         run: |
           set -euo pipefail
           date=$(TZ=Asia/Shanghai date +%y.%-m.%-d)
           name="build-${MOTHER_REF}-${{ github.run_number }}"
-          python build.py --passthrough-mother "work/hpos/${MOTHER_NAME}" \
+          python build.py --passthrough-mother "work/vpos/${MOTHER_NAME}" \
             --date "$date" --day 1 --build "${{ github.run_number }}" --module-id selffont-bench \
             --output "build/${name}.zip"
           echo "NAME=${name}" >> "$GITHUB_ENV"
@@ -99,7 +102,7 @@ jobs:
           ver=$(sed -n 's/^version=//p' build/root/module.prop)
           echo "VERSION=${ver}" >> "$GITHUB_ENV"
           echo "产物名 build-${ver}"
-      - name: 验收（纯平移、字宽不变、墨心归位）
+      - name: 验收（纯平移、字宽不变、横竖墨心归位）
         run: |
           set -euo pipefail
           python - <<'PY' | tee build/verify.md
@@ -113,7 +116,7 @@ jobs:
               prop = z.read("module.prop").decode()
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
 
-          fixed_bytes = open("work/hpos/" + mother, "rb").read()
+          fixed_bytes = open("work/vpos/" + mother, "rb").read()
           assert packed == fixed_bytes, "包内字件不是修过定位的那一份"
 
           before = TTFont(os.path.join("work", mother))
@@ -131,12 +134,13 @@ jobs:
               b, a = gb[gname], ga[gname]
               if b.numberOfContours <= 0:
                   continue
-              dx = a.xMin - b.xMin
-              if dx:
+              dx = round(a.xMin - b.xMin)
+              dy = round(a.yMin - b.yMin)
+              if dx or dy:
                   moved += 1
                   deltas = {(round(ax - bx), round(ay - by))
                             for (bx, by), (ax, ay) in zip(b.coordinates, a.coordinates)}
-                  if deltas - {(dx, 0)}:
+                  if deltas - {(dx, dy)}:
                       bad_shift += 1
               if hb[gname][0] != ha[gname][0]:
                   bad_adv += 1
@@ -169,6 +173,25 @@ jobs:
           assert share(ca) >= 99.5, f"修完满格字 |dcx|≤20 只有 {share(ca):.2f}%"
           assert share(ca) > share(cb), "修完反而更偏"
 
+          def vcentres(font):
+              out = []
+              for cp, gname in font.getBestCmap().items():
+                  if not cjk(cp):
+                      continue
+                  g = font["glyf"][gname]
+                  if g.numberOfContours > 0 and g.xMax - g.xMin >= 850 and g.yMax - g.yMin >= 850:
+                      out.append((g.yMin + g.yMax) / 2)
+              return out
+
+          vb, va = vcentres(before), vcentres(after)
+          assert len(vb) == len(va), "满宽满高字数量变了"
+          mid = statistics.median(vb)
+          dvb = [abs(v - mid) for v in vb]
+          dva = [abs(v - mid) for v in va]
+          vshare = lambda v: 100 * sum(1 for x in v if x <= 20) / len(v)
+          assert vshare(dva) >= 99.0, f"修完满宽满高字 |dcy|≤20 只有 {vshare(dva):.2f}%"
+          assert vshare(dva) > vshare(dvb), "竖向修完反而更偏"
+
           fields = dict(l.split("=", 1) for l in prop.splitlines() if "=" in l)
           print("\n".join([
               "| 项 | 值 |", "| --- | --- |",
@@ -177,11 +200,14 @@ jobs:
               f"| 包大小 | {len(raw):,} B |",
               f"| 版本 | `{fields.get('version')}`（versionCode {fields.get('versionCode')}） |",
               f"| 汉字字件 | `{mother}` {len(packed):,} B（母版字节 → 只平移过的字节） |",
-              f"| 平移过的字 | {moved:,} 个，逐字位移处处相等（纯平移） |",
+              f"| 平移过的字 | {moved:,} 个，逐字 (dx,dy) 处处相等（纯平移） |",
               f"| advance / lsb | 全 1000 / lsb==xMin 0 例外 |",
               f"| 满格字墨心 \\|dcx\\|≤20 | {share(cb):.2f}% → **{share(ca):.2f}%** |",
               f"| 满格字墨心 中位 \\|dcx\\| | {statistics.median(map(abs, cb)):.1f} → **{statistics.median(map(abs, ca)):.1f}** |",
               f"| 满格字墨心 最大 \\|dcx\\| | {max(map(abs, cb)):.1f} → **{max(map(abs, ca)):.1f}** |",
+              f"| 满宽满高字 \\|dcy\\|≤20 | {vshare(dvb):.2f}% → **{vshare(dva):.2f}%** |",
+              f"| 满宽满高字 中位 \\|dcy\\| | {statistics.median(dvb):.1f} → **{statistics.median(dva):.1f}** |",
+              f"| 满宽满高字 最大 \\|dcy\\| | {max(dvb):.1f} → **{max(dva):.1f}** |",
               f"| 包内 /system/fonts 字件 | {len(fonts)} 个 |",
           ]))
           PY

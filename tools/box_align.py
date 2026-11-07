@@ -94,6 +94,15 @@ def apply(rings: dict[int, list[list[tuple[float, float]]]], codepoint: int):
     base = rings.get(400) if isinstance(rings, dict) else None
     if target is None or not base:
         return rings
+    # 母版的竖向偏差不能抄过去：表是未修正母版量的，这里套同一条竖向修正规则，
+    # 让自版字体落在「修完之后」应该落的位置（见 tools/fix_vpos.py 的 corrected_box）。
+    try:
+        import fix_vpos
+        centre = fix_vpos.table_centre()
+        if centre is not None:
+            target = fix_vpos.corrected_box(tuple(target), centre)
+    except Exception:
+        pass
     pts = [p for ring in base for p in ring]
     if not pts:
         return rings

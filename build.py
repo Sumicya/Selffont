@@ -943,11 +943,11 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             # 刷过基准件的机器再也装不回正规包，除非卸载。2026-11-01 那次 90 万序号就是这么来的。
             if module_id:
                 prop = re.sub(r"^id=.*$", lambda _m: f"id={module_id}", prop, flags=re.M)
-            prop = re.sub(r"^name=.*$", lambda _m: "name=Selffont 母版直通（水平定位修正）", prop, flags=re.M)
+            prop = re.sub(r"^name=.*$", lambda _m: "name=Selffont 母版直通（水平/竖向定位修正）", prop, flags=re.M)
             prop = re.sub(
                 r"^description=.*$",
                 lambda _m: ("description=母版直通包：汉字取自 %s（源 sha256 %s…），"
-                            "轮廓一个点没改，只把偏出字格中线的字整体平移归位；"
+                            "轮廓一个点没改，只把偏出字格中线（横向）与设计中线（竖向）的字整体平移归位；"
                             "拉丁与符号仍走文渊圆体；只做基准对照，不是发行件；"
                             f"模块 id 为 {module_id or '（同发行件）'}，与发行件分开，刷它不挡正规包更新。"
                             % (passthrough_name, digest)),
