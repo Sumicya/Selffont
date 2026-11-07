@@ -96,12 +96,17 @@ python tools/fig_hpos.py … --mode dist --out docs/evidence/2026-11-07-mother-h
 - 被动过的字逐点位移处处相等（纯平移），`advance` 全 1000，`lsb == xMin` 0 例外；
 - 满格字 `|dcx|≤20` 从 89.66% 抬到 99.57%（脚本内当场算，不达 99.5% 直接失败，不上传）。
 
-**现有可刷的包**：`build-26.11.6.1.334`（120,950,276 B，5 天，2026-11-11 08:37 +08 过期）
+**现有可刷的包（最新）**：`build-26.11.7.1.336`（120,950,278 B，5 天，2026-11-12 08:08 +08 过期）
 
-- 运行：https://github.com/Sumicya/Selffont/actions/runs/42137826847
+- 运行：https://github.com/Sumicya/Selffont/actions/runs/42315927510
 - 产物直链（登录 GitHub 后直接下载）：
-  https://github.com/Sumicya/Selffont/actions/runs/42137826847/artifacts/13465929132
-- 十二条步骤全绿，其中 `修水平定位` 与 `验收（纯平移、字宽不变、墨心归位）` 都是 success。
+  https://github.com/Sumicya/Selffont/actions/runs/42315927510/artifacts/13551190975
+- 十二步全绿，其中 `修水平定位（只平移，不缩放、不改轮廓）` 与
+  `验收（纯平移、字宽不变、墨心归位）` 都是 success。
+
+上一版同内容的包：`build-26.11.7.1.335`（120,950,276 B，运行 `42315292217`）、
+`build-26.11.6.1.334`（120,950,276 B，运行 `42137826847`），三份只差 `fig_hpos.py` 与文档，
+包内字件同源同流程。每仓只留 5 个 artifact，旧的到期自己消失。
 
 装法（手机）：下载 zip 不解压 → Magisk/KernelSU 里「从本地安装」选它 → 重启。
 它的模块 id 是 `selffont-bench`，与正式包分开，刷它不挡正式包更新。
