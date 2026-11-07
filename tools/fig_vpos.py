@@ -33,6 +33,7 @@ BLUE = (36, 104, 210)
 RED = (214, 40, 40)
 GREEN = (16, 140, 90)
 GHOST = (200, 200, 200)
+LABEL_FONT: Path | None = None
 
 
 def box_of(font: TTFont, cmap: dict, ch: str):
@@ -137,33 +138,62 @@ def draw_cell(d: ImageDraw.ImageDraw, img_font: ImageFont.FreeTypeFont, ch: str,
         d.text((x0 + 2, base + 8), label, font=lab_font, fill=MID)
 
 
-def draw_dist(before: Path, after: Path, out: Path) -> None:
-    def devs(path: Path):
-        vals = []
-        with TTFont(str(path), lazy=True) as f:
-            cmap, glyf = f.getBestCmap(), f["glyf"]
-            for cp, name in cmap.items():
-                if not (0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF):
-                    continue
-                g = glyf[name]
-                if g.numberOfContours <= 0:
-                    continue
-                if g.xMax - g.xMin >= 850 and g.yMax - g.yMin >= 850:
-                    vals.append((g.yMin + g.yMax) / 2)
-        c = statistics.median(vals)
-        return [abs(v - c) for v in vals], c
+def distribution(path: Path, boxes: dict | None = None, ref: Path | None = None) -> list[float]:
+    """满宽满高字的墨心 y 列表。
 
-    a, ca = devs(before)
-    b, cb = devs(after)
+    给了 `boxes`（母版字面框）就用字面框，并按 `ref` 求出本字体相对它的整体位移再加回去；
+    没给就退回 glyf bbox。口径必须与 `tools/fix_vpos.py` 一致，否则一张图上会自相矛盾。
+    """
+    boxes = boxes or {}
+    raw = []
+    base: dict[int, tuple[float, float]] = {}
+    if ref is not None and boxes:
+        with TTFont(str(ref), lazy=True) as rf:
+            rcmap, rg = rf.getBestCmap(), rf["glyf"]
+            for cp, name in rcmap.items():
+                if cp in boxes:
+                    g = rg[name]
+                    if g.numberOfContours > 0:
+                        base[cp] = ((g.yMin + g.yMax) / 2, g.xMax - g.xMin, g.yMax - g.yMin)
+    with TTFont(str(path), lazy=True) as f:
+        cmap, glyf = f.getBestCmap(), f["glyf"]
+        for cp, name in cmap.items():
+            if not (0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF):
+                continue
+            g = glyf[name]
+            if g.numberOfContours <= 0:
+                continue
+            box = boxes.get(cp)
+            if box is None:
+                x0, y0, x1, y1 = g.xMin, g.yMin, g.xMax, g.yMax
+            else:
+                dy = 0.0
+                if cp in base:
+                    dy = (g.yMin + g.yMax) / 2 - base[cp][0]
+                x0, x1 = box[0], box[2]
+                y0, y1 = box[1] + dy, box[3] + dy
+            if x1 - x0 >= 850 and y1 - y0 >= 850:
+                raw.append((y0 + y1) / 2)
+    return raw
+
+
+def draw_dist(before: Path, after: Path, out: Path, centre: float | None = None,
+              boxes: dict | None = None) -> None:
+    """两行共用同一个设计中线：各算各的中位数会让「修后」的尺子跟着漂，
+    看上去像修好了，其实是分母变了。"""
+    vb = distribution(before, boxes)
+    ca = statistics.median(vb) if centre is None else centre
+    a = [abs(v - ca) for v in vb]
+    b = [abs(v - ca) for v in distribution(after, boxes, ref=before)]
     bins = list(range(0, 55, 5))
     ha = [sum(1 for v in a if lo <= v < lo + 5) for lo in bins]
     hb = [sum(1 for v in b if lo <= v < lo + 5) for lo in bins]
     W, H = 1660, 720
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
-    f_t = ImageFont.truetype(str(before), 30)
-    f_s = ImageFont.truetype(str(before), 21)
-    f_x = ImageFont.truetype(str(before), 17)
+    f_t = ImageFont.truetype(str(LABEL_FONT or before), 30)
+    f_s = ImageFont.truetype(str(LABEL_FONT or before), 21)
+    f_x = ImageFont.truetype(str(LABEL_FONT or before), 17)
     d.text((60, 18), "母版竖向定位：满宽满高字 |墨心−设计中线| 分布，修复前 / 修复后", font=f_t, fill=INK)
     d.text((60, 58), f"{len(a):,} 个字（墨宽 ≥850、墨高 ≥850）；设计中线 "
                      f"{ca:.1f}；纵轴=字数，横轴=|dcy| 单位（em/1000）", font=f_s, fill=(110, 110, 110))
@@ -188,10 +218,11 @@ def draw_dist(before: Path, after: Path, out: Path) -> None:
                f"{label}：|dcy|>20 共 {over:,} 字（{100*over/len(raw):.2f}%）  最大 {max(raw):.1f}",
                font=f_s, fill=INK)
     img.save(out)
-    print("写出", out, img.size)
+    print("写出", out, img.size, f"|dcy|>20 {sum(1 for v in a if v>20)} → {sum(1 for v in b if v>20)}")
 
 
 def main() -> None:
+    global LABEL_FONT
     ap = argparse.ArgumentParser(description="母版竖向定位（墨心 vs 设计中线）修复前后对照图")
     ap.add_argument("--before", type=Path, required=True)
     ap.add_argument("--after", type=Path, required=True)
@@ -210,8 +241,10 @@ def main() -> None:
                     help="不用母版字面框表，直接量本字体 glyf 框（量自版字体时用）")
     args = ap.parse_args()
 
+    LABEL_FONT = args.label_font
     if args.mode == "dist":
-        draw_dist(args.before, args.after, args.out)
+        draw_dist(args.before, args.after, args.out, args.centre,
+                  {} if args.no_table else master_boxes())
         return
 
     chars, cell = args.chars, args.cell
