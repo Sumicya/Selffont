@@ -2054,6 +2054,69 @@ def runtime_scripts():
 # ---------------------------------------------------------------- 仓库自身的数据与常量
 
 @check
+def center_x():
+    """横向归中：默认关；打开后只平移、不缩放、不动字宽，且只碰满格字。
+
+    母版 10% 的满格字墨心偏中线 20~54 单位（`羽` −31、`扁` −54.5），按母版框对齐会把
+    偏差原样抄过来。`SELFFONT_CENTER=1` 时把它平移回 500。这里用三个字验死两件事：
+    默认态一个点都不许动；打开后所有点的 x 位移必须完全相等（「只平移」的证明）。
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import box_align
+    import cjk_vf
+    import design_cjk
+
+    glyphs = cjk_glyphs()
+    sample = [ord(ch) for ch in "羽扁日" if ord(ch) in glyphs]
+    assert len(sample) == 3, "抽样字不在字库里"
+    saved = box_align.CENTER_X
+    try:
+        rings = {}
+        for cp in sample:
+            data = glyphs[cp]
+            cjk_vf.settle_junction_widths(data)
+            rs, _flags = cjk_vf._glyph_rings_all(data, cp)
+            rings[cp] = cjk_vf.align_face_height(rs)
+
+        box_align.CENTER_X = False
+        off = {cp: box_align.apply_all(rings[cp], cp) for cp in sample}
+        for cp in sample:
+            assert off[cp] == box_align.apply(rings[cp], cp), "关闭时必须与旧行为逐点相同"
+
+        box_align.CENTER_X = True
+        on = {cp: box_align.apply_all(rings[cp], cp) for cp in sample}
+        moved = 0
+        for cp in sample:
+            before = [p for ring in off[cp][400] for p in ring]
+            after = [p for ring in on[cp][400] for p in ring]
+            shifts = {round(b[0] - a[0], 3) for a, b in zip(before, after)}
+            assert len(shifts) == 1, f"{chr(cp)} 各点 x 位移不一致（不是纯平移）：{len(shifts)} 种"
+            dx = shifts.pop()
+            assert all(b[1] == a[1] for a, b in zip(before, after)), f"{chr(cp)} y 被改动了"
+            width = max(p[0] for p in before) - min(p[0] for p in before)
+            if width >= box_align.CENTER_WIDE:
+                centre = (min(p[0] for p in after) + max(p[0] for p in after)) / 2
+                assert abs(centre - 500) <= 0.01, f"{chr(cp)} 归中后墨心 {centre} 不在 500"
+                assert abs(dx) > 0.4, f"{chr(cp)} 满格字却没被归中（dx={dx}）"
+                moved += 1
+        assert moved >= 2, "满格字样本没有被归中，判据等于没测"
+        # 字宽不受影响：汉字前进量恒为 1000（归中只动轮廓，不动 advance）。
+        assert cjk_vf.advance_of(sample[0], on[sample[0]]) == 1000, "归中改动了字宽"
+        # 两条边界：非满格字（窄部件）与「母版偏差超兜底线」都不许动。
+        box_align.CENTER_X = True
+        narrow = {400: [[(0.0, 0.0), (100.0, 10.0), (100.0, 0.0), (0.0, 0.0)]]}
+        assert box_align.center_x(narrow, -1, target=(0, 0, 100, 10)) == narrow, \
+            "窄字（非满格）被归中了"
+        wide_ring = {400: [[(0.0, 0.0), (1000.0, 0.0), (1000.0, 900.0), (0.0, 900.0)]]}
+        crazy = (0, 0, 1700, 900)        # 墨心 850，偏 350 > CENTER_MAX
+        assert box_align.center_x(wide_ring, -1, target=crazy) == wide_ring, \
+            "母版偏差超兜底线的字被归中了（表坏时会把字挪飞）"
+    finally:
+        box_align.CENTER_X = saved
+
+
+@check
 def garbage_scanner():
     """全机垃圾排查脚本：语法过、非 root 拒绝下结论、只读不删、--delete 只删该删的。
 

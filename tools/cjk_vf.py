@@ -749,7 +749,9 @@ def build_vf(glyphs: dict[int, dict], family: str = "Selfrounds CJK",
         # 重建出来的整块会漂，600 字里横/纵各约 100 字差 5 单位以上，`日` 上沿少 64 单位。
         # 对齐是仿射变换，三档共用同一组系数，点数与对应关系一个不动。
         if rings.get(WEIGHT_DEFAULT):
-            rings = box_align.apply(rings, codepoint)
+            # 先按母版字面框摆位；`SELFFONT_CENTER=1` 时再横向归中（满格字墨心对 500，
+            # 只平移不缩放、不动 advance）。默认关：归中之后不再与母版逐字重合。
+            rings = box_align.apply_all(rings, codepoint)
         # 非全角字形（拉丁、数字、标点）的侧距按边缘形状给，并把轮廓平移到该侧距上。
         # 汉字不动：它自带全角框，墨迹位置属于字面的一部分（2026-10-28 主人定）。
         if not any(low <= codepoint <= high for low, high in FULL_WIDTH) and rings.get(WEIGHT_DEFAULT):

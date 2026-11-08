@@ -95,7 +95,10 @@ def measure(codepoints: list[int]) -> dict:
             continue
         before = box_of(rings)
         rings = cjk_vf.align_face_height(rings)
-        rings = box_align.apply(rings, cp)
+        # 「满格」按母版字面框的宽度判，与 box_align.center_x 同一口径（本版轮廓在 apply 里
+        # 会被限幅缩一两个百分点，拿缩完的宽度判会把 `伯` 那种 847 宽的窄格字误算成满格）。
+        faced = box_of(rings)
+        rings = box_align.apply_all(rings, cp)
         after = box_of(rings)
         target = targets.get(cp)
         if target is not None and centre is not None:
@@ -106,7 +109,7 @@ def measure(codepoints: list[int]) -> dict:
             "before": before, "after": after, "target": target,
             "advance": advance,
             "outside": cjk_vf._outside_frame(rings),
-            "width": before[2] - before[0] if before else 0,
+            "width": (target[2] - target[0]) if target else (faced[2] - faced[0] if faced else 0),
         })
     return {"rows": rows, "targets": len(targets), "centre": centre,
             "glyphs": len(glyphs)}
@@ -141,6 +144,7 @@ def report(data: dict) -> dict:
         if r["target"]:
             dmaster.append((r["target"][0] + r["target"][2]) / 2 - EM / 2)
     out["horizontal"] = {
+        "center_x": bool(box_align.CENTER_X),
         "wide": len(wide),
         "dcx": percentiles(dcx),
         "dcx_before": percentiles(dcx_before),
@@ -211,11 +215,17 @@ def verdict(r: dict) -> list[str]:
         if h["within_1"] >= 0.999:
             lines.append(f"横向 OK：满格字 {h['wide']} 个，对齐后 |墨心−500| ≤ 1 的占 "
                          f"{h['within_1'] * 100:.1f}%，p95 {h['dcx']['p95']}")
+        elif h["center_x"]:
+            ok = False
+            worst = h["over_20"][:5]
+            lines.append(f"横向 归中已开但没归干净：|墨心−500| ≤ 1 只有 {h['within_1'] * 100:.1f}%"
+                         f"（{worst}）")
         else:
             inherited = len(h["over_20_master"])
             lines.append(f"横向 跟随母版：|墨心−500| ≤ 1 占 {h['within_1'] * 100:.1f}%，"
                          f"最远 {h['dcx']['min']}/{h['dcx']['max']}；母版同名字面框本来就歪 "
-                         f"{inherited}/{h['wide']} 个（> {TOL}），这是**继承不是漂移**")
+                         f"{inherited}/{h['wide']} 个（> {TOL}），这是**继承不是漂移**；"
+                         f"要归中设 SELFFONT_CENTER=1")
     v = r["vertical"]
     if v["n"]:
         worst = v["edges"]["top"]["p95"], v["edges"]["bottom"]["p95"]
@@ -272,7 +282,8 @@ def main() -> int:
     print(f"字库 {r['glyphs']} 字｜字面框表 {r['targets']} 字｜设计中线 {r['centre']}"
           f"｜样本 {r['sample']}")
     h = r["horizontal"]
-    print(f"\n== 1. 横向定位（满格字 {h['wide']} 个，对齐后）")
+    print(f"\n== 1. 横向定位（满格字 {h['wide']} 个，对齐后；"
+          f"归中开关 {'开' if h['center_x'] else '关'}）")
     if h["wide"]:
         d, dm = h["dcx"], h["dcx_master"]
         b = h["dcx_before"]

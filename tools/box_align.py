@@ -38,6 +38,20 @@ from pathlib import Path
 TABLE = Path(__file__).resolve().parent / "master_box.bin"
 SCALE_CLAMP = 0.02
 SCALE_SKIP = 0.04
+# 横向归中（2026-11-08）：母版自己 10% 的满格字墨心偏中线 20~54 单位，本版按母版框对齐时
+# 会把这个偏差原样抄过来。打开这个开关，满格字墨心平移到中线（只平移，不缩放、不动 advance）。
+# 默认关：开了就不再与母版逐字重合，那是改设计，要主人点头。用 `python -c ...` 或环境变量
+# `SELFFONT_CENTER=1` 打开（构建期读环境变量，见 apply_all）。
+def _env_flag(name: str) -> bool:
+    import os
+    return os.environ.get(name, "").strip().lower() in ("1", "on", "true", "yes")
+
+
+CENTER_X = _env_flag("SELFFONT_CENTER")
+# 只做「防表坏」的兜底：全库满格字最远 54.5（U+6241 扁），超过 120 的只可能是表本身错了，
+# 那一类不归中。不要拿它当「偏差太大就不修」的阈值——那会把最该修的字排除掉。
+CENTER_MAX = 120
+CENTER_WIDE = 850        # 「满格字」的墨宽下限，与 fix_hpos.py 同口径
 _cache = None
 
 
@@ -86,6 +100,43 @@ def factors(box, target, weight_only=False):
         return min(1.0 + SCALE_CLAMP, max(1.0 - SCALE_CLAMP, ratio))
 
     return one(w, mw), one(h, mh), ((mx0 + mx1) / 2.0, (my0 + my1) / 2.0)
+
+
+def center_x(rings, codepoint: int, target=None):
+    """把满格字横向墨心平移到中线（只平移）。默认关，见 CENTER_X。
+
+    判据：平移前后每个点的 x 位移完全相等（这是「只平移」的证明），advance 不参与。
+    母版偏差超过 CENTER_MAX 的字不归中——那些字多半是母版把不该算进字面的东西算进去了，
+    照它归中会把字挪歪。
+    """
+    if not CENTER_X:
+        return rings
+    box = load().get(codepoint) if target is None else target
+    base = rings.get(400)
+    if box is None or not base:
+        return rings
+    ink = [p for ring in base for p in ring]
+    if not ink:
+        return rings
+    # 「满格」按**母版字面框**判（和 fix_hpos.py 同一口径）：本版轮廓在 apply 里被限幅缩过
+    # 一两个百分点，拿缩完的宽度判会把 `伯` 那种 847 单位宽的窄格字也算成满格，两边判据打架。
+    if box[2] - box[0] < CENTER_WIDE:
+        return rings          # 不是满格字，侧距是母版逐个手调的，不归中
+    x0 = min(p[0] for p in ink)
+    x1 = max(p[0] for p in ink)
+    dx = 500.0 - (x0 + x1) / 2.0
+    if abs(dx) > CENTER_MAX:
+        return rings
+    if abs(dx) < 0.5:
+        return rings
+    return {weight: [[(round(x + dx, 3), y) for (x, y) in ring] for ring in glyph]
+            for weight, glyph in rings.items()}
+
+
+def apply_all(rings, codepoint: int):
+    """构建期入口：先按母版框摆位，再（若开关打开）横向归中。"""
+    rings = apply(rings, codepoint)
+    return center_x(rings, codepoint)
 
 
 def apply(rings: dict[int, list[list[tuple[float, float]]]], codepoint: int):
