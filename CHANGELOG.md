@@ -1,3 +1,66 @@
+## 2026-11-08（十八）· 卡第一屏的真相：不是崩溃，是阻塞 + 电源键强制重启
+
+- **现场（真机原样输出，2026-11-08）**：装 `selffont-bench`（母版直通件 `26.11.8.1.339`）后
+  卡在第一屏不动，主人长按电源键强制重启，反复几次之后进安全模式，手动 `touch disable`
+  才回到正常开机。此前两个会话都在「找崩溃日志」，七处全空，一直没结论。
+- **七处全空的实测值**（这一节的价值就在这张表：它证明方向从一开始就错了）：
+
+  | 查的地方 | 实测 | 说明 |
+  |---|---|---|
+  | `/sys/fs/pstore/console-ramoops-0` | 抓了 5 次，`grep panic\|BUG:\|watchdog` 0 命中 | 内核没 panic |
+  | `/sys/fs/pstore/pmsg-ramoops-0` | 全文只有 `wifi_switch:*`，末行 `shutdown` | 那是电源管理通道，不是崩溃通道 |
+  | `/data/adb/sf-crash/*/dmesg.old.log` | 无 `blocked for more than`、无 soft lockup | 脚本抓的是**本次开机前 8 秒** |
+  | `/data/adb/sf-crash/*/uptime.txt` | 五次全是 `8.x 5x.x` | 采集点在 post-fs-data，不是崩溃现场 |
+  | `/data/system/dropbox/system_server_crash@*` | 文件不存在 | 用户态没抛异常 |
+  | `/data/tombstones/` | 31 个，29 个 `com.android.launcher`、2 个 `com.roblox.client` | 见下 |
+  | `logcat -b all \| grep RescueParty` | 0 命中 | 没有崩溃循环判定记录 |
+
+- **tombstone 是假的线索**：所有帧都在
+  `/data/user_de/0/com.android.launcher/files/seedlingsdk_plugin/lib_so/libuleflutter.so`
+  里（帧 `#00`–`#21` 全是它，`#13 #16 #19` 重复同一对地址 = 递归），**没有一个字体帧**；
+  且 `keyProcess: 0`——RescueParty 只盯 persistent 进程，这个崩溃不触发安全模式。
+  那是 OPPO 桌面插件自己的 bug，与本模块无关。
+- **真相在 `getprop ro.boot.bootreason`**：`2sec_reboot`。AOSP
+  `system/core/bootstat/bootstat.cpp` 的映射表原样：
+  `*2sec_reboot* )  var="cold,rtc,2sec" ;;`，atom `{"2sec_reboot", 83} // aliasReasons to cold,rtc,2sec`。
+  这是**电源键触发的 RTC 两秒重启**，即主人长按强制重启。`persist.sys.bootreason`
+  = `reboot,2sec_reboot`、`sys.boot.reason` 空，三条互相吻合。
+- **因果链（定死）**：模块生效 → 开机到第一屏**进程阻塞**（不崩，所以 pstore / dropbox /
+  tombstone 全空）→ 主人长按电源键强制重启（`2sec_reboot`）→ 反复几次 → 系统判异常进安全模式。
+  「无限重启」是结果不是原因；原因是「卡在第一屏」。
+  **这也回溯解释了 2026-10-07 那次**（历史 CHANGELOG 第 720 行原文「pstore 无 panic / watchdog」）：
+  同一个机制，只是那次混族 3 处、这次混族 0 处，所以**混族不是这次的原因**。
+- **已排除的候选**（都拿真文件验过，不许再重查）：
+  ① 五份配置 XML 全部可解析（202 家族 / 494 条引用）；
+  ② 混族 0（与 `build.py:1346` 自检同一判据）；
+  ③ `sans-serif` 九档同指 `MarukoGothicCJKsc-Regular.ttf` 是**母版直通的预期形态**
+  （`build.py:2459` 断言静态母版只写 weight、不写 supportedAxes）；
+  ④ `sans-serif-condensed` 用 `Roboto-Regular.ttf` 加 `supportedAxes="wght,ital"` 是
+  **模板 `fonts.xml:124` 原文**，空壳只是继承，历史上没因此崩过；
+  ⑤ 备份五槽 md5 全同是真的（`88965560…`×5），但那是设备上 `sf-pstore.sh` 之外的脚本
+  写的，本仓库零命中——**不是本仓库的 bug**。
+- **改法：新增开机守卫 `module/post-fs-data.sh`**（此前模块目录只有 5 个 .sh，没有它）：
+  ① **自动停用**：连续 `SELFFONT_MAX_BOOT_FAIL`（默认 2）次开机没走到 `boot-completed`，
+  第 3 次开机自己打 `$MODDIR/disable`。从此卡住就是「自动跳过 + 可逆」，
+  **主人不必再手动进安全模式**；删掉那个文件、重启即可恢复。
+  ② **日志落盘**：后台按标签抓 `minikin / androidfw / FontManager / Typeface / RescueParty /
+  Zygote64 / ActivityManager / Watchdog` 到 `/data/adb/selffont/boot.log`，`timeout 180` 封顶，
+  体积上界 `SELFFONT_BOOT_LOG_BYTES`（默认 2 MiB）滚一份 `.1`。阻塞的证据只在 logcat，
+  而强制重启会抹掉内存缓冲——**已经开始写到磁盘的那部分能留下来**。
+- **新增 `module/service.sh`**：等到 `sys.boot_completed=1` 才把计数清零并记一行。
+  卡住时它自己也活不到那一刻，计数因此保留——这是分辨「上次卡住」与「上次正常」的唯一判据。
+  超时 `SELFFONT_BOOT_WAIT`（默认 120 秒）后退出且**不清零**。
+- **自检**：`runtime_scripts` 追加 8 条，做成**会红的**（不是必然通过）：
+  第 1、2 次开机不许停用；第 3 次必须停用；脏计数（写「坏值」）不许带崩脚本且要按 0 重来；
+  夹具 `getprop` 返回 1 时必须清零；返回 0 时计数必须保留；日志必须有体积上界；
+  停用判断必须排在抓日志之前（锚点用代码行 `: > "$MODDIR/disable"` 与 `${SELFFONT_NO_LOGCAT:-0}`，
+  不用注释里的字样）。**变异测试实测**：把 `if [ "$n" -gt "$MAX" ]` 改成 `if false`，
+  自检立刻红——`连续第 3 次开机没走到底却不停用：守卫是空的`。`build.py --check` 19 项全过。
+- **未验证**：真机上「第 3 次开机真的会打 disable」只有沙箱夹具证据；`logcat` 的
+  `-s` 标签在 ColorOS 上是否都被放行也未知（失败即静默退出，不会卡开机）。
+  卡在**哪一步**（minikin 解析 / 字件映射 / system_server 等字体服务）仍未定位，
+  要等下一次卡住后 `cat /data/adb/selffont/boot.log` 的原始输出。
+
 ## 2026-11-08（十七）· 两个自查工具：全机垃圾探针、定位探针
 
 - 现场：① 主人问「前会话在 Download 里搞的 ksubak / disablebak 那堆东西」，上一版手工脚本

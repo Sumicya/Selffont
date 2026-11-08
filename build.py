@@ -2050,6 +2050,69 @@ def runtime_scripts():
         assert result.returncode == 0 and "panic" in result.stdout and "删掉了" in result.stdout, result
         (modpath / "harness.sh").unlink()
 
+    # 开机守卫（2026-11-08 事故）：卡在**第一屏不动**、主人长按电源键强制重启
+    # （ro.boot.bootreason=2sec_reboot → AOSP bootstat.cpp 映射 cold,rtc,2sec）。
+    # 进程是阻塞不是崩溃，所以 pstore / dropbox / tombstone 全空，证据只剩 logcat。
+    # 这里验死三件真会致命的事：连续失败会自动停用、走到底会清零、日志有体积上界。
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        data = tmp / "data"
+        guard = ROOT / "module/post-fs-data.sh"
+        night = ROOT / "module/service.sh"
+        assert sh(["-n", str(guard)], os.environ).returncode == 0, "post-fs-data.sh 语法错误"
+        assert sh(["-n", str(night)], os.environ).returncode == 0, "service.sh 语法错误"
+        moddir = tmp / "module"
+        moddir.mkdir()
+        env = {**os.environ, "MODDIR": str(moddir), "SELFFONT_DATA": str(data),
+               "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "2"}
+
+        def boot():
+            return sh([str(guard)], env)
+
+        # 第 1、2 次：计数涨到阈值以内，不许停用。
+        for want in ("1", "2"):
+            assert boot().returncode == 0
+            assert (data / "boot-count").read_text().strip() == want
+            assert not (moddir / "disable").exists(), f"第 {want} 次就停用了（阈值是 2，太早）"
+        # 第 3 次：越过阈值，必须自己打 disable。这是「主人不必再进安全模式」的那一步。
+        assert boot().returncode == 0
+        assert (moddir / "disable").exists(), "连续第 3 次开机没走到底却不停用：守卫是空的"
+        # 计数不是从零硬编码：写一个脏值（非数字）不许把守卫带崩，也不许当成 0 之后立刻停用。
+        (data / "boot-count").write_text("坏值\n")
+        (moddir / "disable").unlink()
+        assert boot().returncode == 0 and (data / "boot-count").read_text().strip() == "1", \
+            "脏计数没有被当成 0 重来"
+
+        # 走到底 = service.sh 等到 sys.boot_completed=1 之后清零。
+        # getprop 用夹具顶替：真机上那是系统属性，沙箱里没有。
+        (data / "boot-count").write_text("2\n")
+        fake_bin = tmp / "bin"
+        fake_bin.mkdir()
+        (fake_bin / "getprop").write_text("#!/bin/sh\necho 1\n", encoding="utf-8")
+        (fake_bin / "getprop").chmod(0o755)
+        done = sh([str(night)], {**env, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+                                 "SELFFONT_BOOT_WAIT": "3"})
+        assert done.returncode == 0, done
+        assert not (data / "boot-count").exists(), "开机走到底了却没清零：下次会把好机器停用"
+        # 没等到 boot_completed（模拟卡住）：计数必须保留，那是「上次没走到底」的唯一记录。
+        (data / "boot-count").write_text("1\n")
+        (fake_bin / "getprop").write_text("#!/bin/sh\necho 0\n", encoding="utf-8")
+        stuck = sh([str(night)], {**env, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+                                  "SELFFONT_BOOT_WAIT": "1"})
+        assert stuck.returncode == 0, stuck
+        assert (data / "boot-count").read_text().strip() == "1", "卡住时计数被清掉了"
+
+        # 日志上界：不封顶的话卡死循环里每次开机都写，能把 /data 写满。
+        assert "SELFFONT_BOOT_LOG_BYTES" in guard.read_text(encoding="utf-8"), \
+            "开机日志没有体积上界"
+        # 停用之后不许再抓日志（模块已不生效，抓了也没人看，只会继续占空间）。
+        # 用**代码行**的锚点，不用注释里的字样：文件头那条 `SELFFONT_NO_LOGCAT=1`
+        # 是给主人看的说明，拿它比顺序会拿注释和代码比，比出来的结论没有意义。
+        guard_src = guard.read_text(encoding="utf-8")
+        disable_at = guard_src.index(': > "$MODDIR/disable"')
+        logcat_at = guard_src.index('${SELFFONT_NO_LOGCAT:-0}')
+        assert disable_at < logcat_at, "停用判断必须排在抓日志之前"
+
 
 # ---------------------------------------------------------------- 仓库自身的数据与常量
 

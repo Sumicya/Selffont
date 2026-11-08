@@ -142,6 +142,29 @@ emoji：Gecko 在 Android 上认的彩色字体是 `SamsungColorEmoji` / `Noto C
 3. emoji：拿一个较新的 emoji 看是否彩色；想看包内覆盖上限，用 fontTools 查 cmap（没有随包报告——查 cmap 是一行的事）。
 4. 复原：卸载 = KSU 删模块 + 重启，一切回到系统自带字体。
 
+### 卡在第一屏 / 进安全模式（2026-11-08 事故根因）
+
+症状是**卡住不动，不是崩溃**——所以 `pstore`、`dropbox`、`tombstone` 里一条证据都没有，
+`getprop ro.boot.bootreason` 会读到 `2sec_reboot`（AOSP `bootstat.cpp` 映射为
+`cold,rtc,2sec`，即**长按电源键强制重启**）。别再去翻崩溃日志，那里永远是空的。
+
+模块自带开机守卫，**连续 3 次开机没走到 `boot-completed` 就自己打 `disable`**，
+所以不需要再手动进安全模式。恢复只需两步：
+
+```sh
+su -c 'rm -f /data/adb/modules/*selffont*/disable; echo 已恢复，重启生效'
+```
+
+要看清是哪一步卡住，直接读守卫攒下的日志（这是唯一的证据来源）：
+
+```sh
+su -c 'ls -l /data/adb/selffont/; echo "== 守卫 =="; cat /data/adb/selffont/guard.log; echo "== 开机日志尾部 =="; tail -60 /data/adb/selffont/boot.log'
+```
+
+`guard.log` 每次开机一行；`boot.log` 抓的是
+`minikin / androidfw / FontManager / Typeface / RescueParty / Zygote64 / ActivityManager / Watchdog`
+八个标签，开机后 180 秒停止，超过 2 MiB 自动滚一份 `.1`。
+
 ## 构建
 
 整个构建链是一个 Python 文件，自检内建其中：
