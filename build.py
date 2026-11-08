@@ -2244,6 +2244,36 @@ def runtime_scripts():
         assert "selffont-should-appear" in out, f"该列的没列：{out[-500:]}"
         assert "selffont-should-not-appear" not in out, "进了 /data/data：真机就是在这卡死的"
         assert "selffont-alsono" not in out, "进了 /data/misc"
+
+        # ★ 真机第三版：/storage/emulated/0 与 /cache 底下没有 data/misc/system 这些子目录，
+        #   prune 变空串，拼出 `\( \(  \) -prune \)`，find 报
+        #   `invalid expression; empty parentheses are not allowed`，被 2>/dev/null 吞掉，
+        #   这两根**永远输出空**，看着像「没有垃圾」。
+        #   真机证据：⑫ 在 /storage/emulated/0 下是空的，⑬ 却列出同一位置 23 MB 的 selffont 目录。
+        #   夹具：造一个**没有**那些子目录的根，里面的 selffont 必须在 ⑫ 段被列出来。
+        flat = tmp / "flat"
+        (flat / "sd/Download/selffont").mkdir(parents=True)
+        (flat / "sd/Download/selffont/pkg.zip").write_text("x")
+        flat_sh = tmp / "clean-flat.sh"
+        flat_text = clean.read_text(encoding="utf-8")
+        flat_text = flat_text.replace("for root in /data /storage/emulated/0 /cache",
+                                      f"for root in {flat}/sd")
+        flat_text = flat_text.replace("/data/local/tmp", str(flat / "tmp"))
+        flat_text = flat_text.replace("/storage/emulated/0", str(flat / "sd"))
+        flat_text = flat_text.replace("/cache", str(flat / "nocache"))
+        flat_text = flat_text.replace("/data/adb", str(flat / "data/adb"))
+        flat_text = flat_text.replace('[ "$(id -u)" = "0" ] ||', "true ||")
+        flat_sh.write_text(flat_text, encoding="utf-8")
+        flat_run = sh([str(flat_sh)], os.environ)
+        # ★ 断言只切 ⑫ 那一段。第一版断言整份输出里有没有 "Download/selffont"，
+        #   结果被 ⑬「占地排行」满足（⑬ 同样列出那个目录），变异版照样全绿。
+        #   「断言被别处的输出满足」是最常见的假通过写法，先把范围切出来再断言。
+        flat_out = flat_run.stdout
+        flat_12 = flat_out.split("⑫ 全盘按名字找")[-1].split("⑬ 占地最多")[0] \
+            if "⑫ 全盘按名字找" in flat_out else ""
+        assert "Download/selffont" in flat_12, \
+            f"空剪枝让这一根彻底失效（真机就是这样漏掉 /storage/emulated/0）：{flat_12[-400:]}"
+        assert "invalid expression" not in flat_out + flat_run.stderr
         assert "没有**查的地方" in clean_text or "没有" in clean_text, "没交代哪些地方没查"
 
         # ③ 未知参数不许当成默认跑。

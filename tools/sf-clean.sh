@@ -280,22 +280,25 @@ for root in /data /storage/emulated/0 /cache; do
         prune="$prune -path $p -o"
     done
     prune="${prune% -o}"
-    # 超时只在真的超时（exit 124）时提示；否则「一个都没命中」会被误报成超时。
+    # ★ 2026-11-08 真机第三版的错：/storage/emulated/0 与 /cache 底下没有那些子目录，
+    #   prune 变成空串，拼出 `\( \(  \) -prune \)`，find 报
+    #   `invalid expression; empty parentheses are not allowed`，被 2>/dev/null 吞掉，
+    #   这两根**永远输出空**，看着像「没有垃圾」。
+    #   真机证据：⑫ 在 /storage/emulated/0 下是空的，⑬ 却列出同一位置 23 MB 的 selffont 目录。
+    if [ -n "$prune" ]; then
+        FIND_SPEC="\( \( $prune \) -prune \) -o \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) -print"
+    else
+        FIND_SPEC="\( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) -print"
+    fi
     if command -v timeout >/dev/null 2>&1; then
-        out=$(timeout 45 find "$root" -maxdepth 5 \
-            \( \( $prune \) -prune \) -o \
-            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) -print \
-            2>/dev/null)
+        out=$(eval "timeout 45 find \"$root\" -maxdepth 5 $FIND_SPEC" 2>/dev/null)
         rc=$?
         if [ "$rc" = "124" ]; then
             echo '     （超过 45 秒，已跳过这一根——这里的结论不完整）'
         fi
         printf '%s\n' "$out"
     else
-        find "$root" -maxdepth 5 \
-            \( \( $prune \) -prune \) -o \
-            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) -print \
-            2>/dev/null
+        eval "find \"$root\" -maxdepth 5 $FIND_SPEC" 2>/dev/null
     fi | grep -v '^[[:space:]]*$' | while IFS= read -r f; do
         case "$f" in
             */modules/selffont-bench) printf '  [用] %s  ← 正在装的模块本体（不删）\n' "$f" ;;
