@@ -2066,6 +2066,11 @@ def garbage_scanner():
     assert sh(["-n", str(script)], os.environ).returncode == 0, "check_garbage.sh 语法错误"
     body = script.read_text()
     assert "id -u" in body and "exit 3" in body, "非 root 必须直接退出，不许继续打印（无）"
+    device = ROOT / "tools/probe_device.sh"
+    assert device.is_file(), "缺 tools/probe_device.sh（真机探针）"
+    assert sh(["-n", str(device)], os.environ).returncode == 0, "probe_device.sh 语法错误"
+    dbody = device.read_text()
+    assert "id -u" in dbody and "不算数" in dbody, "真机探针必须自己标注非 root 的结论不可信"
     assert '--delete' in body, "必须保留 --delete 开关"
 
     with tempfile.TemporaryDirectory() as tmp:
