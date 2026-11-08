@@ -59,6 +59,28 @@ fi
 # 时间戳用 +0800（本机主人所在时区）；date 不可用时给个占位，不许因此中断。
 now() { date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻; }
 
+# ---- ⓪ 同一次开机只算一次 ----
+# 本脚本有**两条**触发路径：① 打包进模块时由 KernelSU 自己 source；
+# ② 手工放在 /data/adb/post-fs-data.d/ 时由 init 直接执行。两条同时在，
+# 每开一次机计数会涨 2 —— 阈值是 2，于是**每次开机都正常**也会在第 2 次自己打 disable。
+# 判据用 /proc/stat 的 btime（本次开机的时间戳，每次开机唯一）。
+# **不能用 uptime**：两次开机都可能在第 3 秒跑到 post-fs-data，uptime 一样，
+# 第二次就会被误判成「同一次开机」而不计数——恰恰在反复卡机的场景下把守卫废掉。
+# 判不出来（没有 btime）时一律**照常计数**：宁可重复算，也不许去重把守卫吞掉。
+# $SELFFONT_BOOT_ID 只给夹具用，用来在同一台机器上模拟不同的开机。
+STAMP="$DATA/pfd-seen"
+boot_id=${SELFFONT_BOOT_ID:-$(awk '/^btime/{print $2; exit}' /proc/stat 2>/dev/null)}
+case "$boot_id" in ''|*[!0-9]*) boot_id='' ;; esac
+if [ -n "$boot_id" ]; then
+    last=$(cat "$STAMP" 2>/dev/null)
+    if [ "$last" = "$boot_id" ]; then
+        printf '%s 本次开机已计过数（boot_id=%s），跳过——模块内与 post-fs-data.d 两份同时在\n' \
+            "$(now)" "$boot_id" >> "$GUARD_LOG" 2>/dev/null
+        exit 0
+    fi
+    echo "$boot_id" > "$STAMP" 2>/dev/null
+fi
+
 # ---- ① 开机计数 ----
 # 先写计数再干别的：万一本脚本自己后面卡住，这次开机也已经算进去了。
 n=$(cat "$COUNT" 2>/dev/null)

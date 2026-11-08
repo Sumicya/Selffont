@@ -2066,8 +2066,13 @@ def runtime_scripts():
         env = {**os.environ, "MODDIR": str(moddir), "SELFFONT_DATA": str(data),
                "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "2"}
 
+        # 每一「次开机」给一个不同的 btime，模拟真的重启。不给的话会全部被去重判成
+        # 同一次开机——这正是第一版拿 uptime 当判据时的错法。
+        boot_seq = {"n": 0}
+
         def boot():
-            return sh([str(guard)], env)
+            boot_seq["n"] += 1
+            return sh([str(guard)], dict(env, SELFFONT_BOOT_ID=str(300000 + boot_seq["n"])))
 
         # ★ 2026-11-08 真机第五次输出：post-fs-data.d/sf-guard.sh 与 /data/adb/selffont
         #   目录时间戳都是 17:12，目录里却**一个账都没有**——脚本被 init source 进去之后
@@ -2095,6 +2100,32 @@ def runtime_scripts():
         assert "selffont-bench" in log0, "没从模块目录自己认出 MODDIR"
         assert (mods / "selffont-bench/disable").exists(), \
             "认出了 MODDIR 却没停用：自动跳过失效，主人还是要手动进安全模式"
+
+        # ★ 守卫有两条触发路径：打包进模块（KernelSU 自己 source）+ 手工放进
+        #   /data/adb/post-fs-data.d/（init 直接执行）。两条同时在，一次开机计数涨 2，
+        #   阈值 2 就会让**每次正常开机**都在第 2 次自己打 disable。
+        #   这里在同一秒内跑两次，计数必须只涨 1；日志里要写明「本次不重复计数」。
+        dup = tmp / "dup"
+        (dup / "d").mkdir(parents=True)
+        (dup / "m").mkdir(parents=True)
+        ed = {k: v for k, v in os.environ.items() if k != "MODDIR"}
+        ed.update({"SELFFONT_DATA": str(dup / "d"), "SELFFONT_MODULES": str(dup / "m"),
+                   "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "99",
+                   "SELFFONT_BOOT_ID": "100000"})
+        sh([str(guard)], ed)
+        sh([str(guard)], ed)
+        cnt = (dup / "d" / "boot-count").read_text().strip()
+        assert cnt == "1", f"同一次开机被算了 {cnt} 次：两份脚本同时在时每开机计数涨 2，好机器也会被停用"
+        assert "本次开机已计过数" in (dup / "d" / "guard.log").read_text(encoding="utf-8"), \
+            "去重生效了却没在日志里写明：下次又一个看不懂的空账"
+        # ★ 反过来的一半更要命：**下一次开机必须照常计数**。
+        #   第一版拿 /proc/uptime 的秒数当判据，两次开机都可能在第 3 秒跑到这里，
+        #   uptime 一样 → 第二次被当成「同一次开机」跳过计数，
+        #   恰恰在「反复卡机」那个场景下把守卫废掉。改用每次开机唯一的 btime。
+        ed2 = dict(ed, SELFFONT_BOOT_ID="200000")
+        sh([str(guard)], ed2)
+        assert (dup / "d" / "boot-count").read_text().strip() == "2", \
+            "下一次开机没计数：去重把两次不同的开机当成一次了（uptime 判据就犯这个错）"
 
         # 第 1、2 次：计数涨到阈值以内，不许停用。
         for want in ("1", "2"):
