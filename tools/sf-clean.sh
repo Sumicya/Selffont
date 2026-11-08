@@ -39,7 +39,16 @@ NDEL=0
 NKEEP=0
 
 when() { stat -c '%y' "$1" 2>/dev/null | cut -c1-16; }
-kb()   { s=$(stat -c '%s' "$1" 2>/dev/null || echo 0); echo $(( (s + 1023) / 1024 )); }
+# 文件用 stat 的字节数；目录用 du（stat 对目录只报元数据大小，会把 22 MB 的目录显示成 4 KB，
+# 2026-11-08 真机第一版就是这样把 /data/adb/sf-crash 报成 4 KB 的）。
+kb() {
+    if [ -d "$1" ]; then
+        du -sk "$1" 2>/dev/null | awk '{print $1}' || echo 0
+    else
+        s=$(stat -c '%s' "$1" 2>/dev/null || echo 0)
+        echo $(( (s + 1023) / 1024 ))
+    fi
+}
 
 # row <可删 yes|no> <原因> <路径…>  —— 每个路径一行；可删且 --delete 时删
 row() {
@@ -248,6 +257,57 @@ mt=/proc/1/mounts
 n=$(grep -ci 'selffont\|MFGA' "$mt" 2>/dev/null || true)
 printf '   相关挂载 %s 条（正常 1~2 条；多了就是残留）\n' "${n:-0}"
 grep -i 'selffont\|MFGA' "$mt" 2>/dev/null | sed 's/^/   /'
+
+# ---------------------------------------------------------------- ⑫ 全盘按名字找
+head1 '⑫ 全盘按名字找（selffont / Selfrounds / MFGA / Maruko），不限 /data/adb'
+# 只查前十一节漏掉的根；不查 /proc /sys /dev（虚拟文件系统，查了没意义还会卡）。
+# 每个根 timeout 封顶，防止某个目录挂死拖住整趟。
+SCANNED=''
+for root in /data /storage/emulated/0 /cache; do
+    [ -d "$root" ] || continue
+    SCANNED="$SCANNED $root"
+    echo "  ── $root"
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 60 find "$root" -maxdepth 8 \
+            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) \
+            2>/dev/null
+    else
+        find "$root" -maxdepth 8 \
+            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) \
+            2>/dev/null
+    fi | while IFS= read -r f; do
+        case "$f" in
+            */modules/selffont-bench) printf '  [用] %s  ← 正在装的模块本体（不删）\n' "$f" ;;
+            *) printf '  [看] %6s KB  %s  %s\n' "$(kb "$f")" "$(when "$f")" "$f" ;;
+        esac
+    done
+done
+echo '  ※ 这一节只列不删：名字带这些字的东西，可能正是你要刷的包、要留的证据。'
+
+# ---------------------------------------------------------------- ⑬ 大文件排行
+head1 '⑬ 占地最多的文件（Download 与临时目录，前 15）'
+for d in /storage/emulated/0/Download /data/local/tmp; do
+    [ -d "$d" ] || continue
+    echo "  ── $d"
+    # du -sk 输出「KB<TAB>路径」；用 tab 切，路径里的空格不会把字段切歪
+    du -sk "$d"/* 2>/dev/null | sort -rn | head -15 | while IFS="$(printf '\t')" read -r k path; do
+        [ -n "$path" ] || continue
+        [ -d "$path" ] && what='目录' || what='文件'
+        printf '  %9s MB  %s  %s\n' "$(awk -v k="$k" 'BEGIN{printf "%.1f", k/1024}')" "$what" "$path"
+    done
+done
+
+# ---------------------------------------------------------------- ⑭ 没查的地方（如实报）
+head1 '⑭ 这趟**没有**查的地方（宁可说清，不许假装扫了全机）'
+cat <<'COVER'
+  · /proc /sys /dev          —— 虚拟文件系统，没有真实占用
+  · /data/data/*             —— 应用私有目录，逐个查要 root 遍历几十万个文件，
+                                而且删了会破坏应用数据。要单独查哪一个，告诉我名字
+  · /data/misc /data/system  —— 系统数据库与 dropbox/tombstone，属于系统证据，不是垃圾
+  · /system /vendor /product —— 只读分区，写不进去也就没有垃圾
+  · 回收站 / 云盘            —— 不在本机文件系统里
+COVER
+echo "  本次实际扫过的根：${SCANNED:-（无）}"
 
 # ---------------------------------------------------------------- 汇总
 hit=$(wc -l < "$FOUND" | tr -d ' ')

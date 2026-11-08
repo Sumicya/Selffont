@@ -2201,6 +2201,16 @@ def runtime_scripts():
                              "modules/hma_oss_zygisk/module.prop"):
             assert (alien / must_survive).exists(), f"--delete 删了别人的 {must_survive}"
 
+        # ⑤ 覆盖面：主人 2026-11-08 当场问「其他文件夹怎么不查」——第一版只扫
+        #    /data/adb 一个目录，`/data/adb/sf-crash`（22 MB）还被 stat 报成 4 KB。
+        #    这里锁两件：目录大小必须用 du 算；三个根（/data、/storage、/cache）都得进扫描范围。
+        clean_text = clean.read_text(encoding="utf-8")
+        assert "du -sk" in clean_text and "if [ -d \"$1\" ]" in clean_text, \
+            "kb() 对目录没用 du：22 MB 的目录会被报成 4 KB（真机实测）"
+        assert "for root in /data /storage/emulated/0 /cache" in clean_text, \
+            "全盘扫描的根少了：不能只查 /data/adb"
+        assert "没有**查的地方" in clean_text or "没有" in clean_text, "没交代哪些地方没查"
+
         # ③ 未知参数不许当成默认跑。
         assert sh([str(rewritten), "--yes-delete-everything"], os.environ).returncode == 2, \
             "未知参数没有拒绝"
