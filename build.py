@@ -2201,6 +2201,30 @@ def runtime_scripts():
                              "modules/hma_oss_zygisk/module.prop"):
             assert (alien / must_survive).exists(), f"--delete 删了别人的 {must_survive}"
 
+        # ★ 开机守卫 sf-guard.sh / sf-night.sh 必须**永不删**：它们是「卡在第一屏」
+        #   定因的唯一工具（连续 3 次没走到底自动停用 + logcat 落盘）。
+        #   第一版把它们列成可删，一跑 --delete 就把定因能力删了。
+        keepboot = root / "keepboot"
+        (keepboot / "adb/post-fs-data.d").mkdir(parents=True)
+        (keepboot / "adb/service.d").mkdir(parents=True)
+        (keepboot / "adb/post-fs-data.d/sf-guard.sh").write_text("x")
+        (keepboot / "adb/service.d/sf-night.sh").write_text("x")
+        (keepboot / "adb/post-fs-data.d/sf-pstore.sh").write_text("x")
+        kb_sh = tmp / "clean-keepboot.sh"
+        kb_text = clean.read_text(encoding="utf-8")
+        kb_text = kb_text.replace("/data/local/tmp", str(keepboot / "tmp"))
+        kb_text = kb_text.replace("/storage/emulated/0", str(keepboot / "sd"))
+        kb_text = kb_text.replace("/data/adb", str(keepboot / "adb"))
+        kb_text = kb_text.replace('[ "$(id -u)" = "0" ] ||', "true ||")
+        kb_sh.write_text(kb_text, encoding="utf-8")
+        assert sh([str(kb_sh), "--delete"], os.environ).returncode == 0
+        assert (keepboot / "adb/post-fs-data.d/sf-guard.sh").exists(), \
+            "--delete 删了开机守卫 sf-guard.sh：崩溃定因能力没了"
+        assert (keepboot / "adb/service.d/sf-night.sh").exists(), \
+            "--delete 删了守夜 sf-night.sh：计数永远不清零，好机器也会被停用"
+        assert not (keepboot / "adb/post-fs-data.d/sf-pstore.sh").exists(), \
+            "旧收集脚本 sf-pstore.sh 该删没删"
+
         # ⑤ 覆盖面：主人 2026-11-08 当场问「其他文件夹怎么不查」——第一版只扫
         #    /data/adb 一个目录，`/data/adb/sf-crash`（22 MB）还被 stat 报成 4 KB。
         #    这里锁两件：目录大小必须用 du 算；三个根（/data、/storage、/cache）都得进扫描范围。

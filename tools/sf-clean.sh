@@ -244,8 +244,14 @@ head1 '⑩ 开机脚本（本模块的列为可删；别人的只列不动）'
 for f in /data/adb/post-fs-data.d/* /data/adb/service.d/* /data/adb/boot-completed.d/*; do
     [ -f "$f" ] || continue
     case "${f##*/}" in
-        sf-guard.sh|sf-night.sh|sf-pstore.sh|sf-ok.sh)
-            row yes '本模块/前会话留下的开机脚本' "$f" ;;
+        # ★ 守卫与守夜**永远保留**：它们正是「卡在第一屏」定因的唯一工具
+        #   （连续 3 次没走到底自动停用 + 把 logcat 写盘）。第一版把它们列成可删，
+        #   一跑 --delete 就把定因能力删掉了。
+        sf-guard.sh|sf-night.sh)
+            printf '  [留] %s  ← 开机守卫/守夜，定因要靠它，不删\n' "$f"
+            NKEEP=$((NKEEP+1)) ;;
+        sf-pstore.sh|sf-ok.sh)
+            row yes '旧版收集脚本：抓的时机不对，留着只会继续堆 sf-crash' "$f" ;;
         *) printf '  [留] %s  ← 别人的脚本，不动\n' "$f" ; NKEEP=$((NKEEP+1)) ;;
     esac
 done
