@@ -2300,6 +2300,61 @@ def runtime_scripts():
         assert "invalid expression" not in flat_out + flat_run.stderr
         assert "没有**查的地方" in clean_text or "没有" in clean_text, "没交代哪些地方没查"
 
+        # ★ 崩溃定因工具（tools/sf-why.sh）：主人 2026-11-08「还有崩溃定因」。
+        #   它自己的失效方式很阴：读不到的目录被 2>/dev/null 闷掉，整份报告一片空白，
+        #   看着像「查了，没发现问题」——这正是本轮全机清理做废过的那个坑。
+        #   这里锁三件：①非 root 必须拒绝下结论；②一块证据都没有时必须判「判不出来」
+        #   并逐条列出缺哪块；③造真证据时必须判出具体那一块。
+        why = ROOT / "tools/sf-why.sh"
+        assert sh(["-n", str(why)], os.environ).returncode == 0, "sf-why.sh 语法错误"
+        # 只看代码行：文件头那句「刻意不用 2>/dev/null」是解释，拿它比会误判。
+        why_code = [ln for ln in why.read_text(encoding="utf-8").splitlines()
+                    if not ln.lstrip().startswith("#")]
+        assert not any("2>/dev/null" in ln for ln in why_code), \
+            "sf-why.sh 里出现 2>/dev/null：读不到会被闷成空白，等于假装查过"
+
+        empty = tmp / "why-empty"
+        (empty / "sys/fs/pstore").mkdir(parents=True)
+
+        def run_why(rootdir, *args):
+            env = dict(os.environ, SELFFONT_ROOT=str(rootdir), SELFFONT_FAKE_ROOT="1")
+            return sh([str(why), *args], env)
+
+        # ① 非 root：不许给结论（真机上 pstore/dropbox/tombstone 都读不到）。
+        env_nr = dict(os.environ, SELFFONT_ROOT=str(empty))
+        nr = sh([str(why)], env_nr)
+        assert nr.returncode == 2, "非 root 也照常下结论：非 root 的「没证据」不算数"
+        assert "不是 root" in nr.stdout
+
+        # ② 全空：必须说「判不出来」，且把读不到的块一条条列出来。
+        e = run_why(empty)
+        assert e.stdout.count("判不出来") >= 1, f"全空却没有判「判不出来」：{e.stdout[-400:]}"
+        for must_report in ("/data/system/dropbox", "/data/tombstones", "boot.log"):
+            assert must_report in e.stdout.split("没查成")[-1], \
+                f"没查成的地方漏报 {must_report}：{e.stdout.split('没查成')[-1][:300]}"
+
+        # ③ 造真证据：dropbox 的 `_crash@时间戳`、tombstone 的 keyProcess、
+        #    守卫计数、disable 标记——四样都要认出来。
+        full = tmp / "why-full"
+        for sub in ("sys/fs/pstore", "data/system/dropbox", "data/tombstones",
+                    "data/adb/selffont", "data/adb/modules/selffont-bench"):
+            (full / sub).mkdir(parents=True)
+        (full / "sys/fs/pstore/console-ramoops-0").write_text("panic\n")
+        # 真机的名字就是 `_crash@<毫秒>`，第一版只认 `_crash_` 会全漏。
+        (full / "data/system/dropbox/system_server_crash@1789000000000.txt").write_text(
+            "Process: com.android.systemui\n")
+        (full / "data/tombstones/tombstone_01").write_text(
+            "pid: 99, tid: 99, name: system_server  >>> system_server <<<\nkeyProcess: 1\n")
+        (full / "data/adb/selffont/boot-count").write_text("3\n")
+        (full / "data/adb/selffont/guard.log").write_text("第 3 次开机开始（阈值 2）\n")
+        (full / "data/adb/modules/selffont-bench/disable").write_text("")
+        f = run_why(full)
+        assert "system_server_crash@1789000000000.txt" in f.stdout, \
+            "dropbox 的 `_crash@<时间戳>` 没认出来（只认 `_crash_` 会全漏）"
+        assert "keyProcess=1" in f.stdout, "tombstone 的 keyProcess 没列"
+        assert "带 disable 标记" in f.stdout, "模块被停用这件事没报出来"
+        assert "判不出来" not in f.stdout, f"明明有证据还判不出来：{f.stdout[-400:]}"
+
         # ③ 未知参数不许当成默认跑。
         assert sh([str(rewritten), "--yes-delete-everything"], os.environ).returncode == 2, \
             "未知参数没有拒绝"
