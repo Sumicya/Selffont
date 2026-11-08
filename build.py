@@ -2106,6 +2106,71 @@ def runtime_scripts():
         assert "SELFFONT_BOOT_LOG_BYTES" in guard.read_text(encoding="utf-8"), \
             "开机日志没有体积上界"
         # 停用之后不许再抓日志（模块已不生效，抓了也没人看，只会继续占空间）。
+        # 全机清理工具（tools/sf-clean.sh）：主人 2026-11-08 原话「你们 ai 做的事总要别人
+        # 擦屁股，所以我向你要全机清理命令」。这里锁死三件真会出事的行为——
+        # ①默认只读；②`--delete` 也必须留住真标记 disable；③别人的开机脚本一个字节不动。
+        clean = ROOT / "tools/sf-clean.sh"
+        assert sh(["-n", str(clean)], os.environ).returncode == 0, "sf-clean.sh 语法错误"
+        root = tmp / "clean"
+        for sub in ("adb/modules/selffont-bench", "adb/modules/other", "adb/sf-crash/20260101-000000",
+                    "adb/ksu/log", "adb/post-fs-data.d", "adb/boot-completed.d",
+                    "tmp", "dl"):
+            (root / sub).mkdir(parents=True, exist_ok=True)
+        (root / "adb/modules/selffont-bench/module.prop").write_text("id=selffont-bench\n")
+        (root / "adb/modules/selffont-bench/disable").write_text("")     # 真标记：必须留
+        (root / "adb/modules/selffont-bench/disablebak").write_text("")  # 假标记：可删
+        (root / "adb/modules/other/module.prop").write_text("id=other\n")
+        (root / "adb/sf-crash/20260101-000000/dmesg.old.log").write_text("x")
+        (root / "adb/ksu/log/x.log").write_text("x")
+        (root / "adb/post-fs-data.d/sf-guard.sh").write_text("x")        # 我们的：可删
+        (root / "adb/post-fs-data.d/someone.sh").write_text("x")         # 别人的：必须留
+        (root / "adb/boot-completed.d/hmaoss.sh").write_text("x")        # 别人的：必须留
+        (root / "tmp/MFGA-base.zip").write_text("x")
+        (root / "dl/selffont.zip").write_text("x")                       # 要刷的包：不自动删
+        rewritten = tmp / "clean.sh"
+        text = clean.read_text(encoding="utf-8")
+        for old, new in (("/data/adb", str(root / "adb")),
+                         ("/data/local/tmp", str(root / "tmp")),
+                         ("/storage/emulated/0/Download", str(root / "dl")),
+                         ('[ "$(id -u)" = "0" ] ||', "true ||")):
+            text = text.replace(old, new)
+        rewritten.write_text(text, encoding="utf-8")
+
+        # ① 默认只读：什么都不许没。
+        assert sh([str(rewritten)], os.environ).returncode == 0
+        assert (root / "adb/sf-crash").exists() and (root / "adb/ksu/log").exists(), \
+            "默认模式下就删了东西"
+        assert (root / "tmp/MFGA-base.zip").exists(), "默认模式下就删了东西"
+        # ② --delete：可删的清掉，真标记与别人的脚本必须还在。
+        assert sh([str(rewritten), "--delete"], os.environ).returncode == 0
+        assert not (root / "adb/sf-crash").exists(), "sf-crash 没删掉"
+        assert not (root / "tmp/MFGA-base.zip").exists(), "临时副本没删掉"
+        assert not (root / "adb/modules/selffont-bench/disablebak").exists(), "假标记没删掉"
+        # 真标记必须还在 —— 而且必须在第 ⑧ 段**真的走到过**之后还在。
+        # 这一段单跑一次：夹具里只放真标记／不放 `disablebak`，否则第 ⑥ 段的
+        # `*bak*` 扫描会先把假标记删掉，第 ⑧ 段就没进分支，断言等于没测。
+        solo = root / "solo"
+        (solo / "modules/selffont-bench").mkdir(parents=True)
+        (solo / "modules/selffont-bench/module.prop").write_text("id=selffont-bench\n")
+        (solo / "modules/selffont-bench/disable").write_text("")
+        solo_sh = tmp / "clean-solo.sh"
+        solo_text = clean.read_text(encoding="utf-8")
+        for a, b in (("/data/adb", str(solo)), ("/data/local/tmp", str(solo / "tmp")),
+                     ("/storage/emulated/0/Download", str(solo / "dl")),
+                     ('[ "$(id -u)" = "0" ] ||', "true ||")):
+            solo_text = solo_text.replace(a, b)
+        solo_sh.write_text(solo_text, encoding="utf-8")
+        assert sh([str(solo_sh), "--delete"], os.environ).returncode == 0
+        assert (solo / "modules/selffont-bench/disable").exists(), \
+            "删了真标记 disable：模块会复活，下次开机还可能卡在第一屏"
+        assert (root / "adb/post-fs-data.d/someone.sh").exists(), "删了别人的开机脚本"
+        assert (root / "adb/boot-completed.d/hmaoss.sh").exists(), "删了别人的开机脚本"
+        assert (root / "dl/selffont.zip").exists(), "把可能要刷的包删了"
+        assert (root / "adb/modules/selffont-bench/module.prop").exists(), "没加 --keep-module 就删了模块"
+        # ③ 未知参数不许当成默认跑。
+        assert sh([str(rewritten), "--yes-delete-everything"], os.environ).returncode == 2, \
+            "未知参数没有拒绝"
+
         # 用**代码行**的锚点，不用注释里的字样：文件头那条 `SELFFONT_NO_LOGCAT=1`
         # 是给主人看的说明，拿它比顺序会拿注释和代码比，比出来的结论没有意义。
         guard_src = guard.read_text(encoding="utf-8")
