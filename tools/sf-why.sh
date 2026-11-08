@@ -90,10 +90,20 @@ if [ -d "$R/data/system/dropbox" ]; then
         say '没有 *_crash* 条目 → 用户态没抛未捕获异常。'
         say "（该目录共 $(ls -1 "$R/data/system/dropbox" | wc -l) 个文件，确实读到了。）"
     else
+        # ★ 真机上 dropbox 里全是 xxxx_crash@<毫秒>.txt.gz。第一版拿 grep 去读 .gz，
+        #   读出空串，于是每一条都印「进程：」后面什么都没有——看着像查了，其实没读。
+        #   .gz 用 zcat/gzip -dc 解；解不开就明说打不开，不许印空白。
         printf '%s\n' "$lst" | while read -r x; do
             [ -n "$x" ] || continue
-            printf '  %s\n' "$x"
-            printf '      进程：%s\n' "$(grep -m1 -E '^Package:|^Process:' "$R/data/system/dropbox/$x")"
+            f="$R/data/system/dropbox/$x"
+            who=$(case "$x" in
+                      *.gz)
+                          if command -v zcat >/dev/null 2>&1; then zcat "$f" 2>&1
+                          elif command -v gzip >/dev/null 2>&1; then gzip -dc "$f" 2>&1
+                          else echo '(没有 zcat/gzip，读不了压缩包)' ; fi ;;
+                      *) cat "$f" 2>&1 ;;
+                  esac | grep -m1 -E '^Package:|^Process:|^Subject:' )
+            printf '  %s\n      %s\n' "$x" "${who:-（文件里没有 Package/Process 行，或解不开）}"
         done
         HIT=$((HIT + 1))
     fi
@@ -104,11 +114,15 @@ fi
 # ---------------------------------------------------------------- ④ native 崩溃
 hr '④ native 崩溃（/data/tombstones）'
 if [ -d "$R/data/tombstones" ]; then
-    files=$(ls -1 "$R/data/tombstones" | grep -E '^tombstone_')
+    # ★ 同目录还有 tombstone_NN.pb（protobuf 二进版）。第一版把它也列进来，
+    #   于是每一条都多出一个「? keyProcess=?」的空行，把真清单冲稀。
+    #   .pb 单独计数报一行即可。
+    pb=$(ls -1 "$R/data/tombstones" | grep -cE '\.pb$')
+    files=$(ls -1 "$R/data/tombstones" | grep -E '^tombstone_[0-9]+$')
     if [ -z "$files" ]; then
         say '没有 tombstone_ 文件。'
     else
-        say "共 $(printf '%s\n' "$files" | wc -l) 个。最近 10 个："
+        say "共 $(printf '%s\n' "$files" | wc -l) 个文本版（另有 $pb 个 .pb 二进版，内容同源，不重复列）。最近 10 个："
         printf '%s\n' "$files" | while read -r f; do
             [ -n "$f" ] || continue
             p="$R/data/tombstones/$f"

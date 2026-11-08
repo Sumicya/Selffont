@@ -145,7 +145,10 @@ done | while IFS= read -r f; do
 done
 for m in /data/adb/modules/*/; do
     [ -d "$m" ] || continue
-    id=$(grep -s '^id=' "$m/module.prop" | head -1 | cut -d= -f2)
+    id=$(grep -s '^id=' "$m/module.prop" 2>/dev/null | head -1 | cut -d= -f2)
+    # 读不到 module.prop 的（真机上 zygisksu 就是这样）退回目录名，比印一个「?」有用。
+    [ -n "$id" ] || id="$(basename "$m")（无 module.prop，按目录名）"
+
     case "${id:-}" in
         selffont*|MFGA)
             eval "find \"$m\" -maxdepth 3 $PATTERNS 2>/dev/null" | while IFS= read -r f; do
@@ -160,7 +163,10 @@ echo '  ── 别人的模块里的备份（只列，一个字节都不动）'
 any=0
 for m in /data/adb/modules/*/; do
     [ -d "$m" ] || continue
-    id=$(grep -s '^id=' "$m/module.prop" | head -1 | cut -d= -f2)
+    id=$(grep -s '^id=' "$m/module.prop" 2>/dev/null | head -1 | cut -d= -f2)
+    # 读不到 module.prop 的（真机上 zygisksu 就是这样）退回目录名，比印一个「?」有用。
+    [ -n "$id" ] || id="$(basename "$m")（无 module.prop，按目录名）"
+
     case "${id:-}" in
         selffont*|MFGA) continue ;;
     esac
@@ -200,7 +206,10 @@ head1 '⑧ 状态标记：只有 disable.bak 这类**纯后缀副本**可删，�
 MARK_MAX=64
 for m in /data/adb/modules/*/; do
     [ -d "$m" ] || continue
-    id=$(grep -s '^id=' "$m/module.prop" | head -1 | cut -d= -f2)
+    id=$(grep -s '^id=' "$m/module.prop" 2>/dev/null | head -1 | cut -d= -f2)
+    # 读不到 module.prop 的（真机上 zygisksu 就是这样）退回目录名，比印一个「?」有用。
+    [ -n "$id" ] || id="$(basename "$m")（无 module.prop，按目录名）"
+
     for base in disable remove update; do
         # 真标记：只认名字完全一致的普通文件；存在就只报不动。
         if [ -f "$m$base" ]; then
@@ -226,7 +235,10 @@ done
 head1 '⑨ 模块目录本体'
 for m in /data/adb/modules/*/; do
     [ -d "$m" ] || continue
-    id=$(grep -s '^id=' "$m/module.prop" | head -1 | cut -d= -f2)
+    id=$(grep -s '^id=' "$m/module.prop" 2>/dev/null | head -1 | cut -d= -f2)
+    # 读不到 module.prop 的（真机上 zygisksu 就是这样）退回目录名，比印一个「?」有用。
+    [ -n "$id" ] || id="$(basename "$m")（无 module.prop，按目录名）"
+
     case "${id:-}" in
         selffont*|MFGA)
             if [ "$DROP_MODULE" = 1 ]; then
@@ -271,6 +283,9 @@ head1 '⑫ 全盘按名字找（selffont / Selfrounds / MFGA / Maruko）'
 # 而 ⑭ 里我明明写着「不查 /data/data」——说到做不到。
 # 现在用 `-prune` 显式剪掉那几个目录，不进它们；每一根 timeout 45 秒封顶。
 SCANNED=''
+SCAN_TMP=$(mktemp 2>/dev/null || echo /data/local/tmp/.sfscan.$$)
+: > "$SCAN_TMP"
+SHOWN=''
 for root in /data /storage/emulated/0 /cache; do
     [ -d "$root" ] || continue
     SCANNED="$SCANNED $root"
@@ -278,7 +293,10 @@ for root in /data /storage/emulated/0 /cache; do
     # 剪枝清单按 $root 现算，不写死绝对路径：写死的话沙箱夹具测不到，
     # 改一层目录结构就悄悄失效（真机第二版在「── /data」卡住就是这个原因）。
     prune=""
-    for sub in data misc system vendor app dalvik-cache tombstones local ota; do
+    # ★ /data/media/0 与 /storage/emulated/0 是**同一卷的两个名字**。2026-11-08 真机
+    #   把 23524 KB 的 Download/selffont 在两个根下各列一遍，看着像有两份。
+    #   /data 这一根剪掉 media，交给 /storage/emulated/0 那一根负责，⑭ 里写明。
+    for sub in data misc system vendor app dalvik-cache tombstones local ota media; do
         p="$root/$sub"
         [ -d "$p" ] || continue
         # /data/local/tmp 与 /data/adb 要能进去（前者在 ⑤ 段已单独处理），
@@ -305,13 +323,32 @@ for root in /data /storage/emulated/0 /cache; do
         printf '%s\n' "$out"
     else
         eval "find \"$root\" -maxdepth 5 $FIND_SPEC" 2>/dev/null
-    fi | grep -v '^[[:space:]]*$' | while IFS= read -r f; do
-        case "$f" in
-            */modules/selffont-bench) printf '  [用] %s  ← 正在装的模块本体（不删）\n' "$f" ;;
-            *) printf '  [看] %6s KB  %s  %s\n' "$(kb "$f")" "$(when "$f")" "$f" ;;
-        esac
-    done
+    fi | grep -v '^[[:space:]]*$' >> "$SCAN_TMP"
 done
+
+# ★ 2026-11-08 真机第三版的三个噪音，一起在这里治：
+#   ① 同一卷的两个名字（/data/media/0 与 /storage/emulated/0）各列一遍；
+#   ② 一个目录已经整条列出，里面的文件又各列一遍（备份目录里 5 个 xml ×2 份）；
+#   ③ 本模块目录**自己的文件**被当成垃圾——selffont-bench/licenses/MFGA-base-LICENSES.md
+#      名字里带 MFGA，就中了按名字找的圈；MarukoGothic-OFL.txt 同理。
+#   规则：本模块目录整枝跳过（只报目录本体）；上级目录已列过的跳过。
+sort -u "$SCAN_TMP" | while IFS= read -r f; do
+    case "$f" in
+        */modules/selffont-bench)
+            printf '  [用] %s  ← 正在装的模块本体（下面不再列它里面的文件）\n' "$f"
+            continue ;;
+        */modules/selffont-bench/*)
+            continue ;;                       # 本模块自己的文件，不是垃圾
+    esac
+    skip=0
+    for seen in $SHOWN; do
+        case "$f" in "$seen"/*) skip=1 ; break ;; esac
+    done
+    [ "$skip" = 1 ] && continue
+    SHOWN="$SHOWN $f"
+    printf '  [看] %6s KB  %s  %s\n' "$(kb "$f")" "$(when "$f")" "$f"
+done
+rm -f "$SCAN_TMP" 2>/dev/null
 echo '  ※ 这一节只列不删：名字带这些字的东西，可能正是你要刷的包、要留的证据。'
 
 # ---------------------------------------------------------------- ⑬ 大文件排行
@@ -331,6 +368,8 @@ done
 head1 '⑭ 这趟**没有**查的地方（宁可说清，不许假装扫了全机）'
 cat <<'COVER'
   · /proc /sys /dev          —— 虚拟文件系统，没有真实占用
+  · /data/media/*            —— 与 /storage/emulated/0 是同一卷的两个名字，
+                                已在那一根里列过，不重复列（否则同一份 23 MB 会出现两遍）
   · /data/data/*             —— 应用私有目录，逐个查要 root 遍历几十万个文件，
                                 而且删了会破坏应用数据。要单独查哪一个，告诉我名字
   · /data/misc /data/system  —— 系统数据库与 dropbox/tombstone，属于系统证据，不是垃圾

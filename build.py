@@ -2300,6 +2300,39 @@ def runtime_scripts():
         assert "invalid expression" not in flat_out + flat_run.stderr
         assert "没有**查的地方" in clean_text or "没有" in clean_text, "没交代哪些地方没查"
 
+        # ★ 真机第三版（2026-11-08 18:43 输出）打回三个噪音，全在 ⑫：
+        #   ① /data/media/0 与 /storage/emulated/0 是同一卷，23524 KB 被列了两遍；
+        #   ② 备份目录已整条列出，里面 5 个 xml 又各列一遍；
+        #   ③ 本模块目录自己的 licenses/MFGA-base-LICENSES.md、MarukoGothic-OFL.txt
+        #      名字里带 MFGA/Maruko，中了「按名字找」的圈，被当垃圾列出来。
+        noise = tmp / "noise"
+        (noise / "data/media/0/Download/selffont/backup-x").mkdir(parents=True)
+        for i in (1, 2, 3):
+            (noise / f"data/media/0/Download/selffont/backup-x/{i}-fonts.xml").write_text("<x/>")
+        (noise / "data/adb/modules/selffont-bench/licenses").mkdir(parents=True)
+        (noise / "data/adb/modules/selffont-bench/licenses/MFGA-base-LICENSES.md").write_text("x")
+        (noise / "data/adb/modules/selffont-bench/licenses/MarukoGothic-OFL.txt").write_text("x")
+        (noise / "sd/Download/selffont").mkdir(parents=True)
+        (noise / "sd/Download/selffont/pkg.zip").write_text("x")
+        noise_sh = tmp / "clean-noise.sh"
+        nt = clean.read_text(encoding="utf-8")
+        nt = nt.replace("for root in /data /storage/emulated/0 /cache",
+                        f"for root in {noise}/data {noise}/sd {noise}/nocache")
+        nt = nt.replace("/data/local/tmp", str(noise / "tmp"))
+        nt = nt.replace("/storage/emulated/0", str(noise / "sd"))
+        nt = nt.replace("/cache", str(noise / "nocache"))
+        nt = nt.replace("/data/adb", str(noise / "data/adb"))
+        nt = nt.replace('[ "$(id -u)" = "0" ] ||', "true ||")
+        noise_sh.write_text(nt, encoding="utf-8")
+        no = sh([str(noise_sh)], os.environ).stdout
+        n12 = no.split("⑫ 全盘按名字找")[-1].split("⑬ 占地最多")[0]
+        assert n12.count("Download/selffont") == 1, \
+            f"同一卷列了两遍（/data/media/0 与 /storage 是一个地方）：{n12}"
+        assert "MFGA-base-LICENSES.md" not in n12 and "MarukoGothic-OFL.txt" not in n12, \
+            f"本模块自己目录里的文件被当成垃圾列出来了：{n12}"
+        assert "1-fonts.xml" not in n12, f"目录已整条列出，里面的文件又各列一遍：{n12}"
+        assert "/media/" not in n12.split("/sd")[0], "⑫ 的 /data 那一根没剪掉 media"
+
         # ★ 崩溃定因工具（tools/sf-why.sh）：主人 2026-11-08「还有崩溃定因」。
         #   它自己的失效方式很阴：读不到的目录被 2>/dev/null 闷掉，整份报告一片空白，
         #   看着像「查了，没发现问题」——这正是本轮全机清理做废过的那个坑。
