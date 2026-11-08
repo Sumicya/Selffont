@@ -23,8 +23,16 @@ now() { date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻; }
 mkdir -p "$DATA" 2>/dev/null
 printf '%s 守夜进来了 pid=%s\n' "$(date +%H:%M:%S 2>/dev/null)" "$$" >> "$GUARD_LOG" 2>/dev/null
 
+# ★ 2026-11-08 真机：22:06:22 第 1 次开机开始 → 22:06:24 守夜进来了 → 之后什么都没写。
+#   系统其实起来了（主人 22:09 在敲命令），说明守夜是在等 sys.boot_completed 时
+#   被 init 清掉的（service.d 的进程开完机会被收），不是没跑。
+#   改法：①每 10 秒记一行心跳，被清掉时能看出停在哪一秒；
+#        ②最后一行不管等到没等到都写，并且写明「被中途杀掉」与「等到超时」的区别。
 i=0
 while [ "$i" -lt "$WAIT" ]; do
+    case $((i % 10)) in
+        0) echo "$(now) 守夜等待中：${i} 秒，sys.boot_completed=$(getprop sys.boot_completed 2>/dev/null)" >> "$GUARD_LOG" 2>/dev/null ;;
+    esac
     if [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; then
         n=$(cat "$COUNT" 2>/dev/null)
         case "$n" in ''|*[!0-9]*) n=? ;; esac
@@ -36,5 +44,5 @@ while [ "$i" -lt "$WAIT" ]; do
     sleep 1
 done
 
-echo "$(now) 等了 ${WAIT} 秒仍没有 sys.boot_completed=1，计数保留" >> "$GUARD_LOG" 2>/dev/null
+echo "$(now) 等了 ${WAIT} 秒仍没有 sys.boot_completed=1，计数保留（这次开机没能确认走到底）" >> "$GUARD_LOG" 2>/dev/null
 exit 0

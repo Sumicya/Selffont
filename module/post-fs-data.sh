@@ -113,26 +113,43 @@ if [ -f "$BOOT_LOG" ] && [ "$(wc -c < "$BOOT_LOG" 2>/dev/null || echo 0)" -gt "$
     mv -f "$BOOT_LOG" "$BOOT_LOG.1" 2>/dev/null
 fi
 
-# 后台抓：按标签过滤到与本模块和字体有关的通道，避免把整机日志都抄一遍。
-# `logcat -b all` 在部分机型上要权限，失败就退回默认缓冲区；再失败就退出，不许空转。
+# 后台抓日志。
+#
+# ★ 2026-11-08 真机打回来的两个漏洞，都在这段：
+#   ① 原来用 `-s 白名单` 只抓 8 个 tag。真机上桌面每 5 秒重载一次字体，
+#      「Typeface: Preloading Roboto-Regular.ttf」把 180 秒窗口**填满了**，
+#      ActivityManager / Watchdog / minikin 的报错一条都挤不进来 ——
+#      日志有 1707 行、看着挺充实，该有的全没有。
+#   ② 更糟的是，卡住那几分钟一行都不剩，等于又回到「没有证据」。
+#
+# 现在的抓法：**抓全量，再排除刷屏的**（`-s` 是白名单，会丢主干；这里用 grep -v 黑名单）。
+# 黑名单只放「确认与本模块无关且会刷屏」的：桌面字体预加载、冻结/解冻的例行广播。
+# 其余一律落盘，宁可文件大一点也不许再把主干挤掉。
+#
+# 体积仍由 SELFFONT_BOOT_LOG_BYTES（默认 2 MiB）封顶；超了滚一份 .1。
+grab() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 180 logcat -b main,system,crash -v threadtime
+    else
+        logcat -b main,system,crash -v threadtime
+    fi | grep -v -E 'Typeface: Preloading|reportOneUidFrozenStateChanged|skip deliver sticky broadcast|Async freezing|Cancel freezing|ProcessObserver broadcast disabled'
+}
+
 (
     # 等 logd 起来（最多 15 秒）。post-fs-data 阶段 logd 通常已经在跑，但不保证。
+    # 等不到**记一行**再退出：静默退出等于这次开机白抓，说不清是没 logd 还是没跑。
     i=0
     while [ ! -e /dev/socket/logdw ] && [ "$i" -lt 15 ]; do
         i=$((i + 1))
         sleep 1
     done
-    [ -e /dev/socket/logdw ] || exit 0
-    if command -v timeout >/dev/null 2>&1; then
-        # 用 timeout 封顶：开机 180 秒之后不再写，卡住的情形下这段正好覆盖 system_server 起来到卡死。
-        timeout 180 logcat -b main,system,crash -v threadtime \
-            -s minikin androidfw FontManager Typeface RescueParty Zygote64 ActivityManager Watchdog \
-            >> "$BOOT_LOG" 2>/dev/null
-    else
-        logcat -b main,system,crash -v threadtime \
-            -s minikin androidfw FontManager Typeface RescueParty Zygote64 ActivityManager Watchdog \
-            >> "$BOOT_LOG" 2>/dev/null
+    if [ ! -e /dev/socket/logdw ]; then
+        echo "$(now) 抓日志：等了 15 秒没有 /dev/socket/logdw，本次没抓到（不是没跑，是 logd 没起来）" >> "$GUARD_LOG" 2>/dev/null
+        exit 0
     fi
+    echo "$(now) 抓日志：开始（全量，排除刷屏标签），180 秒后自行停止" >> "$GUARD_LOG" 2>/dev/null
+    grab >> "$BOOT_LOG"
+    echo "$(now) 抓日志：180 秒到，停止。boot.log 现在 $(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?) 行" >> "$GUARD_LOG" 2>/dev/null
 ) &
 
 exit 0

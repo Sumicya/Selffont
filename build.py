@@ -2160,6 +2160,38 @@ def runtime_scripts():
         assert stuck.returncode == 0, stuck
         assert (data / "boot-count").read_text().strip() == "1", "卡住时计数被清掉了"
 
+        # ★ 2026-11-08 真机：boot.log 有 1707 行，看着挺充实，但卡住那几分钟
+        #   一行都没有。原因两处：① `-s 白名单` 只抓 8 个 tag，桌面每 5 秒重载字体
+        #   把 180 秒窗口填满，ActivityManager/Watchdog 的报错挤不进来；
+        #   ② 抓不到时静默退出，事后说不清是「没跑」还是「没 logd」。
+        gc = [ln for ln in gsrc.splitlines() if not ln.lstrip().startswith("#")]
+        logcat_lines = [ln for ln in gc if "logcat" in ln]
+        assert logcat_lines, "找不到 logcat 抓取"
+        assert not any("-s " in ln for ln in logcat_lines), \
+            "logcat 又用 -s 白名单了：刷屏标签会把主干挤掉（真机 1707 行全是 Typeface）"
+        assert any("grep -v" in ln and "Typeface: Preloading" in ln for ln in gc), \
+            "没有用黑名单排除刷屏标签"
+        assert "没有 /dev/socket/logdw" in gsrc, \
+            "抓不到日志时静默退出：说不清是没跑还是 logd 没起来"
+        assert "180 秒到，停止" in gsrc, "抓完不记账：不知道这次到底抓到了没有"
+        # 守夜超时那行必须真写出来（真机 22:06 那次就是一句话都没有，分不清
+        # 「守夜被 init 清掉」和「守夜跑了没等不到」）。用 0 秒超时造超时。
+        nd = tmp / "night"
+        (nd / "d").mkdir(parents=True)
+        (nd / "d" / "boot-count").write_text("1\n")
+        fake = nd / "bin"
+        fake.mkdir()
+        (fake / "getprop").write_text("#!/bin/sh\necho 0\n")
+        (fake / "getprop").chmod(0o755)
+        en = {**os.environ, "SELFFONT_DATA": str(nd / "d"), "SELFFONT_BOOT_WAIT": "1",
+              "PATH": f"{fake}:{os.environ.get('PATH','')}"}
+        sh([str(night)], en)
+        nlog = (nd / "d" / "guard.log").read_text(encoding="utf-8")
+        assert "守夜进来了" in nlog, "守夜没有第一行硬证据"
+        assert "计数保留" in nlog, "守夜超时那行没写：真机上就是靠它分「被清掉」和「等不到」"
+        assert (nd / "d" / "boot-count").read_text().strip() == "1", \
+            "没等到 sys.boot_completed 却把计数清了：下次开机就分不清上次卡没卡"
+
         # 日志上界：不封顶的话卡死循环里每次开机都写，能把 /data 写满。
         assert "SELFFONT_BOOT_LOG_BYTES" in guard.read_text(encoding="utf-8"), \
             "开机日志没有体积上界"
