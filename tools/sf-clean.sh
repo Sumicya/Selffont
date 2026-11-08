@@ -259,23 +259,44 @@ printf '   相关挂载 %s 条（正常 1~2 条；多了就是残留）\n' "${n:
 grep -i 'selffont\|MFGA' "$mt" 2>/dev/null | sed 's/^/   /'
 
 # ---------------------------------------------------------------- ⑫ 全盘按名字找
-head1 '⑫ 全盘按名字找（selffont / Selfrounds / MFGA / Maruko），不限 /data/adb'
-# 只查前十一节漏掉的根；不查 /proc /sys /dev（虚拟文件系统，查了没意义还会卡）。
-# 每个根 timeout 封顶，防止某个目录挂死拖住整趟。
+head1 '⑫ 全盘按名字找（selffont / Selfrounds / MFGA / Maruko）'
+# 2026-11-08 真机第二版的错：这一节的根写的是 `/data`，而 `/data` 底下就是
+# `/data/data`（应用私有目录，几十万个文件）。真机上跑到「── /data」就卡住不动了，
+# 而 ⑭ 里我明明写着「不查 /data/data」——说到做不到。
+# 现在用 `-prune` 显式剪掉那几个目录，不进它们；每一根 timeout 45 秒封顶。
 SCANNED=''
 for root in /data /storage/emulated/0 /cache; do
     [ -d "$root" ] || continue
     SCANNED="$SCANNED $root"
     echo "  ── $root"
+    # 剪枝清单按 $root 现算，不写死绝对路径：写死的话沙箱夹具测不到，
+    # 改一层目录结构就悄悄失效（真机第二版在「── /data」卡住就是这个原因）。
+    prune=""
+    for sub in data misc system vendor app dalvik-cache tombstones local ota; do
+        p="$root/$sub"
+        [ -d "$p" ] || continue
+        # /data/local/tmp 与 /data/adb 要能进去（前者在 ⑤ 段已单独处理），
+        # 所以只剪 /data/local 本身，不剪它的子目录，靠 -prune 的层级控制。
+        prune="$prune -path $p -o"
+    done
+    prune="${prune% -o}"
+    # 超时只在真的超时（exit 124）时提示；否则「一个都没命中」会被误报成超时。
     if command -v timeout >/dev/null 2>&1; then
-        timeout 60 find "$root" -maxdepth 8 \
-            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) \
-            2>/dev/null
+        out=$(timeout 45 find "$root" -maxdepth 5 \
+            \( \( $prune \) -prune \) -o \
+            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) -print \
+            2>/dev/null)
+        rc=$?
+        if [ "$rc" = "124" ]; then
+            echo '     （超过 45 秒，已跳过这一根——这里的结论不完整）'
+        fi
+        printf '%s\n' "$out"
     else
-        find "$root" -maxdepth 8 \
-            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) \
+        find "$root" -maxdepth 5 \
+            \( \( $prune \) -prune \) -o \
+            \( -iname '*selffont*' -o -iname '*Selfrounds*' -o -iname '*MFGA*' -o -iname '*Maruko*' \) -print \
             2>/dev/null
-    fi | while IFS= read -r f; do
+    fi | grep -v '^[[:space:]]*$' | while IFS= read -r f; do
         case "$f" in
             */modules/selffont-bench) printf '  [用] %s  ← 正在装的模块本体（不删）\n' "$f" ;;
             *) printf '  [看] %6s KB  %s  %s\n' "$(kb "$f")" "$(when "$f")" "$f" ;;

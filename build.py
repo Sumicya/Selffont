@@ -2209,6 +2209,41 @@ def runtime_scripts():
             "kb() 对目录没用 du：22 MB 的目录会被报成 4 KB（真机实测）"
         assert "for root in /data /storage/emulated/0 /cache" in clean_text, \
             "全盘扫描的根少了：不能只查 /data/adb"
+        # 真机第二版在「── /data」卡死：这根底下就是 /data/data（几十万文件），
+        # 而 ⑭ 里写着「不查 /data/data」。必须有 prune，且剪枝清单是按 $root 现算的
+        # （写死绝对路径的话沙箱夹具测不到，改结构就悄悄失效）。
+        assert "-prune" in clean_text, "全盘扫描没有剪枝：会在 /data/data 上卡死（真机实测）"
+        assert 'prune="$prune -path $p -o"' in clean_text, \
+            "剪枝写死了绝对路径：沙箱夹具测不到，改目录结构就悄悄失效"
+        assert "124" in clean_text, "超时必须按退出码 124 判，否则空目录会被误报成超时（真机实测）"
+        # 夹具实测：/data/data 与 /data/misc 里的 *selffont* 不许被列出来。
+        scope = tmp / "scope"
+        (scope / "data/data/com.someapp").mkdir(parents=True)
+        (scope / "data/misc").mkdir(parents=True)
+        (scope / "data/keepme").mkdir(parents=True)
+        (scope / "data/data/com.someapp/selffont-should-not-appear").write_text("x")
+        (scope / "data/misc/selffont-alsono").write_text("x")
+        (scope / "data/keepme/selffont-should-appear").write_text("x")
+        scope_sh = tmp / "clean-scope.sh"
+        scope_text = scope_sh_text = clean.read_text(encoding="utf-8")
+        for a, b in ((str(scope / "data"), str(scope / "data")),):
+            pass
+        # 顺序要紧：**先**换整行扫描根，**再**换各段路径。
+        # 反过来做过一次，前面把 /storage/emulated/0 与 /cache 替换掉之后，
+        # 整行 `for root in /data /storage/emulated/0 /cache` 就再也匹配不到，
+        # 三个根全变成空，夹具成了「什么都没扫」的假通过。
+        scope_text = scope_text.replace("for root in /data /storage/emulated/0 /cache",
+                                        f"for root in {scope}/data {scope}/sd {scope}/cache")
+        scope_text = scope_text.replace("/data/local/tmp", str(scope / "data/local/tmp"))
+        scope_text = scope_text.replace("/storage/emulated/0", str(scope / "sd"))
+        scope_text = scope_text.replace("/cache", str(scope / "cache"))
+        scope_text = scope_text.replace("/data/adb", str(scope / "data/adb"))
+        scope_text = scope_text.replace('[ "$(id -u)" = "0" ] ||', "true ||")
+        scope_sh.write_text(scope_text, encoding="utf-8")
+        out = sh([str(scope_sh)], os.environ).stdout
+        assert "selffont-should-appear" in out, f"该列的没列：{out[-500:]}"
+        assert "selffont-should-not-appear" not in out, "进了 /data/data：真机就是在这卡死的"
+        assert "selffont-alsono" not in out, "进了 /data/misc"
         assert "没有**查的地方" in clean_text or "没有" in clean_text, "没交代哪些地方没查"
 
         # ③ 未知参数不许当成默认跑。
