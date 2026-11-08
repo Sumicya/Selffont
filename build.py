@@ -2054,6 +2054,57 @@ def runtime_scripts():
 # ---------------------------------------------------------------- 仓库自身的数据与常量
 
 @check
+def garbage_scanner():
+    """全机垃圾排查脚本：语法过、非 root 拒绝下结论、只读不删、--delete 只删该删的。
+
+    上一版手工脚本栽在 `su -c ... || sh ...` 上：兜底那一半以普通用户跑，
+    `/data/adb` 读不到，五段全打印「（无）」——**假结论比没查更坏**。
+    所以这里的断言按「会不会骗人」排序，第一条就是非 root 必须退出码 3。
+    """
+    script = ROOT / "tools/check_garbage.sh"
+    assert script.is_file(), "缺 tools/check_garbage.sh"
+    assert sh(["-n", str(script)], os.environ).returncode == 0, "check_garbage.sh 语法错误"
+    body = script.read_text()
+    assert "id -u" in body and "exit 3" in body, "非 root 必须直接退出，不许继续打印（无）"
+    assert '--delete' in body, "必须保留 --delete 开关"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        download = tmp / "storage/emulated/0/Download"
+        module = tmp / "data/adb/modules/MFGA"
+        service = tmp / "data/adb/service.d"
+        for path in (download / "Nagram", module, service, tmp / "data/local/tmp"):
+            path.mkdir(parents=True)
+        # 三类样本：真垃圾（*.bak、ksubak、误写标记）、假垃圾（BakaSU 应用）、
+        # 绝不能删的（真 disable 标记、开机脚本）。
+        junk = [download / "MFGA.bak", download / "ksubak.zip",
+                module / "disablebak", module / "old.orig",
+                tmp / "data/local/tmp/selffont.zip",
+                tmp / "data/adb/selffont-skia.state"]
+        keep = [download / "Nagram/BakaSU_v4.2.0-rc3.apk", module / "disable",
+                module / "module.prop", service / "01-font.sh"]
+        for path in junk + keep:
+            path.write_bytes(b"x")
+        env = dict(os.environ, SELFFONT_SCAN_BASE=str(tmp))
+
+        dry = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True)
+        assert dry.returncode == 0, f"夹具跑不通：{dry.stderr[-400:]}"
+        assert all(path.exists() for path in junk), f"只读模式删了东西：{[p for p in junk if not p.exists()]}"
+        for path in junk:
+            assert str(path) in dry.stdout, f"只读模式漏报 {path.name}"
+        assert "BakaSU_v4.2.0-rc3.apk" in dry.stdout, "名字带 bak 的正常应用必须被列进「仅供辨认」"
+        assert "01-font.sh" in dry.stdout, "开机脚本没有被列出来"
+        assert "汇总" in dry.stdout and "KB" in dry.stdout, "缺汇总行（条目数与字节数）"
+
+        wiped = subprocess.run(["sh", str(script), "--delete"], env=env,
+                               capture_output=True, text=True)
+        assert wiped.returncode == 0, f"--delete 跑不通：{wiped.stderr[-400:]}"
+        assert all(not path.exists() for path in junk), f"该删的没删：{[p for p in junk if p.exists()]}"
+        assert all(path.exists() for path in keep), f"删了不该删的：{[p for p in keep if not p.exists()]}"
+        assert "↳ 已删" in wiped.stdout, "--delete 没打印删了什么"
+
+
+@check
 def repo_constants():
     """不下载任何东西：默认来源、模块字段、真实 fonts.xml 的前置条件都在位。"""
     assert PRIMARY_URL.endswith("WenYuanRoundedSCVF.ttf") and BASE_URL.endswith(".zip")
@@ -2453,6 +2504,34 @@ def module_hotswap():
 
         result = run_hs("on")
         assert result.returncode == 2, "on 这个子命令必须已经不存在（不许有第四版挂载实现）"
+
+
+@check
+def probe_position():
+    """定位探针能跑、量具自己没写错：`tools/probe_position.py` 的常量必须与构建期一致。
+
+    探针不读字体文件（本机没有成品），它把「摆位」那一段复算一遍：settle_junction_widths
+    → align_face_height → box_align.apply。这里只验它**量的东西没走样**——
+    win 必须盖住字身框（否则「行框不裁字」那一条白测），判据线必须比 2% em 宽一点点，
+    抽样必须真的抽到汉字。真正跑全库用 `python tools/probe_position.py --sample 300`。
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import probe_position as probe
+    assert probe.EM == 1000 and probe.WIDE < probe.EM, "满格判据的宽度阈值不合理"
+    assert probe.TOL_HARD > probe.TOL >= 20, "判据线必须严于 3% em，且提示线要宽于判据线"
+    assert probe.cjk_vf.HHEA_ASCENT > 900 and probe.cjk_vf.HHEA_DESCENT < -160, \
+        f"win 装不下字身框 {probe.cjk_vf.FRAME}：行框那一条等于没测"
+    assert probe.cjk_vf.FRAME[3] <= probe.cjk_vf.HHEA_ASCENT, "字身框上沿高过 win 上沿"
+    sample = probe.sample_codepoints(None, 8)
+    assert len(sample) == 8 and all(probe.cjk_vf.is_han(cp) for cp in sample), \
+        f"抽样没抽到汉字：{[hex(cp) for cp in sample[:4]]}"
+    rows = probe.measure(sample)["rows"]
+    assert len(rows) == 8, f"复算的字数不对：{len(rows)}"
+    r = probe.report(probe.measure(sample))
+    assert r["advance"]["not_1000"] == [], f"汉字 advance 不是 1000：{r['advance']['not_1000']}"
+    assert not r["outside"], f"复算出来的字出字身框：{r['outside'][:3]}"
+    assert probe.verdict(r)[-1].startswith("判定: "), "没有判定行"
 
 
 @check

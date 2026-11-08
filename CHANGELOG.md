@@ -1,3 +1,33 @@
+## 2026-11-08（十七）· 两个自查工具：全机垃圾探针、定位探针
+
+- 现场：① 主人问「前会话在 Download 里搞的 ksubak / disablebak 那堆东西」，上一版手工脚本
+  写的是 `su -c 'sh A' 2>/dev/null || sh B`——`su` 失败就静默退回普通用户，`/data/adb`
+  读不到，五段全部打印「（无）」。**假结论比没查更坏**，先修这个。
+  ② 主人要「垂直定位 / 水平定位这类自查」，而 `tools/check_position.py` 要两份成品字体才能比，
+  本机既没有母版也不许下载，等于定位这件事在本机一直没量过。
+- 改法一：新增 `tools/check_garbage.sh`（默认只读，`--delete` 才动手），五段——
+  ① 模块自己的 `selffont*` 临时件与状态；② 备份后缀（`*.bak` / `*.orig` / `*~`）与
+  `ksubak*` / `*disablebak*` 命名的副本；③ 状态标记分两类：`disablebak` / `disable.bak`
+  这类**不生效**的可删，名字正好是 `disable`/`remove`/`update` 的真标记**只列不删**；
+  ④ 字体挂载层条数（叠加残留）；⑤ `service.d` / `post-fs-data.d` 里碰字体的脚本。
+  非 root 直接退出码 3 并说明原因，不打印任何「（无）」；名字带 bak 的正常应用
+  （`BakaSU*.apk`）单列成「仅供辨认」，不进可删项。
+- 改法二：新增 `tools/probe_position.py`（量具，不读字体文件）。按构建顺序
+  `settle_junction_widths → align_face_height → box_align.apply` 把字重建到「摆好位、
+  还没打包」那一刻，逐字报五项：横向墨心（本版 / 母版并排，用来区分「继承母版的歪」
+  与「本版漂移」）、纵向四边差（对齐后 − 母版目标）、行框与裁切（墨迹包络 vs
+  `hhea`/`typo`/`win`，裁字的是 `win`）、全角字宽、`cjk_vf.FRAME` 越界。抽 300 字 1 分钟。
+- 自检：新增两项，共 18 项，`build.py --check` 全过——
+  `garbage_scanner` 在假根上验「只读不删、`--delete` 只删该删的（`BakaSU` 与真 `disable`
+  标记必须还在）、非 root 必须 `exit 3`」；`probe_position` 验量具常量与构建期一致
+  （`win` 必须盖住 `FRAME`，否则「行框不裁字」那一条白测）并复算 8 个字。
+- 首轮数据（300 字抽样，`26.11.8` 数据）：横向对齐后墨心 −500 中位 −2.5、母版同口径
+  34/288 个字面框本来就偏 > 20 单位（`羽` −31），属继承；纵向四边差中位 0.0、
+  超 20 的 1 字（`唥` 23.3，`box_align` 限幅）、超 30 的 0 字；墨迹包络
+  −107.9..860.0 落在 `win` [−288, 1160] 内（上余 300.0、下余 180.1）；
+  300 字 advance 全 1000；越界 0 字。
+- 未验证：真机上的观感（这轮全是离线量具，不涉及渲染）。
+
 ## 2026-11-08（十六）· Skia 那条路默认关：Flutter（FlClash）界面没字的直接成因
 
 - 现场（代码原样，skia 主分支 `src/ports/`）：`SkFontMgr_android_parser.cpp` 第 32 行

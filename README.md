@@ -294,6 +294,19 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 9. **位置按母版逐字摆回**：中线是母版量的，位置本来就该对；但「中线 + 半宽 + 圆头 + 直段吸附」
    串起来会各自带一点误差，叠起来整块就漂（2026-11-05 实测 600 字：横/纵各约 100 字差 5 单位以上，
    `日` 上沿差 64）。构建期按 `tools/master_box.bin` 里母版逐字的**字面框**做仿射对齐：
+
+   本机没有成品字体也能自查定位——`tools/probe_position.py` 复算「摆位」那一段
+   （`settle_junction_widths → align_face_height → box_align.apply`），逐字报
+   **横向墨心 / 纵向四边差 / 行框与裁切（win 盖不盖得住墨迹）/ 全角字宽 / 字身框越界**
+   五项，不读任何字体文件：
+
+       .venv/bin/python tools/probe_position.py                    # 抽 300 字，约 1 分钟
+       .venv/bin/python tools/probe_position.py --chars "中日目田口一国十王平羽雨"
+       .venv/bin/python tools/probe_position.py --sample 0         # 全库，约 20 分钟
+
+   横向一项会把「本版墨心」「母版墨心」并排报：母版自己的字面框本来就歪的（> 2% em）
+   会被原样继承，那不是漂移；纵向超过 20 单位的多半是 `box_align` 的缩放限幅（±2%），
+   超过 30 才算问题。
    平移对齐框中心，某轴「目标/现值」在 ±4% 以内才缩放、结果夹 ±2%，三档共用同一组系数，
    点数与 advance 一个不动。母版那块吊在 `日` 右上角的 55×45 孤立残墨在点名表
    `STRAY_CONTOURS` 里剔除，不拿它当字面。**这是位置的基准，不是验收标尺**——
