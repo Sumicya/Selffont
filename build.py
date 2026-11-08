@@ -2396,7 +2396,8 @@ def runtime_scripts():
         #   读不到就静默给 0 或干脆不给行——又一个「看着查了其实没查」。
         #   锁死：du 报 0 但目录非空时，必须印「读不准」而不是 0.0 MB；报错必须原样列出。
         tail12 = clean.read_text(encoding="utf-8")
-        assert "读不准" in tail12, "⑬ 对「du 报 0 但目录非空」没有明说，会印一个假 0.0 MB"
+        assert "没读到" in tail12, "⑬ 对「du 报 0 但目录非空」没有明说，会印一个假 0.0 MB"
+        assert "FUSE" not in tail12, "⑬ 又把「du 没读到」猜成了 FUSE 读不全：猜错原因比不说更糟"
         assert "du 报错被跳过" in tail12, "⑬ 吞掉了 du 的报错，读不到也不会有人知道"
         # 结构断言：这两条才是原 bug 的形态。只查字面词的话，把判据改成 if false 也照样绿。
         du_lines = [ln for ln in tail12.splitlines() if "du -sk" in ln]
