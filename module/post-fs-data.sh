@@ -44,6 +44,7 @@ COUNT="$DATA/boot-count"
 GUARD_LOG="$DATA/guard.log"
 BOOT_LOG="$DATA/boot.log"
 MAX=${SELFFONT_MAX_BOOT_FAIL:-2}
+_limit_s=${SELFFONT_BOOT_LOG_SECONDS:-180}
 
 mkdir -p "$DATA" 2>/dev/null
 # 无条件先留一行：只要这行在，就证明「这个脚本真的被执行了」。
@@ -127,9 +128,14 @@ fi
 # 其余一律落盘，宁可文件大一点也不许再把主干挤掉。
 #
 # 体积仍由 SELFFONT_BOOT_LOG_BYTES（默认 2 MiB）封顶；超了滚一份 .1。
+# 一次抓取。参数：$1=秒数上限。
+# ★ 2026-11-08 真机：日志写「180 秒到，停止」，实际从 22:33:15 跑到 23:04:44，
+#   31 分 29 秒。原因是那句「180 秒到」是**写死的字符串**，从来没算过真实时长 ——
+#   又一个「看着说了，其实没查」。现在前后各取一次时间戳，差多少就报多少。
 grab() {
+    _limit=${1:-180}
     if command -v timeout >/dev/null 2>&1; then
-        timeout 180 logcat -b main,system,crash -v threadtime
+        timeout "$_limit" logcat -b main,system,crash -v threadtime
     else
         logcat -b main,system,crash -v threadtime
     fi | grep -v -E 'Typeface: Preloading|reportOneUidFrozenStateChanged|skip deliver sticky broadcast|Async freezing|Cancel freezing|ProcessObserver broadcast disabled'
@@ -147,9 +153,22 @@ grab() {
         echo "$(now) 抓日志：等了 15 秒没有 /dev/socket/logdw，本次没抓到（不是没跑，是 logd 没起来）" >> "$GUARD_LOG" 2>/dev/null
         exit 0
     fi
-    echo "$(now) 抓日志：开始（全量，排除刷屏标签），180 秒后自行停止" >> "$GUARD_LOG" 2>/dev/null
-    grab >> "$BOOT_LOG"
-    echo "$(now) 抓日志：180 秒到，停止。boot.log 现在 $(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?) 行" >> "$GUARD_LOG" 2>/dev/null
+    # 体积封顶用**边抓边看**：每 2000 行检查一次，超了就停。
+    # 原来只在「下次开机」检查，跑的过程中不设防——真机一次就写了 100,453 行、22 MB。
+    _cap=${SELFFONT_BOOT_LOG_BYTES:-2097152}
+    _lines=$(( _cap / 200 ))
+    [ "$_lines" -lt 2000 ] && _lines=2000
+    # 秒级 date 分辨不出亚秒差：夹具里跑 0.2 秒会印成「实际跑了 0 秒」，也是假话。
+    # 有 /proc/uptime 就用它（带两位小数）；没有就退回秒级并标明「精度 1 秒」。
+    _t0=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+    [ -n "$_t0" ] || _t0=$(date +%s 2>/dev/null || echo 0)
+    echo "$(now) 抓日志：开始（全量，排除刷屏标签），上限 $_limit_s 秒 / $_cap 字节" >> "$GUARD_LOG" 2>/dev/null
+    grab "$_limit_s" | awk -v cap="$_lines" 'NR > cap { exit } { print }' >> "$BOOT_LOG"
+    _t1=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+    [ -n "$_t1" ] || _t1=$(date +%s 2>/dev/null || echo 0)
+    _el=$(awk -v a="$_t0" -v b="$_t1" 'BEGIN{ if (a+0 == 0 && b+0 == 0) { print "?"; exit }
+        d = b - a; if (d < 0) d = 0; printf "%.1f", d }')
+    echo "$(now) 抓日志：停止。实际跑了 ${_el} 秒（上限 $_limit_s 秒），boot.log 现在 $(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?) 行 / $(wc -c < "$BOOT_LOG" 2>/dev/null || echo ?) 字节" >> "$GUARD_LOG" 2>/dev/null
 ) &
 
 exit 0

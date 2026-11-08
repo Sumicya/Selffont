@@ -2173,7 +2173,16 @@ def runtime_scripts():
             "没有用黑名单排除刷屏标签"
         assert "没有 /dev/socket/logdw" in gsrc, \
             "抓不到日志时静默退出：说不清是没跑还是 logd 没起来"
-        assert "180 秒到，停止" in gsrc, "抓完不记账：不知道这次到底抓到了没有"
+        assert "实际跑了" in gsrc, "抓完不记真实时长：真机上写死「180 秒到」，实际跑了 31 分钟"
+        # ★ 真机实测：写死「180 秒到」时，22:33:15 → 23:04:44 跑了 31 分 29 秒。
+        #   时长必须现算。锁死：不许再出现写死的「180 秒到」这种句子。
+        gcode2 = [ln for ln in gsrc.splitlines() if not ln.lstrip().startswith("#")]
+        assert not any("180 秒到" in ln for ln in gcode2), \
+            "时长又写死了：报的秒数和真实秒数是两回事（只看代码行）"
+        assert "SELFFONT_BOOT_LOG_SECONDS" in gsrc, "抓取上限不可调，只能靠改脚本"
+        # 边抓边封顶：原来只在下次开机检查体积，一次就写了 100,453 行 / 22 MB。
+        assert "NR > cap" in gsrc or "awk -v cap" in gsrc, \
+            "没有边抓边封顶：真机一次写了 100,453 行（22 MB）"
         # 守夜超时那行必须真写出来（真机 22:06 那次就是一句话都没有，分不清
         # 「守夜被 init 清掉」和「守夜跑了没等不到」）。用 0 秒超时造超时。
         nd = tmp / "night"
