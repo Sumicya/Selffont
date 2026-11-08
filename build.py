@@ -2391,6 +2391,20 @@ def runtime_scripts():
         assert "1-fonts.xml" not in n12, f"目录已整条列出，里面的文件又各列一遍：{n12}"
         assert "/media/" not in n12.split("/sd")[0], "⑫ 的 /data 那一根没剪掉 media"
 
+        # ★ 2026-11-08 真机两次连跑（相隔一分钟）打回来的：⑬ 里 Nagram 一次整个消失、
+        #   一次显示 0.0 MB（先前那次是 237.9 MB）。根因是 `2>/dev/null` 把 du 的报错吞了，
+        #   读不到就静默给 0 或干脆不给行——又一个「看着查了其实没查」。
+        #   锁死：du 报 0 但目录非空时，必须印「读不准」而不是 0.0 MB；报错必须原样列出。
+        tail12 = clean.read_text(encoding="utf-8")
+        assert "读不准" in tail12, "⑬ 对「du 报 0 但目录非空」没有明说，会印一个假 0.0 MB"
+        assert "du 报错被跳过" in tail12, "⑬ 吞掉了 du 的报错，读不到也不会有人知道"
+        # 结构断言：这两条才是原 bug 的形态。只查字面词的话，把判据改成 if false 也照样绿。
+        du_lines = [ln for ln in tail12.splitlines() if "du -sk" in ln]
+        assert du_lines and all('2>"$ERRS"' in ln for ln in du_lines if "sort -rn" in ln), \
+            "⑬ 的 du 又把报错丢给 /dev/null 了：读不到会静默变成 0 或直接不给行"
+        assert any("ls -A" in ln for ln in tail12.splitlines()), \
+            "⑬ 没有用 ls -A 判断目录非空：du 报 0 的目录会被当成真的空"
+
         # ★ 崩溃定因工具（tools/sf-why.sh）：主人 2026-11-08「还有崩溃定因」。
         #   它自己的失效方式很阴：读不到的目录被 2>/dev/null 闷掉，整份报告一片空白，
         #   看着像「查了，没发现问题」——这正是本轮全机清理做废过的那个坑。

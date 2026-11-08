@@ -356,12 +356,31 @@ head1 '⑬ 占地最多的文件（Download 与临时目录，前 15）'
 for d in /storage/emulated/0/Download /data/local/tmp; do
     [ -d "$d" ] || continue
     echo "  ── $d"
-    # du -sk 输出「KB<TAB>路径」；用 tab 切，路径里的空格不会把字段切歪
-    du -sk "$d"/* 2>/dev/null | sort -rn | head -15 | while IFS="$(printf '\t')" read -r k path; do
+    # du -sk 输出「KB<TAB>路径」；用 tab 切，路径里的空格不会把字段切歪。
+    # ★ 2026-11-08 真机两次连跑打回来的问题：同一台机器、两次相隔一分钟，
+    #   Nagram 一次**整个从榜上消失**、一次显示 0.0 MB（先前那次是 237.9 MB）。
+    #   原因是 `2>/dev/null` 把 du 的报错吞了——读不到就静默给 0，或者干脆不给行。
+    #   现在：报错收进 $ERRS，最后统一交代；大小为 0 但目录非空的，明写「读不准」，
+    #   不许印一个看起来很像真的 0.0 MB。
+    ERRS=$(mktemp 2>/dev/null || echo /data/local/tmp/.sferr.$$)
+    : > "$ERRS"
+    du -sk "$d"/* 2>"$ERRS" | sort -rn | head -15 | while IFS="$(printf '\t')" read -r k path; do
         [ -n "$path" ] || continue
         [ -d "$path" ] && what='目录' || what='文件'
-        printf '  %9s MB  %s  %s\n' "$(awk -v k="$k" 'BEGIN{printf "%.1f", k/1024}')" "$what" "$path"
+        if [ "${k:-0}" -eq 0 ] 2>/dev/null && [ "$what" = 目录 ] \
+           && [ -n "$(ls -A "$path" 2>&1 | head -1)" ]; then
+            printf '  %9s %s  %s\n' '读不准' "$what" "$path"
+            printf '            ↑ du 报 0 但目录非空：多半是 FUSE 挂载读不全，不是真的空\n'
+        else
+            printf '  %9s MB  %s  %s\n' \
+                "$(awk -v k="$k" 'BEGIN{printf "%.1f", k/1024}')" "$what" "$path"
+        fi
     done
+    if [ -s "$ERRS" ]; then
+        printf '  ※ 这一段有 %s 行 du 报错被跳过（下面原样列出，不吞）：\n' "$(wc -l < "$ERRS")"
+        head -5 "$ERRS" | sed 's/^/      /'
+    fi
+    rm -f "$ERRS" 2>/dev/null
 done
 
 # ---------------------------------------------------------------- ⑭ 没查的地方（如实报）
