@@ -24,7 +24,21 @@
 #   SELFFONT_MAX_BOOT_FAIL  连续失败几次自动停用，默认 2
 #   SELFFONT_NO_LOGCAT=1    不抓开机日志
 
-MODDIR=${MODDIR:-${0%/*}}
+# ★ 2026-11-08 真机第五次输出暴露的事故：post-fs-data.d/sf-guard.sh 时间戳 17:12、
+#   /data/adb/selffont 目录时间戳也是 17:12（mkdir 成功），但里面**一个账都没有**，
+#   连 guard.log 都没被创建——脚本被执行了，在写第一行之前就死了。
+#   根因：`MODDIR=${0%/*}`。被 init 以 source 加载时 $0 是**父进程**的路径（/system/bin/sh），
+#   MODDIR 变成 /system/bin，后面 `: > "$MODDIR/disable"` 在只读分区写不进去；
+#   而所有日志都是 `>> ... 2>/dev/null`，报错被吞——脚本把自己的证据销掉了。
+MODDIR=${MODDIR:-}
+# $MODULES 只给沙箱夹具换根用；真机上是 /data/adb/modules。
+MODULES=${SELFFONT_MODULES:-/data/adb/modules}
+if [ -z "$MODDIR" ] || [ ! -d "$MODDIR" ]; then
+    for d in "$MODULES"/selffont-*; do
+        [ -d "$d" ] || continue
+        MODDIR=$d; break
+    done
+fi
 DATA=${SELFFONT_DATA:-/data/adb/selffont}
 COUNT="$DATA/boot-count"
 GUARD_LOG="$DATA/guard.log"
@@ -32,6 +46,15 @@ BOOT_LOG="$DATA/boot.log"
 MAX=${SELFFONT_MAX_BOOT_FAIL:-2}
 
 mkdir -p "$DATA" 2>/dev/null
+# 无条件先留一行：只要这行在，就证明「这个脚本真的被执行了」。
+# 没这行的话，「没跑」和「跑了但路径写不进去」就分不开——2026-11-08 那次就是靠猜。
+printf '%s 守卫进来了 pid=%s 脚本=%s MODDIR=%s\n' \
+    "$(date +%H:%M:%S 2>/dev/null)" "$$" "$0" "$MODDIR" >> "$DATA/guard.log" 2>/dev/null
+# 认不出模块目录就明说，不许静默：空 MODDIR 下 `: > "$MODDIR/disable"` 等于往 / 写。
+if [ -z "$MODDIR" ] || [ ! -d "$MODDIR" ]; then
+    echo "$(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻) MODDIR 认不出来（$MODULES 下没有 selffont-*），本次跳过自动停用，日志照写" >> "$DATA/guard.log" 2>/dev/null
+    MODDIR=''
+fi
 
 # 时间戳用 +0800（本机主人所在时区）；date 不可用时给个占位，不许因此中断。
 now() { date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻; }
@@ -47,8 +70,12 @@ if [ "$n" -gt "$MAX" ]; then
     # 连续 MAX+1 次没走到 boot-completed：判定本模块是卡住的原因，自己停用自己。
     # 停用是 KernelSU 的官方机制（模块目录下一个叫 disable 的空文件），可逆：
     # 主人把那个文件删掉、重启，模块就回来。
-    : > "$MODDIR/disable" 2>/dev/null
-    echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），已自动停用：$MODDIR/disable" >> "$GUARD_LOG" 2>/dev/null
+    [ -n "$MODDIR" ] && : > "$MODDIR/disable" 2>/dev/null
+    if [ -n "$MODDIR" ]; then
+        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），已自动停用：$MODDIR/disable" >> "$GUARD_LOG" 2>/dev/null
+    else
+        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），但 MODDIR 不明，**没能自动停用**" >> "$GUARD_LOG" 2>/dev/null
+    fi
     # 停用之后不再抓日志：模块既然不生效，日志也没有意义。
     exit 0
 fi

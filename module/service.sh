@@ -18,6 +18,11 @@ WAIT=${SELFFONT_BOOT_WAIT:-120}
 
 now() { date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻; }
 
+# 同 post-fs-data.sh：先留一行「我到了」。没这一行就分不清
+# 「守夜没跑」和「跑了但路径写不进去」。
+mkdir -p "$DATA" 2>/dev/null
+printf '%s 守夜进来了 pid=%s\n' "$(date +%H:%M:%S 2>/dev/null)" "$$" >> "$GUARD_LOG" 2>/dev/null
+
 i=0
 while [ "$i" -lt "$WAIT" ]; do
     if [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; then

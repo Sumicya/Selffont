@@ -2069,6 +2069,33 @@ def runtime_scripts():
         def boot():
             return sh([str(guard)], env)
 
+        # ★ 2026-11-08 真机第五次输出：post-fs-data.d/sf-guard.sh 与 /data/adb/selffont
+        #   目录时间戳都是 17:12，目录里却**一个账都没有**——脚本被 init source 进去之后
+        #   在写第一行之前就走了（根因：`${0%/*}` 在 source 时拿到的是父进程路径）。
+        #   两件必须锁死：
+        #   ① 一进来就写一行「守卫进来了」：没这行就分不清「没跑」和「跑了但写不进去」；
+        #   ② MODDIR 不许从 $0 猜；夹具故意不给它，必须能从模块目录自己认出来。
+        gsrc = guard.read_text(encoding="utf-8")
+        assert "守卫进来了" in gsrc, "守卫没有第一行硬证据：又分不清「没跑」和「跑了没写进去」"
+        gcode = [ln for ln in gsrc.splitlines() if not ln.lstrip().startswith("#")]
+        assert not any("${0%/*}" in ln for ln in gcode), \
+            "MODDIR 又从 $0 猜了：被 init source 时那是父进程路径（只看代码行）"
+        mods = tmp / "mods"
+        (mods / "selffont-bench").mkdir(parents=True)
+        nodir = tmp / "nodir"
+        (nodir / "m").mkdir(parents=True)
+        # 有意不给 MODDIR：真机上被 init source 时它要么为空、要么是错的。
+        e0 = {**os.environ, "SELFFONT_DATA": str(nodir / "d"),
+              "SELFFONT_MODULES": str(mods), "SELFFONT_NO_LOGCAT": "1",
+              "SELFFONT_MAX_BOOT_FAIL": "0"}
+        e0.pop("MODDIR", None)
+        assert sh([str(guard)], e0).returncode == 0
+        log0 = (nodir / "d" / "guard.log").read_text(encoding="utf-8")
+        assert "守卫进来了" in log0, "不给 MODDIR 时连第一行都没写：路径又猜错了"
+        assert "selffont-bench" in log0, "没从模块目录自己认出 MODDIR"
+        assert (mods / "selffont-bench/disable").exists(), \
+            "认出了 MODDIR 却没停用：自动跳过失效，主人还是要手动进安全模式"
+
         # 第 1、2 次：计数涨到阈值以内，不许停用。
         for want in ("1", "2"):
             assert boot().returncode == 0
