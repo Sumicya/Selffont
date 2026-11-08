@@ -119,26 +119,56 @@ row yes '旧守卫留下的标志文件' /data/adb/sf-boot-ok /data/adb/sf-fail-
 row yes '本模块的临时副本' /data/local/tmp/selffont* /data/local/tmp/MFGA*.zip
 
 # ---------------------------------------------------------------- ⑥ 备份后缀
-head1 '⑥ 备份后缀 *.bak / *.orig / *~ / ksubak / *disablebak*（可删）'
-for d in /data/adb /data/local/tmp /storage/emulated/0/Download; do
-    find "$d" -maxdepth 4 \( -name '*.bak' -o -name '*.BAK' -o -name '*.orig' -o -name '*~' \
-        -o -iname 'ksubak*' -o -iname '*disablebak*' \) 2>/dev/null
-done > /data/local/tmp/.sfclean.bak.$$ 2>/dev/null || true
-if [ -s /data/local/tmp/.sfclean.bak.$$ ]; then
-    while IFS= read -r p; do
-        row yes '备份/副本后缀，不生效' "$p"
-    done < /data/local/tmp/.sfclean.bak.$$
-else
-    echo '   （无）'
-fi
-rm -f /data/local/tmp/.sfclean.bak.$$
-echo '   ※ 名字带 bak 但**不是**备份的（BakaSU 这类正常应用）下面单列，不删。'
-found=0
+head1 '⑥ 备份后缀 *.bak / *.orig / *~ / ksubak / *disablebak*'
+# 2026-11-08 真机输出打回来的一个错：原来一条 find 扫全部模块，把
+#   /data/adb/modules/hma_oss_zygisk/module.prop.bak（别人的模块备份）
+#   /data/adb/tricky_store/keybox.xml.bak（证书箱备份，17 KB）
+#   /data/adb/hybrid-mount/config.toml.bak（配置备份）
+# 全列成「可删」。别人的模块备份删了，出问题没人能回滚。
+# 现在按归属分两档：本模块目录 + tmp/Download 的可删；别人模块目录的只列不动。
+PATTERNS='\( -name "*.bak" -o -name "*.BAK" -o -name "*.orig" -o -name "*~" -o -iname "ksubak*" -o -iname "*disablebak*" \)'
+
+echo '  ── 可删（本模块目录 / tmp / Download）'
+for d in /data/local/tmp /storage/emulated/0/Download; do
+    eval "find \"$d\" -maxdepth 4 $PATTERNS 2>/dev/null"
+done | while IFS= read -r f; do
+    row yes '备份/副本后缀，不生效' "$f"
+done
+for m in /data/adb/modules/*/; do
+    [ -d "$m" ] || continue
+    id=$(grep -s '^id=' "$m/module.prop" | head -1 | cut -d= -f2)
+    case "${id:-}" in
+        selffont*|MFGA)
+            eval "find \"$m\" -maxdepth 3 $PATTERNS 2>/dev/null" | while IFS= read -r f; do
+                row yes '本模块自己的备份副本' "$f"
+            done ;;
+    esac
+done
+find /data/adb -maxdepth 1 \( -name '*.bak' -o -name '*.orig' -o -name '*~' \) 2>/dev/null \
+    | while IFS= read -r f; do row yes '备份/副本后缀，不生效' "$f"; done
+
+echo '  ── 别人的模块里的备份（只列，一个字节都不动）'
+any=0
+for m in /data/adb/modules/*/; do
+    [ -d "$m" ] || continue
+    id=$(grep -s '^id=' "$m/module.prop" | head -1 | cut -d= -f2)
+    case "${id:-}" in
+        selffont*|MFGA) continue ;;
+    esac
+    eval "find \"$m\" -maxdepth 3 $PATTERNS 2>/dev/null" | while IFS= read -r f; do
+        printf '  [留] %s  ← 模块 %s 的备份，不是本项目的\n' "$f" "${id:-?}"
+    done
+    n=$(eval "find \"$m\" -maxdepth 3 $PATTERNS 2>/dev/null" | wc -l | tr -d ' ')
+    [ "$n" -gt 0 ] && any=1
+done
+[ "$any" = 1 ] || true
+
+echo '  ※ 名字带 bak 但**不是**备份的（BakaSU 这类正常应用）下面单列，不删。'
 for d in /data/adb /data/local/tmp /storage/emulated/0/Download; do
     find "$d" -maxdepth 4 -iname '*bak*' ! -name '*.bak' ! -name '*.BAK' \
         ! -iname 'ksubak*' ! -iname '*disablebak*' 2>/dev/null
-done | while IFS= read -r p; do
-    printf '   [留] %s  （名字带 bak，但不是我们的备份，删不删你定）\n' "$p"
+done | while IFS= read -r f; do
+    printf '  [留] %s  （名字带 bak，但不是我们的备份）\n' "$f"
 done
 
 # ---------------------------------------------------------------- ⑦ 大字件
@@ -150,19 +180,36 @@ done
 echo '   ※ 这些不自动删：可能正是你现在要刷的那个包。'
 
 # ---------------------------------------------------------------- ⑧ 状态标记
-head1 '⑧ 状态标记：带后缀的可删，真的**一个都不许删**'
+head1 '⑧ 状态标记：只有 disable.bak 这类**纯后缀副本**可删，其余一概不动'
+# 2026-11-08 真机输出打回来两个错，改在这里：
+#   · `"$m"update*` 把 `/data/adb/modules/GGAT_10007/update.json`（KernelSU 的模块更新信息）
+#     和 `hma_oss_zygisk/update_desc.sh`（别人模块自己的脚本）当成「假标记」列成可删。
+#     glob 一条 `update*` 覆盖的范围比「名字正好是 update 后面多几个字符的副本」大得多。
+#   · 于是改成白名单：只有「真标记名 + 备份后缀」，且**必须是普通文件、小于 64 字节**。
+#     KernelSU 的真标记本来就是空文件；update.json 是几十字节的 JSON，天然被挡在门外。
+#     拿不准的一律列「留」，宁可留着也不碰别人的模块。
+MARK_MAX=64
 for m in /data/adb/modules/*/; do
     [ -d "$m" ] || continue
     id=$(grep -s '^id=' "$m/module.prop" | head -1 | cut -d= -f2)
-    for f in "$m"disable* "$m"remove* "$m"update*; do
-        [ -e "$f" ] || continue
-        case "${f##*/}" in
-            disable|remove|update)
-                printf '  [留] %s  ← 真标记（模块 %s 当前状态）\n' "$f" "${id:-?}"
-                NKEEP=$((NKEEP+1)) ;;
-            *)
-                row yes '带后缀的标记不生效，是垃圾' "$f" ;;
-        esac
+    for base in disable remove update; do
+        # 真标记：只认名字完全一致的普通文件；存在就只报不动。
+        if [ -f "$m$base" ]; then
+            printf '  [留] %s  ← 真标记（模块 %s）\n' "$m$base" "${id:-?}"
+            NKEEP=$((NKEEP+1))
+        fi
+        # 副本：只认 base 后面紧跟备份后缀的那几种写法。
+        for suf in .bak .bak2 .bak.1 .orig .old .save .tmp '~' .disabled .bak.bak; do
+            f="$m$base$suf"
+            [ -f "$f" ] || continue
+            sz=$(stat -c '%s' "$f" 2>/dev/null || echo 999)
+            if [ "$sz" -le "$MARK_MAX" ]; then
+                row yes '真标记的备份副本（不生效，删了不影响模块状态）' "$f"
+            else
+                printf '  [留] %s  ← 名字像标记副本但有 %s 字节，内容不明，不删\n' "$f" "$sz"
+                NKEEP=$((NKEEP+1))
+            fi
+        done
     done
 done
 

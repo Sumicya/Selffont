@@ -1,3 +1,36 @@
+## 2026-11-08（二十）· 真机输出打回两个会伤别人模块的错（全机清理 v2）
+
+- **现场**：`tools/sf-clean.sh` 第一次在真机上只读跑完，命中 15 项、保留 25 项。
+  输出里有两行是错的，而且都会在 `--delete` 时**动到别人的模块**：
+
+  | 被列成可删 | 实际是什么 | 后果 |
+  |---|---|---|
+  | `/data/adb/modules/GGAT_10007/update.json` | KernelSU 的模块更新信息 | 删了那个模块再也收不到更新 |
+  | `/data/adb/modules/hma_oss_zygisk/update_desc.sh` | 那个模块自己的脚本 | 删了它的描述更新就断 |
+  | `/data/adb/modules/hma_oss_zygisk/module.prop.bak` | 别人的模块备份 | 删了出问题没法回滚 |
+  | `/data/adb/tricky_store/keybox.xml.bak`（17 KB） | 证书箱备份 | 同上 |
+  | `/data/adb/hybrid-mount/config.toml.bak` | 配置备份 | 同上 |
+
+- **根因**：两处 glob 写得太宽。⑧ 段用 `"$m"update*`，把「以 update 开头的**一切**」
+  当成了「真标记名 + 备份后缀的副本」；⑥ 段用一条 `find` 扫全部模块目录，
+  没区分「本项目的备份」和「别人的备份」。
+- **改法一（⑧ 段换成白名单）**：只认 `disable|remove|update` 后面**紧跟**明确后缀的写法
+  （`.bak .bak2 .bak.1 .orig .old .save .tmp ~ .disabled .bak.bak`），并且**必须是普通文件、
+  小于 64 字节**。KernelSU 的真标记本来就是空文件；`update.json` 是几十字节的 JSON，
+  天然被挡在门外。拿不准的一律列「留」。
+- **改法二（⑥ 段按归属分两档）**：`/data/local/tmp`、Download、`/data/adb` 顶层、
+  以及**本模块目录**（id 以 `selffont` 开头或 `MFGA`）里的备份后缀可删；
+  **别人模块目录里的一律只列不删**，并写明「模块 X 的备份，不是本项目的」。
+- **自检**：追加 4 条，全部会红——别人的 `update.json` / `update_desc.sh` /
+  `module.prop.bak` / `keybox.xml.bak` 一条都不许出现在 `[删]` 行里；
+  `--delete` 之后它们必须全都还在。**变异测试实测**：把 ⑧ 段的白名单改回 `update*`，
+  自检立刻红——`别人的 update.json 被列成可删：[.../GGAT_10007/update.json]`。
+  `build.py --check` 19 项全过。
+- **顺带记一笔**：第一次变异测试没红，查出来是**变异写错了方向**（改了 `continue` 分支，
+  那段根本不产出 `[删]` 行）。这说明「变异不改到被断言的那条路径上，就等于没测」——
+  以后做变异测试要先确认改的就是断言覆盖的那条分支。
+- **未验证**：真机上 v2 的只读输出还没回来。
+
 ## 2026-11-08（十九）· 全机清理：一条命令列全历次会话留下的东西
 
 - **现场**：主人原话「你们 ai 做的事总要别人擦屁股，所以我向你要全机清理命令」。

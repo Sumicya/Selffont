@@ -2167,6 +2167,40 @@ def runtime_scripts():
         assert (root / "adb/boot-completed.d/hmaoss.sh").exists(), "删了别人的开机脚本"
         assert (root / "dl/selffont.zip").exists(), "把可能要刷的包删了"
         assert (root / "adb/modules/selffont-bench/module.prop").exists(), "没加 --keep-module 就删了模块"
+        # ④ 别人的模块里的同名但不同用途的文件：真机 2026-11-08 输出把
+        #    GGAT_10007/update.json（KernelSU 模块更新信息）与 hma_oss_zygisk/update_desc.sh
+        #    （那个模块自己的脚本）列成了「假标记可删」——glob `update*` 范围太大。
+        #    这里锁死：它们既不许被列为可删，也不许在 --delete 之后消失。
+        alien = root / "alien"
+        (alien / "modules/hma_oss_zygisk").mkdir(parents=True)
+        (alien / "modules/GGAT_10007").mkdir(parents=True)
+        (alien / "modules/tricky_store").mkdir(parents=True)
+        (alien / "modules/hma_oss_zygisk/module.prop").write_text("id=hma_oss_zygisk\n")
+        (alien / "modules/hma_oss_zygisk/update_desc.sh").write_text("#!/bin/sh\necho hi\n")
+        (alien / "modules/hma_oss_zygisk/module.prop.bak").write_text("old prop\n")
+        (alien / "modules/GGAT_10007/module.prop").write_text("id=GGAT_10007\n")
+        (alien / "modules/GGAT_10007/update.json").write_text('{"versionCode":1}\n')
+        (alien / "modules/tricky_store/module.prop").write_text("id=tricky_store\n")
+        (alien / "modules/tricky_store/keybox.xml.bak").write_text("x" * 2000)
+        alien_sh = tmp / "clean-alien.sh"
+        alien_text = clean.read_text(encoding="utf-8")
+        for a, b in (("/data/adb", str(alien)), ("/data/local/tmp", str(alien / "tmp")),
+                     ("/storage/emulated/0/Download", str(alien / "dl")),
+                     ('[ "$(id -u)" = "0" ] ||', "true ||")):
+            alien_text = alien_text.replace(a, b)
+        alien_sh.write_text(alien_text, encoding="utf-8")
+        listing = sh([str(alien_sh)], os.environ).stdout
+        for must_not_list in ("update.json", "update_desc.sh", "keybox.xml.bak", "module.prop.bak"):
+            hits = [ln for ln in listing.splitlines() if must_not_list in ln and "[删]" in ln]
+            assert not hits, f"别人的 {must_not_list} 被列成可删：{hits}"
+        assert sh([str(alien_sh), "--delete"], os.environ).returncode == 0
+        for must_survive in ("modules/hma_oss_zygisk/update_desc.sh",
+                             "modules/hma_oss_zygisk/module.prop.bak",
+                             "modules/GGAT_10007/update.json",
+                             "modules/tricky_store/keybox.xml.bak",
+                             "modules/hma_oss_zygisk/module.prop"):
+            assert (alien / must_survive).exists(), f"--delete 删了别人的 {must_survive}"
+
         # ③ 未知参数不许当成默认跑。
         assert sh([str(rewritten), "--yes-delete-everything"], os.environ).returncode == 2, \
             "未知参数没有拒绝"
