@@ -3819,5 +3819,41 @@ def main() -> None:
               passthrough_mother=args.passthrough_mother, module_id=args.module_id)
 
 
+@check
+def review_marks():
+    """§19 检讨标记机自检：`tools/mark.py` 的插与验必须同源、且真能抓假。
+
+    这批自检是必要的，因为上一轮「先用 tools/mark.py 实测通过」这句话说了三遍，
+    而那个文件**从来没存在过** —— 工具不接进 --check，就会烂成一句空话。
+    """
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("mark_probe", ROOT / "tools/mark.py")
+    mk = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mk)
+
+    body = "汉字" * 5100                      # 10200 汉字
+    marked = mk.insert(body)
+    assert mk.strip_marks(marked) == body, "插标记吃掉了正文"
+    assert [int(x) for x in mk.MARK.findall(marked)] == list(range(100, 10201, 100)), \
+        "标记位置不是每满 100 汉字一枚"
+    ok, problems, line = mk.check(marked)
+    assert ok, f"合规稿被判不合格：{problems}"
+
+    # 六种造假各造一次，必须全部变红（宁可这个自检自己挂，也不许造假蒙过去）
+    cases = {
+        "手改标记": marked.replace("〔200〕", "〔150〕", 1),
+        "删一个汉字（间隔变 99）": marked[:marked.index("汉", 10)] + marked[marked.index("汉", 10) + 1:],
+        "末尾漏标 240 字": marked + "汉字" * 120,
+        "极短稿只有 1 枚标记（不足一万）": mk.insert("汉字" * 150),
+        "无标记裸稿": "汉字" * 90,
+        "删掉首枚标记": marked.replace("〔100〕", "", 1),
+        "标记数虚报（去掉一半）": mk.MARK.sub("", marked[: len(marked) // 2]) + marked[len(marked) // 2:],
+    }
+    for label, text in cases.items():
+        bad_ok, bad_problems, _ = mk.check(text)
+        assert not bad_ok, f"造假没被抓：{label}"
+    assert "本篇汉字 10200" in line and "末枚〔10200〕" in line, line
+
+
 if __name__ == "__main__":
     main()
