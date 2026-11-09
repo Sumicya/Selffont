@@ -33,7 +33,6 @@ SHA、run_id、run_number、R_first、当日序号与最终版本；取不到数
 import argparse
 import hashlib
 import io
-import json
 import os
 import re
 import shutil
