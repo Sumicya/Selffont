@@ -73,8 +73,7 @@ def main() -> None:
     W, H = 2440, 1200
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
-    f_title = f_cjk_title = ImageFont.truetype(label_cjk, 34)
-    f_lab = ImageFont.truetype(label_cjk, 22)
+    f_cjk_title = ImageFont.truetype(label_cjk, 34)
     f_s = ImageFont.truetype(label_cjk, 20)
     f_cjk_lab = ImageFont.truetype(label_cjk, 24)
 

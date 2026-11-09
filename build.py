@@ -1214,7 +1214,13 @@ def base_zip(path, fonts, licenses=True):
 
 
 def sh(args, env):
-    return subprocess.run(["sh", *args], env=env, capture_output=True, text=True)
+    """跑一段 shell。
+
+    ★ 必须限时（§18：超时按未完成）。注入型 bug —— 比如在抓日志的子 shell 里起一个
+    `while :; do ...; done &` —— 会把管道写端一直开着，`subprocess.run` 永远等不到 EOF，
+    整个 --check 挂死。挂死和「红」是两回事：挂死没人看得见，红才是判据。
+    """
+    return subprocess.run(["sh", *args], env=env, capture_output=True, text=True, timeout=120)
 
 
 # ---------------------------------------------------------------- 度量归一（真机验证的角标修复）
@@ -2180,7 +2186,9 @@ def runtime_scripts():
             "没有用黑名单排除刷屏标签"
         # 只查字面句会被自己改文案坑（这次就是：句子改成 $_sock 就误红）。
         # 结构断言：**没 logd 时的那行日志**必须在，且真机默认路径必须是 /dev/socket/logdw。
-        assert "抓日志：等了 15 秒没有" in gsrc, \
+        # 文案改过两次（「等了 15 秒没有…」→「$_sock 不存在…」），所以断言结构而不是整句：
+        # 只要「logd 没起来」这件事被写进 guard.log 就行。
+        assert "logd 没起来" in gsrc and "本次没抓到" in gsrc, \
             "抓不到日志时静默退出：说不清是没跑还是 logd 没起来"
         assert "_sock=${SELFFONT_LOGD_SOCKET:-/dev/socket/logdw}" in gsrc, \
             "logd 探针的默认路径被改了：真机上就是 /dev/socket/logdw"
@@ -2373,26 +2381,36 @@ def runtime_scripts():
         # ★ 2026-11-09：logcat.err 必须**每次开机重写**。跨开机追加会越滚越大，
         #   而每次开机只关心这一轮为什么停。
         assert ': > "$DATA/logcat.err"' in gsrc, "logcat.err 没有每次开机重写：会跨开机无限累积"
-        # ★ 心跳：真机 logcat 在第 54 秒自己断（那是系统开始关机），只靠「实际跑了 N 秒」
-        #   看不出断的那一刻写到哪儿了。每 10 秒必须留一行「已 N 秒 / N 行 / N 字节」。
+        # ★ 心跳（2026-11-09 改按字节，§8 禁 sleep）：真机 logcat 在第 54 秒自己断
+        #   （那是系统开始关机），只靠「实际跑了 N 秒」看不出断的那一刻写到哪儿了。
+        #   现在每满 1 MiB 由**同一个 awk** 写一行「N 字节 / N 行 / 最后一条时间戳」，
+        #   不另起子进程、不 sleep；撞上限时显式写 TRUNCATED（Balanov/uncut 判据）。
         assert "抓日志心跳" in gsrc, "没有抓取心跳：分不清「一直在抓」和「早就断了、只是没退出」"
+        assert "SELFFONT_HEARTBEAT_BYTES" in gsrc, "心跳粒度不可调"
+        assert "TRUNCATED" in gsrc, "撞上限不显式报：截断被静默吞掉（违 uncut 判据）"
+        assert "reason=%s" in gsrc, "TRUNCATED 没报是撞字节还是撞行数"
+        # 心跳与截断都必须在**过滤 logcat 的同一个 awk** 里，不许再起 sleep 子进程。
+        gcode_no_comment = [ln for ln in gsrc.splitlines() if not ln.lstrip().startswith("#")]
+        # §8「禁 sleep 与手写循环」：交付脚本里一处都不许有，注释里提到不算。
+        # 原来只查「sleep 10」这个字面量，变异体写成 `sleep 10` 才红、写别的就漏（自己撞过）。
+        _sleeps = [ln.strip() for ln in gcode_no_comment if "sleep" in ln]
+        assert not _sleeps, f"post-fs-data.sh 里有 sleep（§8 禁）：{_sleeps}"
         hbd = tmp / "hbtest"
         (hbd / "d").mkdir(parents=True)
         (hbd / "m/selffont-bench").mkdir(parents=True)
         (hbd / "sock").mkdir()
         (hbd / "sock/logdw").touch()
-        # 慢速持续吐：每 30 行停 1 秒，保证活过 12 秒的时长上限，心跳才有机会写。
         hbl = hbd / "fakelogcat"
         hbl.write_text(
-            "#!/bin/sh\ni=0\nwhile :; do i=$((i+1)); "
-            "printf '11-09 18:01:30.123  1074  1099 I Typeface: 第 %06d 行，长度接近真机平均值的填充内容用于占位\\n' $i; "
-            "[ $((i % 30)) -eq 0 ] && sleep 1; done\n", encoding="utf-8")
+            "#!/bin/sh\ni=0\nwhile [ $i -lt 200000 ]; do i=$((i+1)); "
+            "printf '11-09 18:01:30.123  1074  1099 I Typeface: 第 %06d 行，长度接近真机平均值的填充内容用于占位\\n' $i; done\n",
+            encoding="utf-8")
         hbl.chmod(0o755)
         (hbd / "d/logcat.err").write_text("上一轮的旧错误\n", encoding="utf-8")
         ehb = {h: v for h, v in os.environ.items() if h != "MODDIR"}
         ehb.update({"SELFFONT_DATA": str(hbd / "d"), "SELFFONT_MODULES": str(hbd / "m"),
-                    "SELFFONT_BOOT_ID": "493", "SELFFONT_BOOT_LOG_SECONDS": "12",
-                    "SELFFONT_BOOT_LOG_BYTES": "25165824",
+                    "SELFFONT_BOOT_ID": "493", "SELFFONT_BOOT_LOG_SECONDS": "60",
+                    "SELFFONT_BOOT_LOG_BYTES": "2097152",
                     "SELFFONT_FAST_REBOOT_WINDOW": "999999999",
                     "SELFFONT_LOGD_SOCKET": str(hbd / "sock/logdw"),
                     "SELFFONT_LOGCTL": str(hbl),
@@ -2405,10 +2423,29 @@ def runtime_scripts():
             time.sleep(0.2)
         htt = hl.read_text(encoding="utf-8")
         assert "抓日志：停止" in htt, "心跳夹具：抓日志没停下"
-        assert "抓日志心跳：已 10 秒" in htt, \
+        assert "抓日志心跳" in htt, \
             "心跳没写出来：真机上就分不清「一直在抓」和「第 54 秒就断了」"
+        # 截断必须显式写在 boot.log 的**最后一行**，且不能被缓冲打乱顺序。
+        tail = (hbd / "d/boot.log").read_text(encoding="utf-8").rstrip("\n").splitlines()[-1]
+        assert tail.startswith("TRUNCATED:"), f"截断标记不是末行（{tail[:60]}）：缓冲顺序被打乱"
+        assert "reason=" in tail, f"TRUNCATED 没写原因：{tail}"
+        assert "TRUNCATED" in htt, "guard.log 里没有截断记录"
         assert "上一轮的旧错误" not in (hbd / "d/logcat.err").read_text(encoding="utf-8"), \
             "logcat.err 跨开机累积：上一轮的错误还在，这一轮的查不出来"
+        # ★ service.sh：等待必须放进后台子进程。init 收尾时会回收 service.d 的前台进程，
+        #   前台等待循环被杀了就永远清不掉 boot-count —— 与 post-fs-data 的死分支叠加，
+        #   正常用一天重启一次模块就自杀（2026-11-09 主人打回）。
+        nsrc = night.read_text(encoding="utf-8")
+        ncode = [ln for ln in nsrc.splitlines() if not ln.lstrip().startswith("#")]
+        assert any(ln.strip() == ") &" for ln in ncode), \
+            "守夜没把等待放进后台子进程：被 init 回收后 boot-count 永远清不掉"
+        # 实际调用行是 `timeout "$WAIT" "$RESETPROP" -w sys.boot_completed 1`：
+        # 变量名里没有 resetprop 字样，判据要看 `-w sys.boot_completed`。
+        assert any("-w sys.boot_completed" in ln for ln in ncode), \
+            "守夜没有事件等待（resetprop -w sys.boot_completed）：退回轮询就必然要 sleep"
+        assert not any("sleep" in ln for ln in ncode), \
+            f"守夜里还有 sleep：{[ln.strip() for ln in ncode if 'sleep' in ln]}"
+        assert "WAIT" in nsrc and "timeout" in nsrc, "resetprop -w 没有超时封顶：等不到会永久挂一个子进程"
         # ★ 2026-11-09 教训：上一轮的现场不是「分析完」才没的，是被清账命令 rm 掉的。
         #   那次 guard.log 停在「logcat 自己结束」，而「谁发起重启」的证据就在 boot.log 里。
         #   所以开机必须**自动扫上一轮日志**：结论进 guard.log，原文留成 boot.log.prev，
@@ -2496,17 +2533,51 @@ def runtime_scripts():
             time.sleep(0.2)
         assert "上限 1 秒 / 25165824 字节" in glog2.read_text(encoding="utf-8"), \
             "默认上限不是 24 MiB：2 MiB 只够 2.8 秒、8 MiB 只够 37 秒，真机 81 秒才重启"
+        # ★ 2026-11-09 主人打回的致命 bug：窗口判据原来读 /proc/uptime，
+        #   而 post-fs-data 在开机第 2~5 秒跑，uptime 永远 ~3 秒 < 300 ——
+        #   「活过窗口期就清零」是**死分支**，正常重启一次就把模块关掉。
+        #   现在判据是 `boot_id - 上次的 boot_id`（两个 btime 相减），夹具必须用它。
+        # 只看**窗口判据那一段**（从「开机计数」到「先写计数再干别的」之间）。
+        # 抓取时长那边用 /proc/uptime 量「跑了多少秒」是正当的，不许一刀切。
+        _win_start = gsrc.index("# ---- ① 开机计数 ----")
+        _win_end = gsrc.index("# 先写计数再干别的")
+        _win_block = [ln for ln in gsrc[_win_start:_win_end].splitlines()
+                      if not ln.lstrip().startswith("#")]
+        assert not any("/proc/uptime" in ln for ln in _win_block), \
+            ("窗口判据又回去读 /proc/uptime 了：开机第 3 秒时它永远小于窗口，分支永远走不到。"
+             f"违规行：{[ln.strip() for ln in _win_block if '/proc/uptime' in ln]}")
+        assert "boot_id - _last" in gsrc or "_lived=$(( boot_id - _last ))" in gsrc, \
+            "窗口判据不是两个 btime 相减：那就算不出「上次开机活了多久」"
+        # 场景 A：上次开机活了 4 小时（btime 差 14400 ≥ 300）→ 必须清零、不停用
         win = tmp / "wintest"
         (win / "d").mkdir(parents=True)
         (win / "m/selffont-bench").mkdir(parents=True)
-        (win / "d" / "boot-count").write_text("1\n")
+        (win / "d" / "boot-count").write_text("3\n")
+        (win / "d" / "pfd-seen").write_text("1000000\n")
         ew = {h: v for h, v in os.environ.items() if h != "MODDIR"}
         ew.update({"SELFFONT_DATA": str(win / "d"), "SELFFONT_MODULES": str(win / "m"),
-                   "SELFFONT_BOOT_ID": "7", "SELFFONT_NO_LOGCAT": "1",
-                   "SELFFONT_FAST_REBOOT_WINDOW": "1"})   # uptime 必然 > 1 秒
+                   "SELFFONT_BOOT_ID": "1014400", "SELFFONT_NO_LOGCAT": "1",
+                   "SELFFONT_FAST_REBOOT_WINDOW": "300"})
         sh([str(guard)], ew)
         assert not (win / "m/selffont-bench/disable").exists(), \
-            "上次开机活过了窗口期，这次却把它停用了：一次意外重启就误杀模块"
+            "上次开机活了 4 小时（≥ 窗口 300 秒），这次却把它停用了：一次正常重启就误杀模块"
+        assert (win / "d" / "boot-count").read_text().strip() == "1", \
+            "活过窗口期却没清零：计数会一直累积，迟早误停用"
+        wlog = (win / "d" / "guard.log").read_text(encoding="utf-8")
+        assert "上次开机存活 14400 秒" in wlog, f"没报上次开机活了多久：{wlog[-400:]}"
+        # 场景 B：上次开机只活了 81 秒（< 300）→ 必须累加，超过阈值就停用
+        win2 = tmp / "wintest2"
+        (win2 / "d").mkdir(parents=True)
+        (win2 / "m/selffont-bench").mkdir(parents=True)
+        (win2 / "d" / "boot-count").write_text("1\n")
+        (win2 / "d" / "pfd-seen").write_text("2000000\n")
+        ew2 = {h: v for h, v in os.environ.items() if h != "MODDIR"}
+        ew2.update({"SELFFONT_DATA": str(win2 / "d"), "SELFFONT_MODULES": str(win2 / "m"),
+                    "SELFFONT_BOOT_ID": "2000081", "SELFFONT_NO_LOGCAT": "1",
+                    "SELFFONT_FAST_REBOOT_WINDOW": "300", "SELFFONT_MAX_BOOT_FAIL": "1"})
+        sh([str(guard)], ew2)
+        assert (win2 / "m/selffont-bench/disable").exists(), \
+            "上次只活了 81 秒（卡住特征）却没停用：守卫失效"
 
         # ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
         #   旧版只在**本次开机开始时**给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1 之后
@@ -2672,7 +2743,7 @@ def runtime_scripts():
         (scope / "data/misc/selffont-alsono").write_text("x")
         (scope / "data/keepme/selffont-should-appear").write_text("x")
         scope_sh = tmp / "clean-scope.sh"
-        scope_text = scope_sh_text = clean.read_text(encoding="utf-8")
+        scope_text = clean.read_text(encoding="utf-8")
         for a, b in ((str(scope / "data"), str(scope / "data")),):
             pass
         # 顺序要紧：**先**换整行扫描根，**再**换各段路径。
@@ -2984,6 +3055,19 @@ def repo_constants():
 
 
 @check
+def dead_code():
+    """§9 旧代码清零：标识符只出现一次、import 零用、只写不读的变量。
+
+    判据不在本文件里另写一套——扫描器是 tools/deadcode.py，它自己列盲区。
+    这里只负责「非 0 就挂」，这样本地 --check 与 CI 走同一条判据。
+    """
+    result = subprocess.run([sys.executable, str(ROOT / "tools/deadcode.py")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, "死码未清零：\n" + result.stdout[-3000:]
+    assert "合计 0 处死码" in result.stdout, result.stdout[-2000:]
+
+
+@check
 def supplemental_font_reference():
     """OFL 替代字体必须处在通用回退链，紧随 NotoUnicode，且来源固定。"""
     root = ET.fromstring((ROOT / "fonts.xml").read_bytes())
@@ -3192,9 +3276,13 @@ def no_auto_publish():
                     f"{path.name}/{job_name}: 产物名 {label!r} 的后缀必须是 ${{{{ env.VERSION }}}}（五段版本）"
 
 
-def run_checks() -> None:
+def run_checks(only: str | None = None) -> None:
     failed = 0
-    for fn in CHECKS:
+    selected = [fn for fn in CHECKS if only is None or fn.__name__ == only]
+    if only is not None and not selected:
+        print(f"没有叫 {only} 的检查项；现有：{', '.join(fn.__name__ for fn in CHECKS)}")
+        sys.exit(2)
+    for fn in selected:
         try:
             fn()
             print(f"PASS {fn.__name__}")
@@ -3205,7 +3293,7 @@ def run_checks() -> None:
     if failed:
         print(f"{failed} 个检查失败")
         sys.exit(1)
-    print(f"{len(CHECKS)} 项全部通过")
+    print(f"{len(selected)} 项全部通过")
 
 
 @check
@@ -3617,7 +3705,6 @@ def emit_preview(chars: str, out_dir: Path, compare: Path | None = None, size: i
     values = []
     for index, char in enumerate(chars_sorted):
         x = gutter + index * cell_w
-        pair = None
         for row, path in enumerate((compare, target)):
             ink, (dx, dy) = freetype_iou.bitmap(path, char, size)
             top = 30 + row * cell_h
@@ -3639,6 +3726,8 @@ def emit_preview(chars: str, out_dir: Path, compare: Path | None = None, size: i
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true", help="跑内建自检：不下载、不打包")
+    # 只跑指定的检查项。变异测试要一条一条验，全量一次 25 秒，五次就两分钟起步。
+    parser.add_argument("--only", metavar="名字", help="只跑这一项检查（配合 --check）")
     parser.add_argument("--cjk-font", type=Path, metavar="DIR",
                         help="只出二创汉字字件（可变 + 三个静态实例）到 DIR，不下载、不打包")
     parser.add_argument("--passthrough-mother", metavar="TTF",
@@ -3670,7 +3759,7 @@ def main() -> None:
     elif args.cjk_font:
         emit_cjk_font(args.cjk_font)
     elif args.check:
-        run_checks()
+        run_checks(args.only)
     else:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,
               day=args.day, date=args.date, query=args.query_ci,

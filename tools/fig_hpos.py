@@ -110,7 +110,6 @@ def distribution(path: Path) -> list[float]:
 
 def draw_dist(master: Path, fixed: Path, out: Path) -> None:
     a, b = distribution(master), distribution(fixed)
-    top = 60
     bins = list(range(0, 65, 5))
     ha = [sum(1 for v in a if lo <= v < lo + 5) for lo in bins]
     hb = [sum(1 for v in b if lo <= v < lo + 5) for lo in bins]

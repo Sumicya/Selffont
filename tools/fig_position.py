@@ -47,8 +47,6 @@ def draw_row(img, d, path, chars, ytop, cell, name, label_font, show_guides=True
     with TTFont(str(path), lazy=True) as f:
         cmap = f.getBestCmap()
         hmtx = f["hmtx"]
-        hhea = f["hhea"]
-        png_font = ImageFont.truetype(str(path), int(cell * 0.62))
         x = 40
         for ch in chars:
             cp = ord(ch)
@@ -62,7 +60,6 @@ def draw_row(img, d, path, chars, ytop, cell, name, label_font, show_guides=True
             base = ytop + cell * 0.78
             sx = cell / max(adv, 1) * 0.86
             gx0 = x + (cell - adv * sx) / 2
-            gy0 = base - 1000 * sx * 0.78 / 0.78  # 顶部（1000 单位高）
             # 画字：按字格缩放渲染，锚在基线上
             fpx = ImageFont.truetype(str(path), int(1000 * sx))
             d.text((gx0, base), ch, font=fpx, fill=INK, anchor="ls")

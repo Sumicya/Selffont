@@ -57,9 +57,6 @@ def _area(box) -> float:
     return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
 
 
-def _overlap(a, b) -> bool:
-    return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
-
 
 def face_box(glyf, glyph, codepoint=None):
     """字面框：去掉点名残块后，全部轮廓的并集。"""

@@ -171,7 +171,9 @@ su -c 'ls -l /data/adb/selffont/; echo "== 守卫 =="; cat /data/adb/selffont/gu
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python build.py --check                  # 自检:无框架、无夹具,不下载不打包
+.venv/bin/python build.py --check                  # 自检 20 项：无框架、不下载不打包
+.venv/bin/python build.py --check --only dead_code # 只跑一项（变异测试用）
+python3 tools/deadcode.py                          # 死码单独跑：非 0 即挂
 .venv/bin/python build.py --build 47 --day 3 --date 26.10.6   # 或手工传三段(离线;缺一段就报错不出包)
 .venv/bin/python build.py --font 文件或URL --base 本地ZIP或URL
 .venv/bin/python build.py --keep-web-fonts         # 放行网页自带字体（默认压成主字体）

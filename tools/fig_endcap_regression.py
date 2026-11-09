@@ -8,7 +8,6 @@ A = 回滚后的字体（`/tmp/base/preview.ttf`），B = 回归版（`a92a9bd`�
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -74,7 +73,6 @@ def fig_whole(path: Path):
     W = gap + (tw + gap) * 3
     H = gap + len(rows) * (th + lab_h + gap)
     out = Image.new("RGB", (W, H), "white")
-    pen = ImageDraw.Draw(out)
 
     heads = ["A 回滚后", "B 回归版", "差异 红B 蓝A"]
     for i, h in enumerate(heads):

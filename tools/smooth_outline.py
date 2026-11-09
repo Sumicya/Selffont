@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import statistics
-import sys
 from pathlib import Path
 
 from fontTools.ttLib import TTFont

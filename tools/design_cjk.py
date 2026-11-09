@@ -294,12 +294,10 @@ def write(glyphs: dict[int, dict], path: Path | None = None) -> int:
             out += struct.pack("<2h", int(round(start[0] * 10)), int(round(start[1] * 10)))
             out += struct.pack("<H", len(prof))
             out += bytes(max(1, min(255, int(round(float(v) * 128)))) for v in prof)
-            prev = start
             for seg in segs:
                 out += struct.pack("<6h", *[int(round(c * 10)) for c in seg[1]],
                                    *[int(round(c * 10)) for c in seg[2]],
                                    *[int(round(c * 10)) for c in seg[3]])
-                prev = seg[3]
     target.write_bytes(bytes(out))
     return len(out)
 
@@ -863,10 +861,6 @@ def stroke_contours(stroke, weight, glyph=None):
     start = _round_cap(axis[0], math.atan2(normals[0][1], normals[0][0]) + math.pi, h_start, ARC_STEPS)
     return [_as_cw(left + end + right[::-1] + start)]
 
-
-def stroke_contour(stroke, weight, glyph=None):
-    got = stroke_contours(stroke, weight, glyph)
-    return got[0] if got else []
 
 
 # 旧数据（SFCJ2）只有整字一个半宽。比例来自 33,944 字逐笔配对的实测中位：

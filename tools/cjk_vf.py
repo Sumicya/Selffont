@@ -105,23 +105,7 @@ def _band_edges(rings, bands=48):
 BODY_BAND = (-20, 700)
 
 
-def _body_index():
-    """字身带落在 48 条横带里的下标区间（含两端）。"""
-    y0, y1 = BAND_Y
-    lo = max(0, int((BODY_BAND[0] - y0) / (y1 - y0) * 48))
-    hi = min(47, int((BODY_BAND[1] - y0) / (y1 - y0) * 48))
-    return lo, hi
 
-
-def _body_edges(edges):
-    """只保留字身那几带的最左/最右 x（其余填 None，形状不变）。"""
-    lo, hi = _body_index()
-    left, right = list(edges[0]), list(edges[1])
-    for k in range(len(left)):
-        if k < lo or k > hi:
-            left[k] = None
-            right[k] = None
-    return left, right
 
 
 
@@ -147,18 +131,6 @@ def side_target(codepoint: int) -> tuple[int, int] | None:
             _SIDE[cp] = (advance, center)
     return _SIDE.get(codepoint)
 
-
-def _coverage(edges, side):
-    """贴边覆盖率：这一侧有墨的带里，有多少比例的带贴在极值 `BEARING_COV_TOL` 以内。
-
-    竖笔处处贴边 → 1.0；圆弧只有中段贴边 → 0.3 上下；斜边只有一端贴边 → 0.2 上下。
-    只数**有墨**的带：字腔里的空带不参与，否则 `o` 会按孔洞的高度被摊薄。
-    """
-    edge = [v for v in (edges[0] if side == "left" else edges[1]) if v is not None]
-    if not edge:
-        return 1.0
-    ext = min(edge) if side == "left" else max(edge)
-    return sum(1 for v in edge if abs(v - ext) < BEARING_COV_TOL) / len(edge)
 
 
 def _bearing_letter(profile, side):
@@ -299,15 +271,6 @@ def row_coverage(profile, side: str) -> float:
     ext = vals.min() if side == "left" else vals.max()
     return float(np.mean(np.abs(vals - ext) < BEARING_COV_TOL))
 
-
-def pair_white(advance: int, a, b) -> float | None:
-    """a 后接 b 的最小墨迹白（两字都有墨的行）。两个 profile 都是行法。"""
-    import numpy as np
-    left_a, right_a = a
-    left_b, _ = b
-    whites = advance + left_b - right_a
-    whites = whites[~np.isnan(whites)]
-    return float(whites.min()) if len(whites) >= 20 else None
 
 
 def outline_edges(glyph):

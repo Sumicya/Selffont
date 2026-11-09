@@ -88,36 +88,41 @@ if [ -n "$boot_id" ]; then
             "$(now)" "$boot_id" >> "$GUARD_LOG" 2>/dev/null
         exit 0
     fi
-    echo "$boot_id" > "$STAMP" 2>/dev/null
 fi
 
 # ---- ① 开机计数 ----
 # ★ 阈值降到 1 之后有个新风险：**意外重启**（断电、电量耗尽、系统更新）也会被算成
 #   「没走到底」，一次就把模块关掉。真机上卡住的特征是「开机后 81 秒就重启」，
 #   正常用了一阵再重启完全不是一回事。所以只有**上次开机存活不到 WINDOW 秒**才算失败。
-#   $SELFFONT_FAST_REBOOT_WINDOW 默认 300 秒；判不出来（没有 /proc/uptime）时按「算失败」，
-#   宁可误关也不许因为算不出来而永远不关。
+#
+# ★★ 2026-11-09 主人打回的致命 bug（此前的写法是死的）：
+#   旧写法读 `/proc/uptime` 当「上次开机活了多久」。可 post-fs-data 在开机第 2~5 秒跑，
+#   `/proc/uptime` 是**本次**开机的秒数，永远 ~3 秒 < 300 → `FAST` 永远为 1 →
+#   「活过窗口期就清零」这个分支在真机上 **100% 走不到**（死分支）。
+#   后果叠加 service.sh 的前台循环被 init 杀掉（计数清不掉）：
+#   正常用一天、重启一次，n=2 > MAX=1，模块就把自己 disable 了。
+#   正确判据：`boot_id - last`，两个 btime 相减就是**上次开机存活了多久**，
+#   不需要 /proc/uptime，也不受本次开机几秒的影响。
 WINDOW=${SELFFONT_FAST_REBOOT_WINDOW:-300}
 case "$WINDOW" in ''|*[!0-9]*) WINDOW=300 ;; esac
-_up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
-case "$_up" in ''|*[!0-9.]*) _up='' ;; esac
-if [ -n "$_up" ]; then
-    # awk 比较小数（busybox 的 test 不收小数）
-    if awk -v u="$_up" -v w="$WINDOW" 'BEGIN{exit !(u < w)}'; then
-        FAST=1
-    else
-        FAST=0
+_last=${last:-}
+case "$_last" in ''|*[!0-9]*) _last='' ;; esac
+if [ -n "$boot_id" ] && [ -n "$_last" ] && [ "$_last" -lt "$boot_id" ]; then
+    _lived=$(( boot_id - _last ))
+    if [ "$_lived" -ge "$WINDOW" ]; then
+        # 上次开机活过了窗口期：主人正常用了一阵再重启，不是卡住，计数清零重来。
+        if [ -s "$COUNT" ]; then
+            echo "$(now) 上次开机存活 ${_lived} 秒（≥ 窗口 ${WINDOW} 秒），不算卡住，计数清零" >> "$GUARD_LOG" 2>/dev/null
+        fi
+        : > "$COUNT"
     fi
+    # 活不到窗口期：不动计数，交给下面的 n+1 累加。
 else
-    FAST=1
+    # 没有上次的 btime（首次开机 / 文件被清）：按「算失败」累加，宁可误关也不许永远不关。
+    :
 fi
-if [ "$FAST" = "0" ]; then
-    # 上次开机活过了窗口期：那是主人正常用了一阵再重启，不是卡住，计数清零重来。
-    if [ -s "$COUNT" ]; then
-        echo "$(now) 上次开机已存活超过 ${WINDOW} 秒（本次 uptime=${_up}），不算卡住，计数清零" >> "$GUARD_LOG" 2>/dev/null
-    fi
-    : > "$COUNT"
-fi
+# 现在才覆盖 STAMP：上面要用它算「上次活了多久」，先写就把判据毁了。
+[ -n "$boot_id" ] && echo "$boot_id" > "$STAMP" 2>/dev/null
 # 先写计数再干别的：万一本脚本自己后面卡住，这次开机也已经算进去了。
 n=$(cat "$COUNT" 2>/dev/null)
 case "$n" in ''|*[!0-9]*) n=0 ;; esac
@@ -261,13 +266,10 @@ grab() {
     # ★ 2026-11-09：夹具要能跑这段，才验得到「上限到底生效没有」。真机路径不许变，
     #   只有 SELFFONT_LOGCTL 给了值时才用它（夹具传一个假 logcat，真机不设=走原路）。
     _sock=${SELFFONT_LOGD_SOCKET:-/dev/socket/logdw}
-    i=0
-    while [ ! -e "$_sock" ] && [ "$i" -lt 15 ]; do
-        i=$((i + 1))
-        sleep 1
-    done
     if [ ! -e "$_sock" ]; then
-        echo "$(now) 抓日志：等了 15 秒没有 $_sock，本次没抓到（不是没跑，是 logd 没起来）" >> "$GUARD_LOG" 2>/dev/null
+        # 不再 sleep 轮询（§8）。logd 没起来就是抓不到，直接记账退出；
+        # 真机上 post-fs-data 阶段 logd 通常已在跑，这一行是异常提示不是常态。
+        echo "$(now) 抓日志：$_sock 不存在，本次没抓到（不是没跑，是 logd 没起来）" >> "$GUARD_LOG" 2>/dev/null
         exit 0
     fi
     # 体积封顶用**边抓边看**：每 2000 行检查一次，超了就停。
@@ -288,6 +290,9 @@ grab() {
     # ★ 不许再给它加「最小行数」下限——上一版的下限让「行数封顶」和字节预算脱钩，
     #   真机上 8 MiB 只写出 4.79 MiB 就断了（41943 = 8388608 ÷ 200）。
     _lines=$(( _cap / 50 ))
+    # 心跳粒度 1 MiB（不是按时间：时间心跳要 sleep，§8 禁）。
+    _HB_BYTES=${SELFFONT_HEARTBEAT_BYTES:-1048576}
+    case "$_HB_BYTES" in ''|*[!0-9]*) _HB_BYTES=1048576 ;; esac
     # 秒级 date 分辨不出亚秒差：夹具里跑 0.2 秒会印成「实际跑了 0 秒」，也是假话。
     # 有 /proc/uptime 就用它（带两位小数）；没有就退回秒级并标明「精度 1 秒」。
     _t0=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
@@ -296,23 +301,35 @@ grab() {
     : > "$DATA/logcat.err" 2>/dev/null
     : > "$DATA/.lc-rc" 2>/dev/null
     echo "$(now) 抓日志：开始（全量，排除刷屏标签），上限 $_limit_s 秒 / $_cap 字节" >> "$GUARD_LOG" 2>/dev/null
-    # 心跳：真机上 logcat 可能在第 54 秒自己断（那是系统开始关机），
-    # 只靠「实际跑了 N 秒」看不出断的那一刻还在写什么。每 10 秒记一次，独立可查。
-    (
-        _hb=0
-        while [ "$_hb" -lt "$_limit_s" ]; do
-            sleep 10
-            _hb=$((_hb + 10))
-            printf '%s 抓日志心跳：已 %s 秒，boot.log %s 行 / %s 字节\n' "$(now)" "$_hb" \
-                "$(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?)" \
-                "$(wc -c < "$BOOT_LOG" 2>/dev/null || echo ?)" >> "$GUARD_LOG" 2>/dev/null
-        done
-    ) &
-    _hbpid=$!
+    # 心跳与封顶都放进**同一个 awk**（§8 禁 sleep；Balanov/uncut：禁静默截断）。
+    #   · 每满 1 MiB 写一行心跳：字节 / 行数 / 这条日志自己的时间戳 —— 有日志就有心跳，
+    #     不需要另起子进程，也不需要 sleep。断在第几秒、断时最后一条是什么，一目了然。
+    #   · 撞 cap 或 maxl 时**显式**写 TRUNCATED 到 boot.log 末行和 guard.log，并以 exit 3 结束，
+    #     不留「看着完整其实被截了」的假象。
     # 字节封顶：按**实际累计字节**算，不再按行数折算。行数只做保险丝。
     grab "$_limit_s" | awk -v cap="$_cap" -v maxl="$_lines" \
-        '{ n += length($0) + 1; if (n > cap || NR > maxl) exit; print }' >> "$BOOT_LOG"
-    kill "$_hbpid" 2>/dev/null
+                         -v hb="$_HB_BYTES" -v glog="$GUARD_LOG" -v blog="$BOOT_LOG" \
+                         -v ts="$(now)" '
+        {
+            n += length($0) + 1
+            if (n > cap || NR > maxl) {
+                why = (n > cap) ? "bytes" : "lines"
+                code = 3
+                # ★ 必须走 stdout（= boot.log），不能用 `>> blog`：
+                #   awk 的 print 是块缓冲，而重定向写文件是立刻落盘，两者顺序会错乱 ——
+                #   实测标记落在第 17158 行，后面两千多行缓冲日志被写到了它后面。
+                printf "TRUNCATED: bytes=%d lines=%d cap=%d reason=%s\n", n, NR, cap, why
+                printf "%s 抓日志：TRUNCATED bytes=%d lines=%d cap=%d reason=%s（不是跑满时长，是撞上限）\n", ts, n, NR, cap, why >> glog
+                exit code
+            }
+            if (n >= hbnext) {
+                printf "%s 抓日志心跳：%d 字节 / %d 行，最后一条 %s\n", ts, n, NR, substr($0, 1, 18) >> glog
+                hbnext += hb
+            }
+            print
+        }
+    ' >> "$BOOT_LOG"
+    _awk_rc=$?
     _t1=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
     [ -n "$_t1" ] || _t1=$(date +%s 2>/dev/null || echo 0)
     _el=$(awk -v a="$_t0" -v b="$_t1" 'BEGIN{ if (a+0 == 0 && b+0 == 0) { print "?"; exit }

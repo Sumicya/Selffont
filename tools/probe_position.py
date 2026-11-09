@@ -211,7 +211,6 @@ def verdict(r: dict) -> list[str]:
     lines, ok = [], True
     h = r["horizontal"]
     if h["wide"]:
-        dm = h["dcx_master"]
         if h["within_1"] >= 0.999:
             lines.append(f"横向 OK：满格字 {h['wide']} 个，对齐后 |墨心−500| ≤ 1 的占 "
                          f"{h['within_1'] * 100:.1f}%，p95 {h['dcx']['p95']}")

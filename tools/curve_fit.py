@@ -166,15 +166,6 @@ def _true_tangent(ring, i, toward):
     return _unit(prv, nxt)
 
 
-def _local_dir(points, i, forward=True):
-    """i 处的切向：往前（或往后）取 3 个点做差分，抗单点抖动。"""
-    n = len(points)
-    k = min(3, n - 1)
-    if k <= 0:
-        return (1.0, 0.0)
-    j = (i + k) % n if forward else (i - k) % n
-    return _unit(points[i], points[j])
-
 
 # ---------------------------------------------------------------- 单段拟合
 
@@ -272,7 +263,6 @@ def _segment(points_by_weight, a, b, depth, ref=None):
     worst_err, worst_at, worst_w = -1.0, 1, None
     if len(pts) >= 2:
         _c1, _c2, worst_err, worst_at = _fit_one(pts, _params(pts))
-        worst_w = next(iter(points_by_weight))
     span = (b - a) % len(next(iter(points_by_weight.values())))
     # 直线：参考档（400）离弦不超过 LINE_TOL，就一个点都不多给
     if _max_off_line(pts) <= LINE_TOL:
@@ -540,7 +530,6 @@ def _implicit_merge(out_pts, out_flags, ri, weights, max_deg):
             if lu < 1e-6 or lv < 1e-6:
                 ok = False
                 break
-            cs = max(-1.0, min(1.0, (u[0] * v[0] + u[1] * v[1]) / (lu * lv)))
             if _angle_deg(u, v) > max_deg:
                 ok = False
                 break

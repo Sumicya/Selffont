@@ -117,14 +117,6 @@ def flatten(points, flags, steps: int = 8) -> np.ndarray:
     return np.array(out)
 
 
-def kasa(P: np.ndarray):
-    A = np.column_stack([2 * P[:, 0], 2 * P[:, 1], np.ones(len(P))])
-    sol, *_ = np.linalg.lstsq(A, (P ** 2).sum(1), rcond=None)
-    cx, cy, c = sol
-    R = math.sqrt(c + cx * cx + cy * cy)
-    res = np.abs(np.linalg.norm(P - [cx, cy], axis=1) - R)
-    return np.array([cx, cy]), float(R), float(res.max())
-
 
 def ray_cross(ring: np.ndarray, origin, direction) -> float | None:
     """从 origin 沿 direction 打一条射线，返回最近的交点距离（>0）。"""
@@ -221,7 +213,6 @@ def probe_font(font: Path, chars: str, weight: int = WEIGHT):
             rows.append({"字": ch, "错": "数据里没有"})
             continue
         polys = design_cjk.outline_points(glyph, weight)     # 折线（未拟合）
-        rings_src = design_cjk.stroke_contours
         # 环顺序与 outline_points 一致：逐笔调一遍只为拿轴
         try:
             fonts_p, fonts_f = vector_rings(font, ch)
@@ -231,7 +222,6 @@ def probe_font(font: Path, chars: str, weight: int = WEIGHT):
         FLAT = [flatten(p, f) for p, f in zip(fonts_p, fonts_f)]   # 二次曲线展平后才能打射线
         ends = ends_of(glyph)
         # 先粗估 R：用剖面末值的一半宽（有 prof 就取末值）
-        half0 = design_cjk.stroke_half(glyph["strokes"][0], glyph, weight) if ends else 10.0
         for e in ends:
             stroke = glyph["strokes"][e["stroke"]]
             half = design_cjk.stroke_half(stroke, glyph, weight)

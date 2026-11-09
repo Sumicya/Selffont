@@ -50,7 +50,6 @@ if SCOPE not in ("actions", "releases"):
 REPO = env_value("REPO")
 PROJECT = REPO.rsplit("/", 1)[-1]
 RUN_ID = env_int("RUN_ID")
-SEGMENTS = (os.environ.get("SEGMENTS") or "").strip()  # 已废弃：判据里不再看段数
 
 MODEL = "真删" if APPLY else "预演（只打印清单）"
 DOOMED_TAGS: set[str] = set()                     # 本轮要连同 Release 一起删的 tag
@@ -70,12 +69,6 @@ def api_list(endpoint: str, expression: str) -> list[dict]:
         sys.exit(f"读取 {endpoint} 失败（gh 退出码 {result.returncode}）：{result.stderr.strip()}")
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
-
-def repo_id() -> int:
-    result = subprocess.run(["gh", "api", f"repos/{REPO}", "--jq", ".id"], capture_output=True, text=True)
-    if result.returncode != 0 or not result.stdout.strip().isdigit():
-        sys.exit(f"读取 repos/{REPO} 失败：{result.stderr.strip() or result.stdout.strip()}")
-    return int(result.stdout.strip())
 
 
 def workflow_file_exists(path: str) -> bool:
@@ -318,7 +311,6 @@ def verify() -> None:
     else:
         releases = api_list(f"repos/{REPO}/releases?per_page=100", ".[] | {id,tag_name}")
         tags = api_list(f"repos/{REPO}/tags?per_page=100", ".[] | {name}")
-        kept_tags = {row.get("tag_name") for row in releases[:KEEP_RELEASES] if row.get("tag_name")}
         orphans = [row for row in tags if row["name"] in DOOMED_TAGS]
         gap = any(kind in ("release", "tag") for kind, _, _ in PERMISSION_GAPS)
         print(f"复核：Release 剩 {len(releases)} 个（上限 {KEEP_RELEASES}）；被删 Release 的残留 tag {len(orphans)} 个")

@@ -29,7 +29,6 @@
 from __future__ import annotations
 
 import argparse
-import struct
 import sys
 from pathlib import Path
 
@@ -67,7 +66,6 @@ def measure(master: Path) -> np.ndarray:
     font.scale = (face.upem, face.upem)
     tt = TTFont(str(master), lazy=True, recalcBBoxes=False)
     glyphset = tt.getGlyphSet()
-    order = tt.getGlyphOrder()
     cmap = tt.getBestCmap()
 
     profiles = {}

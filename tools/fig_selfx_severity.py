@@ -20,7 +20,6 @@ from fontTools.ttLib import TTFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_self_intersect import FlattenPen, check_glyph  # noqa: E402
-from selfx_severity import SLIVER_AREA, SLIVER_RATIO  # noqa: E402
 
 INK = (24, 24, 24)
 RED = (214, 32, 32)

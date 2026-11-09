@@ -241,7 +241,6 @@ def main() -> None:
                     help="不用母版字面框表，直接量本字体 glyf 框（量自版字体时用）")
     args = ap.parse_args()
 
-    LABEL_FONT = args.label_font
     if args.mode == "dist":
         draw_dist(args.before, args.after, args.out, args.centre,
                   {} if args.no_table else master_boxes())

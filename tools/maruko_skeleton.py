@@ -214,38 +214,6 @@ def _graph(points, radius=None):
     return pts, adj
 
 
-def branches(pts, adj):
-    """把骨架拆成端点/分叉点之间的链。返回 [(索引链, 两端是否自由端)]。"""
-    free = {i for i in adj if len(adj[i]) == 1}
-    nodes = {i for i in adj if len(adj[i]) != 2}
-    seen, out = set(), []
-
-    def key(a, b):
-        return (a, b) if a < b else (b, a)
-
-    def walk(a, b):
-        chain = [a, b]
-        seen.add(key(a, b))
-        prev, cur = a, b
-        while cur not in nodes:
-            nxt = next(v for v in adj[cur] if v != prev)
-            seen.add(key(cur, nxt))
-            chain.append(nxt)
-            prev, cur = cur, nxt
-        return chain
-
-    for n in sorted(nodes):
-        for m in sorted(adj[n]):
-            if key(n, m) not in seen:
-                out.append(walk(n, m))
-    # 剩下的只可能是纯闭环
-    for n in sorted(adj):
-        for m in sorted(adj[n]):
-            if key(n, m) not in seen:
-                chain = walk(n, m)
-                out.append(chain)
-    return [(c, (c[0] in free, c[-1] in free)) for c in out if len(c) > 1]
-
 
 def smooth(poly, k=33):
     """沿折线做滑动平均，压掉骨架的像素台阶；端点保持不动。"""
@@ -312,10 +280,6 @@ def _dir(a, b):
     n = float(np.hypot(*v))
     return v / n if n > 1e-9 else np.array([0.0, 0.0])
 
-
-def _len(poly):
-    d = np.diff(np.asarray(poly, dtype=float), axis=0)
-    return float(np.sum(np.hypot(d[:, 0], d[:, 1])))
 
 
 def _resample(poly, step):
@@ -848,55 +812,8 @@ def spline_beziers(points, smooth_units=1.0, k=3):
             for i in range((nctrl - 1) // kk)]
 
 
-def _body_dir(pts, hw, at_start, span=3.0):
-    """端部一小段的主方向（指向笔画内部）。"""
-    n = len(pts)
-    k = max(3, min(int(span * hw / 4.0), n - 1))
-    seg = np.asarray(pts[:k + 1] if at_start else pts[-k - 1:], float)
-    anchor = seg[0] if at_start else seg[-1]
-    c = seg.mean(axis=0)
-    w, v = np.linalg.eigh((seg - c).T @ (seg - c))
-    d = v[:, int(np.argmax(w))]
-    if d @ (anchor - c) < 0:
-        d = -d
-    return -d                              # d 指向端头，取反后恒指「朝笔画内部」
 
 
-def _ink_reach(mask, origin, d, hw, limit):
-    """从 origin 沿 d 走，宽 2.4hw 走廊内墨迹的最远投影（不超过 limit）。"""
-    nrm = np.array([-d[1], d[0]])
-    best = 0.0
-    for t in np.arange(0.0, limit, 1.0):
-        for lat in np.arange(-1.2 * hw, 1.2 * hw + 1e-9, 1.5):
-            q = origin + d * t + nrm * lat
-            x = int(round((q[0] - BOX[0]) * SS))
-            y = int(round((BOX[3] - q[1]) * SS))
-            if 0 <= y < mask.shape[0] and 0 <= x < mask.shape[1] and mask[y, x]:
-                best = max(best, t)
-                break
-    return best
-
-
-def _tip_out(pts, hw, at_start):
-    """去钩后往哪收笔：返回 (笔身当前末向, 目标收笔方向)。
-
-    目标方向与笔身末向接近时就是「顺着收窄」，否则说明是折弯钩的横段——
-    折弯钩去掉钩之后要收成捺势（右下 32°），不能还是一根平横
-    （主人 2026-10-27 点过这条）。两个方向分开返回，才能用圆弧把中线从前者转到后者。
-    """
-    body = -np.asarray(_body_dir(pts, hw, at_start), float)   # 笔身指的「朝外」
-    n = np.hypot(*body)
-    if n < 1e-9:
-        return np.array([0.0, -1.0]), np.array([0.0, -1.0])
-    body = body / n
-    target = body
-    # 只有**水平**笔身的收笔才转捺势。阈值放到 0.35：竖钩（`了`/`子`/`手`）切完
-    # 钩剩下的末段常带 40° 左右的斜，0.8 会把它们也判成横段，转出一条向左下的
-    # 假捺（`了` 的竖钩实测被拉到 x=335）。
-    if abs(body[0]) > 1e-9 and abs(body[1] / body[0]) < 0.35:
-        ang = math.radians(-35.0) if body[0] > 0 else math.radians(180.0 + 35.0)
-        target = np.array([math.cos(ang), math.sin(ang)])
-    return body, target
 
 
 def _split_sharp(rs, s, hw, deg=88.0, max_parts=3):
@@ -1107,34 +1024,6 @@ def _dot_blobs(r, chains, han=False):
         dots.append({"closed": False, "dot": True, "hw": round(rp / SS, 2), "segs": [[c, c, c, c]]})
     return dots
 
-
-def stroke_outline(bezier_list, hw=HW):
-    """贝塞尔中线 → 轮廓：2×半宽、圆端头、圆转角，再并成一条路径。
-
-    圆端头 + 圆转角意味着轮廓是「中线与半径 hw 的圆的闵可夫斯基和」，
-    拐角和收笔在构造上就是圆弧，没有需要事后修的折角或小角度。
-    """
-    import pathops
-
-    acc = pathops.Path()
-    for item in bezier_list:
-        if isinstance(item, dict):
-            segs, closed = item["segs"], item.get("closed", False)
-        else:
-            segs, closed = item, False
-        own = item.get("hw") if isinstance(item, dict) else None
-        p = pathops.Path()
-        p.moveTo(*segs[0][0])
-        for seg in segs:
-            p.cubicTo(*seg[1], *seg[2], *seg[3])
-        if closed:
-            p.close()
-        p.stroke(2 * (hw if own is None else own),
-                 pathops.LineCap.ROUND_CAP, pathops.LineJoin.ROUND_JOIN, 4)
-        p.convertConicsToQuads(0.1)
-        acc.addPath(p)
-    acc.simplify(fix_winding=True, keep_starting_points=False)
-    return acc
 
 
 def _polyline_of_stroke(stroke, steps=8, step=6.0):

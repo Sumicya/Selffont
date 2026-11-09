@@ -89,12 +89,6 @@ def compare(path_a, path_b, char, size=300, shift=True):
     return align(a, b)[0] if shift else iou(a, b)
 
 
-def ink_ratio(path_a, path_b, char, size=300):
-    """墨量比：本版墨像素 / 母版墨像素。"""
-    a = render(path_a, char, size).sum()
-    b = render(path_b, char, size).sum()
-    return float(b / a) if a else float("nan")
-
 
 def shared_hanzi(path_a, path_b):
     """两个字体 cmap 的交集，只取 U+4E00–U+9FFF，按码位排序。"""
