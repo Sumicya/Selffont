@@ -307,7 +307,14 @@ grab() {
     #   · 撞 cap 或 maxl 时**显式**写 TRUNCATED 到 boot.log 末行和 guard.log，并以 exit 3 结束，
     #     不留「看着完整其实被截了」的假象。
     # 字节封顶：按**实际累计字节**算，不再按行数折算。行数只做保险丝。
-    grab "$_limit_s" | awk -v cap="$_cap" -v maxl="$_lines" \
+    # ★★ 2026-11-09 CI 连续 10 条红（build #362–#366 / selfrounds #39–#43）的根因：
+    #   `length($0)` 在不同 awk 下含义不同 —— POSIX 说它数**字符**，只有 C locale 下才数**字节**。
+    #   沙箱是 mawk 单字节实现，碰巧按字节算，本地假绿；GitHub Actions 的 gawk 在
+    #   LANG=C.UTF-8 下数字符（实测同一行 148 字节 / 88 字符 = 1.68 倍），
+    #   于是「上限 2 MiB」写出了 168% 的字节，夹具里的字节断言当场炸。
+    #   Android 真机同样是 UTF-8 环境，不修就是真机上封顶失效、/data 被写满。
+    #   修法：显式 LC_ALL=C，让任何 awk 都按字节数。
+    grab "$_limit_s" | LC_ALL=C awk -v cap="$_cap" -v maxl="$_lines" \
                          -v hb="$_HB_BYTES" -v glog="$GUARD_LOG" -v blog="$BOOT_LOG" \
                          -v ts="$(now)" '
         {
@@ -330,20 +337,38 @@ grab() {
         }
     ' >> "$BOOT_LOG"
     _awk_rc=$?
+    # ★ 兜底：断言只能锁住「代码里写了 LC_ALL=C」，锁不住真机上 awk 到底按什么算。
+    #   抓完用 wc -c 复核真实字节；超了 105% 就是封顶失效，显式截断并记账，不许静默超限。
+    _real=$(wc -c < "$BOOT_LOG" 2>/dev/null)
+    case "$_real" in ''|*[!0-9]*) _real=0 ;; esac
+    _ceil=$(( _cap * 105 / 100 ))
+    if [ "$_real" -gt "$_ceil" ]; then
+        echo "$(now) 抓日志：封顶失效——实测 ${_real} 字节，超过上限 ${_cap} 的 105%，已硬截断（awk 把 length 按字符算了？）" >> "$GUARD_LOG" 2>/dev/null
+        tail -c "$_cap" "$BOOT_LOG" > "$BOOT_LOG.trim" 2>/dev/null && mv -f "$BOOT_LOG.trim" "$BOOT_LOG" 2>/dev/null
+        printf "TRUNCATED: bytes=%d cap=%d reason=hardcut\n" "$_real" "$_cap" >> "$BOOT_LOG" 2>/dev/null
+    fi
     _t1=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
     [ -n "$_t1" ] || _t1=$(date +%s 2>/dev/null || echo 0)
     _el=$(awk -v a="$_t0" -v b="$_t1" 'BEGIN{ if (a+0 == 0 && b+0 == 0) { print "?"; exit }
         d = b - a; if (d < 0) d = 0; printf "%.1f", d }')
     # 停止原因必须写清楚：只写「跑了 N 秒」等于没说。
+    # ★ awk 的退出码优先于 .lc-rc：awk exit 3 就是它自己判定的「撞上限」，
+    #   这是同步的、一定拿得到。.lc-rc 是管道左端子壳写的，awk 退出时 logcat 若没有新日志
+    #   把 grep 缓冲刷满，左端还没收到 SIGPIPE，.lc-rc 会是空的 —— 那就误报「读不到」。
     _lrc=$(cat "$DATA/.lc-rc" 2>/dev/null)
     case "$_lrc" in ''|*[!0-9]*) _lrc='读不到' ;; esac
-    case "$_lrc" in
-        124) _why='到时间上限（正常）' ;;
-        141) _why='撞体积上限（awk 先退出）' ;;
-        143) _why='被 SIGTERM（进程被系统清理）' ;;
-        0)   _why='logcat 自己结束——多半是 logd 断开/系统开始关机' ;;
-        *)   _why='未知退出码' ;;
-    esac
+    if [ "$_awk_rc" = "3" ]; then
+        _lrc=3
+        _why='撞体积/行数上限（awk exit 3，这是它自己判的，不是管道猜的）'
+    else
+        case "$_lrc" in
+            124) _why='到时间上限（正常）' ;;
+            141) _why='撞体积上限（awk 先退出）' ;;
+            143) _why='被 SIGTERM（进程被系统清理）' ;;
+            0)   _why='logcat 自己结束——多半是 logd 断开/系统开始关机' ;;
+            *)   _why='未知退出码' ;;
+        esac
+    fi
     # 最后一条日志的时间戳：卡住的时刻就在这附近，比「跑了 N 秒」有用得多。
     _lastts=$(tail -n 1 "$BOOT_LOG" 2>/dev/null | cut -c1-18)
     echo "$(now) 抓日志：停止。实际跑了 ${_el} 秒（上限 $_limit_s 秒），boot.log 现在 $(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?) 行 / $(wc -c < "$BOOT_LOG" 2>/dev/null || echo ?) 字节；最后一条日志时间 ${_lastts:-（空）}；logcat 退出码 ${_lrc} = ${_why}" >> "$GUARD_LOG" 2>/dev/null

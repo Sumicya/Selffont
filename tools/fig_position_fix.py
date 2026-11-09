@@ -23,7 +23,6 @@ INK = (26, 26, 26)
 GREY = (150, 150, 150)
 RED = (214, 40, 40)
 BLUE = (36, 104, 210)
-FONT = None  # 由 --font 给；中文标签直接用母版字体（它有全部汉字，不依赖系统里有没有 CJK）
 
 
 def load(path: Path) -> dict:

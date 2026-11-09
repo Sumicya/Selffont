@@ -27,7 +27,6 @@ from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
 
-UPM = 1000
 SS = 1                      # 栅格化倍率（1 = 每单位 1 像素；邻居阈值 1.5/SS 跟着走）
 BOX = (-40, -160, 1040, 900)
 HW = 33.0                   # 半笔宽：Maruko「一」竖切实测笔宽 66/67

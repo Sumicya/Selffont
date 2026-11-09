@@ -102,7 +102,7 @@ SELFTEST=/data/adb/selffont-selftest.log
     echo "时刻 $(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知)"
     echo "框架配置 $count 份：$replaced"
     echo "Skia /system/etc/fonts.xml：$skia"
-    echo "插入行 $(grep -c '<font ' "$MODPATH/fonts-insert.xml" 2>/dev/null || echo 0) 条（字重逐档，来自 fonts-insert.xml）"
+    echo "插入行 $(grep -c '<font ' "$insert" 2>/dev/null || echo 0) 条（字重逐档，来自 fonts-insert.xml）"
     echo "模块内字件 $(ls -1 "$MODPATH/system/fonts" 2>/dev/null | wc -l) 个"
     echo "覆盖清单：见模块目录 coverage.txt（打包了哪些、哪些靠设备自带）"
 } > "$SELFTEST" 2>/dev/null &&

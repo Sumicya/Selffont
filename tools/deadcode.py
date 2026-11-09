@@ -3,8 +3,9 @@
 
 判据只有一条：**标识符在整仓源码里只出现一次**（主码与测试分计）。
 本仓没有独立测试目录，`build.py --check` 就是测试，因此「分计」落成：
-扫描域 = 全部 `.py` + `.sh` + 工作流 + 文档以外的一切源码，
-引用计数按**整仓**统计（跨文件调用也算引用，宁可漏报不许误删）。
+扫描域 = 全部 `.py` + 全部交付/工具 `.sh`（只写不读的变量）。
+上次这里写「+ 工作流」，但 `iter_py` 只扫 `.py` —— 注释吹了牛，代码没兑现
+（主人 2026-11-09 打回：`.sh` 里 4 处死变量全漏，包括我自己刚写的 `_awk_rc`）。
 
 报四类：
   ① 未使用的 import（`from __future__` 除外：它由编译器隐式使用）
@@ -21,6 +22,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -45,12 +47,16 @@ def load(path: Path):
 
 
 def ast_name_counts(root: Path) -> dict[str, int]:
-    """按 AST 数名字：f-string 里的 `{NAME}` 是 Name 节点，会被算进来；
-    纯文本里出现的同名子串不会被误算。
+    """按 AST 数「出现点」，每个出现点恰好计 1 次。
 
-    ★ Name 节点只覆盖**读取**（Load）。赋值目标、def、import 都是别的节点类型，
-    所以这里还要把函数定义、赋值目标各计一次，否则「定义 + 一次调用」会被数成 1，
-    每个函数都成了死码（第一版就这么误报了 16 个装饰器注册的检查项）。"""
+    ★★ 2026-11-09 主人打回：上一版把赋值**数了两遍**。
+      Python `ast` 里 `FOO = 1` 的赋值目标**本来就是** `ast.Name(id='FOO', ctx=Store())`，
+      我在 `ast.Assign` 分支计了一次，`ast.walk` 再走到子节点 `ast.Name` 又计一次 ——
+      于是任何「只定义一次、零引用」的常量计数恒 ≥ 2，`③ 零引用常量` 检测率恒为 0%：
+      连这个扫描器自己第 27 行的 `SRC_SUFFIX` 都没被扫出来。
+      现在只走 `ast.Name`（Store/Load/Del 都在里面），另外补上 def / import 这些
+      **不是** Name 节点的定义点，各计 1。
+    """
     counts: dict[str, int] = {}
     for path in iter_py(root):
         tree = load(path)
@@ -59,12 +65,11 @@ def ast_name_counts(root: Path) -> dict[str, int]:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 counts[node.name] = counts.get(node.name, 0) + 1
-            elif isinstance(node, ast.Assign):
-                for tgt in node.targets:
-                    if isinstance(tgt, ast.Name):
-                        counts[tgt.id] = counts.get(tgt.id, 0) + 1
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                counts[node.target.id] = counts.get(node.target.id, 0) + 1
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:
+                    if a.name != "*":
+                        nm = a.asname or a.name.split(".")[0]
+                        counts[nm] = counts.get(nm, 0) + 1
             if isinstance(node, ast.Name):
                 counts[node.id] = counts.get(node.id, 0) + 1
             elif isinstance(node, ast.Attribute):
@@ -136,8 +141,9 @@ def repo_mention_counts(root: Path) -> dict[str, int]:
     # 函数/常量名在 **f-string 里**是 `Name` 节点，但在普通字符串拼接里会被 _strip_strings 抹掉，
     # 「定义一行 + f-string 里用一次」就会误报成只出现一次。取两者较大值。
     counts_f = repo_mention_counts_raw(root)
-    counts = {k: max(v, counts_f.get(k, 0)) for k, v in counts.items()}
-    counts.update({k: v for k, v in counts_f.items() if k not in counts})
+    # 上一版这里是 `{k: max(...) for k, v in counts.items()}`，而 counts 此刻还是空字典，
+    # 推导式结果恒为 {}，是纯死逻辑（主人 2026-11-09 指出）。直接取并集即可。
+    counts = dict(counts_f)
     # 再取 AST 计数：函数名/常量名在 f-string 里是 Name 节点，字符串剥离会把它抹掉。
     counts_a = ast_name_counts(root)
     counts = {k: max(v, counts_a.get(k, 0)) for k, v in counts.items()}
@@ -227,6 +233,53 @@ def write_only_locals(tree: ast.AST) -> list[tuple[int, str]]:
     return bad
 
 
+SH_SKIP_DIRS = {".venv", "work", "__pycache__", ".git", "out", "dist", "build", "module/system"}
+
+
+def iter_sh(root: Path):
+    for p in sorted(root.rglob("*.sh")):
+        if any(part in SH_SKIP_DIRS for part in p.parts):
+            continue
+        yield p
+
+
+def shell_write_only(path: Path) -> list[tuple[int, str]]:
+    """`.sh` 里赋值后从未被读取的变量。
+
+    判据刻意保守（宁可漏报不许误报）：
+      · 只认行首的 `NAME=...`（不是 `export`、不是 `local` 之外的怪写法）
+      · 变量名要全大写或带下划线前缀（`i=` 这种循环变量不管，误报率太高）
+      · 整份文件里 `$NAME` / `${NAME` / `${NAME:` 一次都没出现
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    code = []
+    for i, line in enumerate(text.splitlines(), 1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        code.append((i, line))
+    body = "\n".join(l for _, l in code)
+    # ★ 陷阱：变量可能被**从别处 eval 进来的函数**读（sf-scan.sh 的 GUARD_LOG 就是这样）。
+    #   本文件字面上不出现 `$GUARD_LOG`，但它把那函数体 eval 进来后就会被读。
+    #   删过一次，sf-scan 立刻静默变成零输出 —— 死码扫描器自己造出真 bug。
+    #   保守判据：只要文件里出现 `eval`，就不判「只写不读」（宁可漏报）。
+    if re.search(r"^\s*eval\s", body, re.M):
+        return []
+    bad = []
+    for i, line in code:
+        m = re.match(r"\s*(?:local\s+|export\s+)?([A-Z][A-Z0-9_]*)=([^=].*)?$", line)
+        if not m:
+            continue
+        name = m.group(1)
+        if re.search(r"\$\{" + name + r"[}:]|\$" + name + r"\b", body):
+            continue
+        bad.append((i, name))
+    return bad
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     counts = repo_mention_counts(root)
@@ -263,6 +316,12 @@ def main() -> int:
 
         for lineno, name in write_only_locals(tree):
             print(f"④ 只写不读的局部变量 {rel}:{lineno}  {name}")
+            total += 1
+
+    # ---- .sh：只写不读的变量 ----
+    for path in iter_sh(root):
+        for lineno, name in shell_write_only(path):
+            print(f"④ 只写不读的局部变量 {path.relative_to(root)}:{lineno}  {name}")
             total += 1
 
     print()

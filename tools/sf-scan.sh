@@ -41,6 +41,8 @@ OUT=${SELFFONT_SCAN_OUT:-/data/local/tmp/sf-scan.out}
 case "$OUT" in /data/local/tmp/*) mkdir -p /data/local/tmp 2>/dev/null ;; esac
 : > "$OUT" 2>/dev/null || OUT=/tmp/sf-scan.$$.out
 : > "$OUT" 2>/dev/null || { echo "[停] 写不出临时文件：$OUT" >&2; exit 2; }
+# scan_boot_log 是从守卫里 eval 出来的，它内部读的是**它自己那份** GUARD_LOG，
+# 所以这个赋值被人读、不可删（我删过一次，sf-scan 立刻静默变成零输出）。
 GUARD_LOG=$OUT
 
 if ! command -v scan_boot_log >/dev/null 2>&1; then

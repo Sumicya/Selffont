@@ -43,7 +43,6 @@ import design_cjk  # noqa: E402
 import fix_vpos  # noqa: E402
 
 WIDE = 850            # 「满格字」的墨宽下限（与 fix_hpos.py 同口径）
-NARROW = 600          # 窄部件/笔画，横向不参与
 EM = 1000
 TOL = 20              # 2% em：肉眼在 16px 下看不出来，判据线用它
 TOL_HARD = 30         # 超过这条才是真问题；20~30 的多半是 box_align 的限幅（±2%/±4%）留下的

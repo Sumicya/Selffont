@@ -2347,7 +2347,9 @@ def runtime_scripts():
              "logcat 自己结束", "25165824", "491"),
             ("rc141", 'i=0\nwhile [ $i -lt 300000 ]; do i=$((i+1)); '
                       'printf \'11-09 18:01:30.123  1074  1099 I ActivityManager: 第 %06d 行，长度接近真机平均值的填充内容\\n\' $i; done\n',
-             "撞体积上限", "2097152", "492"),
+             # 文案已从「撞体积上限（awk 先退出）」改成「撞体积/行数上限（awk exit 3）」——
+             # 因为现在优先用 awk 自己的退出码，不再赌管道左端异步写的 .lc-rc。
+             "撞体积/行数上限", "2097152", "492"),
         ):
             rd = tmp / f"rc-{tag}"
             (rd / "d").mkdir(parents=True)
@@ -2395,6 +2397,25 @@ def runtime_scripts():
         # 原来只查「sleep 10」这个字面量，变异体写成 `sleep 10` 才红、写别的就漏（自己撞过）。
         _sleeps = [ln.strip() for ln in gcode_no_comment if "sleep" in ln]
         assert not _sleeps, f"post-fs-data.sh 里有 sleep（§8 禁）：{_sleeps}"
+        # ★ 2026-11-09 CI 连续 10 条红的根因（build #362–#366 / selfrounds #39–#43）：
+        #   POSIX 说 `length($0)` 数**字符**，只有 C locale 下才数字节。
+        #   沙箱是 mawk（单字节实现）碰巧按字节算，本地假绿；GitHub Actions 的 gawk 在
+        #   LANG=C.UTF-8 下数字符（同一行 148 字节 / 88 字符 = 1.68 倍），
+        #   「上限 2 MiB」写成 168% 的字节，字节断言当场炸。
+        #   真机同样是 UTF-8 环境：不修就是封顶失效、/data 被写满。
+        # awk 调用跨好几行（管道 + -v 参数 + 程序体），按**整段**判：
+        # 从出现 `awk` 的那行到程序体里 `length($0)`，中间必须有 LC_ALL=C。
+        _gcode_text = "\n".join(gcode_no_comment)
+        _m = re.search(r"^.*awk.*?length\(\$0\)", _gcode_text, re.S | re.M)
+        assert _m, "找不到按字节计的 awk（`n += length($0) + 1`）"
+        assert "LC_ALL=C" in _m.group(0), \
+            "按字节计的 awk 没加 LC_ALL=C：UTF-8 下 length() 数字符，封顶失效（CI 连续 10 条红就是这个）"
+        # 兜底：断言锁不住真机 awk 的实际语义，抓完必须用 wc -c 复核真实字节并硬截断。
+        assert "封顶失效" in gsrc and "hardcut" in gsrc, \
+            "没有 wc -c 事后复核：真机 awk 若按字符算，封顶会静默失效"
+        # awk 自己的退出码要优先于管道左端异步写的 .lc-rc。
+        assert 'if [ "$_awk_rc" = "3" ]' in gsrc, \
+            "丢掉了 awk 的 exit 3：管道竞态下 .lc-rc 可能是空的，会误报「读不到」"
         hbd = tmp / "hbtest"
         (hbd / "d").mkdir(parents=True)
         (hbd / "m/selffont-bench").mkdir(parents=True)
@@ -3065,6 +3086,37 @@ def dead_code():
                             capture_output=True, text=True)
     assert result.returncode == 0, "死码未清零：\n" + result.stdout[-3000:]
     assert "合计 0 处死码" in result.stdout, result.stdout[-2000:]
+    # ★ 2026-11-09 主人打回四条，逐条钉死，防止扫描器再悄悄瞎掉：
+    #   ① ast 计数把赋值目标数了两遍（`FOO = 1` 的目标本来就是 ast.Name(Store)），
+    #      于是「零引用常量」检测率恒为 0%。夹具：临时文件里造一个零引用常量必须被抓出。
+    #   ② `.sh` 只写不读的变量原来根本不扫（文件头注释却吹了牛）。
+    #   ③ 被 eval 进来的函数会读的变量不能算死（否则删了就是真 bug，我踩过）。
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("dc_probe", ROOT / "tools/deadcode.py")
+    _dc = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_dc)
+
+    import tempfile as _tf
+    _probe_root = Path(_tf.mkdtemp(prefix="sf-dcprobe-"))
+    probe = _probe_root
+    probe.mkdir(exist_ok=True)
+    (probe / "const_probe.py").write_text(
+        "UNUSED_CONST = 1\nUSED_CONST = 2\nprint(USED_CONST)\n", encoding="utf-8")
+    ast_counts = _dc.ast_name_counts(probe)
+    assert ast_counts.get("UNUSED_CONST") == 1, \
+        f"ast 计数把赋值数了两遍：UNUSED_CONST={ast_counts.get('UNUSED_CONST')}（应为 1），零引用常量永远抓不到"
+    assert ast_counts.get("USED_CONST") == 2, \
+        f"定义+一次引用应为 2：{ast_counts.get('USED_CONST')}"
+
+    (probe / "w.sh").write_text("#!/bin/sh\nDEAD_VAR=1\nLIVE_VAR=2\necho \"$LIVE_VAR\"\n",
+                                encoding="utf-8")
+    assert [n for _, n in _dc.shell_write_only(probe / "w.sh")] == ["DEAD_VAR"], \
+        f".sh 只写不读没扫对：{_dc.shell_write_only(probe / 'w.sh')}"
+    (probe / "e.sh").write_text(
+        "#!/bin/sh\nEVAL_VAR=1\neval \"$(sed -n '1p' x)\"\n", encoding="utf-8")
+    assert _dc.shell_write_only(probe / "e.sh") == [], \
+        "有 eval 的文件仍被判定只写不读：那变量可能被 eval 进来的函数读，删了就是真 bug"
+
 
 
 @check

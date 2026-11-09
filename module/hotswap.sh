@@ -34,8 +34,6 @@ MODDIR=${SELF%/*}
 DATA=${SELFFONT_DATA:-/data/adb/selffont}
 BASE=${SELFFONT_BASE:-/data/adb/selffont-hotswap}
 UPPER=$DATA/upper
-WORK=$DATA/work
-MERGED=$DATA/merged
 SYSTEM_FONTS=${SELFFONT_SYSTEM_FONTS:-/system/fonts}
 
 say() { printf '%s\n' "$*"; }
