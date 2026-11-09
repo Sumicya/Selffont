@@ -2320,6 +2320,57 @@ def runtime_scripts():
         assert 2097152 * 0.95 <= b_cap <= 2097152 + 200, \
             (f"给了 2 MiB 却写出 {b_cap} 字节（{b_cap/2097152*100:.0f}%）："
              "封顶不是按实际字节算的（按行数算会写到 5 MB 外）")
+
+        # ★ 2026-11-09 真机第四轮（18:01:59）：24 MiB 只用了 8.07 MiB、180 秒只跑了 56.8 秒。
+        #   守卫只写「实际跑了 56.8 秒」，**说不清为什么停**——和写死「180 秒到」同一类错。
+        #   停止原因必须由 logcat 自己的退出码说出来：
+        #     0 = logcat 自己结束（logd 断开/系统开始关机）  124 = 到时间上限
+        #     141 = 撞体积上限（awk 先退出）                143 = 被 SIGTERM
+        assert "logcat.err" in gsrc, "logcat 的 stderr 没落盘：停了以后查不出为什么停"
+        assert ".lc-rc" in gsrc, "没有记录 logcat 退出码：分不清「到时限」和「logd 断开」"
+        for code, meaning in (("0", "logd 断开"), ("124", "到时间上限"), ("141", "撞体积上限")):
+            assert f"{code})" in gsrc and meaning in gsrc, f"退出码 {code} 没被解释（{meaning}）"
+        assert "最后一条日志时间" in gsrc, \
+            "没报日志最后一条的时间戳：卡住的时刻就在这附近，比「跑了 N 秒」有用"
+        # 夹具：假 logcat 自己 exit 0 / 撞体积上限，两种停止原因必须分辨得出来。
+        for tag, body, want, nbytes, bid in (
+            ("rc0", 'i=0\nwhile [ $i -lt 400 ]; do i=$((i+1)); '
+                    'printf \'11-09 18:01:30.123  1074  1099 I ActivityManager: 第 %04d 行\\n\' $i; done\n'
+                    'echo "logcat: failed to connect to logd" >&2\nexit 0\n',
+             "logcat 自己结束", "25165824", "491"),
+            ("rc141", 'i=0\nwhile [ $i -lt 300000 ]; do i=$((i+1)); '
+                      'printf \'11-09 18:01:30.123  1074  1099 I ActivityManager: 第 %06d 行，长度接近真机平均值的填充内容\\n\' $i; done\n',
+             "撞体积上限", "2097152", "492"),
+        ):
+            rd = tmp / f"rc-{tag}"
+            (rd / "d").mkdir(parents=True)
+            (rd / "m/selffont-bench").mkdir(parents=True)
+            (rd / "sock").mkdir()
+            (rd / "sock/logdw").touch()
+            fl = rd / "fakelogcat"
+            fl.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+            fl.chmod(0o755)
+            er = {h: v for h, v in os.environ.items() if h != "MODDIR"}
+            er.update({"SELFFONT_DATA": str(rd / "d"), "SELFFONT_MODULES": str(rd / "m"),
+                       "SELFFONT_BOOT_ID": bid, "SELFFONT_BOOT_LOG_SECONDS": "30",
+                       "SELFFONT_BOOT_LOG_BYTES": nbytes,
+                       "SELFFONT_FAST_REBOOT_WINDOW": "999999999",
+                       "SELFFONT_LOGD_SOCKET": str(rd / "sock/logdw"),
+                       "SELFFONT_LOGCTL": str(fl),
+                       "PATH": f"{rd}:{os.environ.get('PATH','')}"})
+            sh([str(guard)], er)
+            rl = rd / "d/guard.log"
+            for _ in range(100):
+                if "抓日志：停止" in rl.read_text(encoding="utf-8"):
+                    break
+                time.sleep(0.2)
+            rtxt = rl.read_text(encoding="utf-8")
+            assert "抓日志：停止" in rtxt, f"{tag}: 抓日志没停下，这组夹具没验到东西"
+            assert want in rtxt, \
+                f"{tag}: 停止原因没写出来（应含「{want}」），实际：{rtxt.strip().splitlines()[-1]}"
+            if tag == "rc0":
+                assert (rd / "d/logcat.err").exists(), "logcat 的 stderr 没落盘（rc0 夹具）"
+                assert "failed to connect" in (rd / "d/logcat.err").read_text(encoding="utf-8")
         # 不设 SELFFONT_BOOT_LOG_BYTES 时必须用 8 MiB（41943 行），这是主人这一轮要的。
         ec2 = {k: v for k, v in ec.items() if k != "SELFFONT_BOOT_LOG_BYTES"}
         ec2["SELFFONT_BOOT_ID"] = "32"

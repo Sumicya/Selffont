@@ -196,11 +196,22 @@ grab() {
     _limit=${1:-180}
     # 夹具里把 logcat 换成假命令（无限吐行），才验得到「边抓边封顶」到底停没停。
     _lc=${SELFFONT_LOGCTL:-logcat}
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "$_limit" "$_lc" -b main,system,crash -v threadtime
-    else
-        "$_lc" -b main,system,crash -v threadtime
-    fi | grep -v -E 'Typeface: Preloading|reportOneUidFrozenStateChanged|skip deliver sticky broadcast|Async freezing|Cancel freezing|ProcessObserver broadcast disabled'
+    # ★ 2026-11-09 真机第四轮（18:01:59）：预算 24 MiB 只用了 8.07 MiB、上限 180 秒只跑了
+    #   56.8 秒就停。日志只写「实际跑了 56.8 秒」，**说不清为什么停**——这和当年写死
+    #   「180 秒到」是同一类错：报了个数字，但那个数字不解释发生的事。
+    #   所以把 logcat 自己的退出码和 stderr 都落盘：
+    #     124 = timeout 到点（正常的时长上限）
+    #     141 = 管道被关（撞体积上限，awk 先退出）
+    #     143 = 被 SIGTERM（进程被系统清理）
+    #     0   = logcat 自己结束 —— 这种情况最常见的原因是 **logd 断开，系统开始关机**
+    {
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "$_limit" "$_lc" -b main,system,crash -v threadtime
+        else
+            "$_lc" -b main,system,crash -v threadtime
+        fi 2>> "$DATA/logcat.err"
+        echo "$?" > "$DATA/.lc-rc"
+    } | grep -v -E 'Typeface: Preloading|reportOneUidFrozenStateChanged|skip deliver sticky broadcast|Async freezing|Cancel freezing|ProcessObserver broadcast disabled'
 }
 
 (
@@ -248,7 +259,22 @@ grab() {
     [ -n "$_t1" ] || _t1=$(date +%s 2>/dev/null || echo 0)
     _el=$(awk -v a="$_t0" -v b="$_t1" 'BEGIN{ if (a+0 == 0 && b+0 == 0) { print "?"; exit }
         d = b - a; if (d < 0) d = 0; printf "%.1f", d }')
-    echo "$(now) 抓日志：停止。实际跑了 ${_el} 秒（上限 $_limit_s 秒），boot.log 现在 $(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?) 行 / $(wc -c < "$BOOT_LOG" 2>/dev/null || echo ?) 字节" >> "$GUARD_LOG" 2>/dev/null
+    # 停止原因必须写清楚：只写「跑了 N 秒」等于没说。
+    _lrc=$(cat "$DATA/.lc-rc" 2>/dev/null)
+    case "$_lrc" in ''|*[!0-9]*) _lrc='读不到' ;; esac
+    case "$_lrc" in
+        124) _why='到时间上限（正常）' ;;
+        141) _why='撞体积上限（awk 先退出）' ;;
+        143) _why='被 SIGTERM（进程被系统清理）' ;;
+        0)   _why='logcat 自己结束——多半是 logd 断开/系统开始关机' ;;
+        *)   _why='未知退出码' ;;
+    esac
+    # 最后一条日志的时间戳：卡住的时刻就在这附近，比「跑了 N 秒」有用得多。
+    _lastts=$(tail -n 1 "$BOOT_LOG" 2>/dev/null | cut -c1-18)
+    echo "$(now) 抓日志：停止。实际跑了 ${_el} 秒（上限 $_limit_s 秒），boot.log 现在 $(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?) 行 / $(wc -c < "$BOOT_LOG" 2>/dev/null || echo ?) 字节；最后一条日志时间 ${_lastts:-（空）}；logcat 退出码 ${_lrc} = ${_why}" >> "$GUARD_LOG" 2>/dev/null
+    _e1=$(wc -c < "$DATA/logcat.err" 2>/dev/null)
+    case "$_e1" in ''|*[!0-9]*) _e1=0 ;; esac
+    [ "$_e1" -gt 0 ] && echo "$(now) 抓日志：logcat 的 stderr 有 ${_e1} 字节，见 $DATA/logcat.err" >> "$GUARD_LOG" 2>/dev/null
 ) &
 
 exit 0
