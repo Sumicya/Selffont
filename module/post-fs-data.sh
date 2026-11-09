@@ -157,19 +157,60 @@ case "$MAX_BYTES" in ''|*[!0-9]*) MAX_BYTES=25165824 ;; esac
 #   两个原因叠在一起：①旧版只在本次开机给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1
 #   之后**再没人管它**；②这段清理原本写在 NO_LOGCAT 提前退出的后面，
 #   关掉抓日志时根本走不到。现在挪到前面，并且 .1 超上限就整份丢掉。
-if [ -f "$BOOT_LOG.1" ]; then
-    _old1=$(wc -c < "$BOOT_LOG.1" 2>/dev/null)
+if [ -f "$BOOT_LOG.prev" ]; then
+    _old1=$(wc -c < "$BOOT_LOG.prev" 2>/dev/null)
     case "$_old1" in ''|*[!0-9]*) _old1=0 ;; esac
     if [ "$_old1" -gt "$MAX_BYTES" ]; then
-        echo "$(now) boot.log.1 有 ${_old1} 字节，超过上限 ${MAX_BYTES}，整份丢弃（旧版没管它）" >> "$GUARD_LOG" 2>/dev/null
-        rm -f "$BOOT_LOG.1" 2>/dev/null
+        echo "$(now) boot.log.prev 有 ${_old1} 字节，超过上限 ${MAX_BYTES}，整份丢弃" >> "$GUARD_LOG" 2>/dev/null
+        rm -f "$BOOT_LOG.prev" 2>/dev/null
     fi
 fi
-if [ -f "$BOOT_LOG" ]; then
-    _cur=$(wc -c < "$BOOT_LOG" 2>/dev/null)
-    case "$_cur" in ''|*[!0-9]*) _cur=0 ;; esac
-    [ "$_cur" -gt "$MAX_BYTES" ] && mv -f "$BOOT_LOG" "$BOOT_LOG.1" 2>/dev/null
+# ★ 2026-11-09 教训：上一轮的现场不是「分析完」才没的，是被清账命令 `rm` 掉的。
+#   那次 guard.log 停在「logcat 自己结束」，而 54→57 秒「谁发起重启」的证据
+#   就在 boot.log 里，清账时一起没了。不能指望主人每轮都记得先跑扫描命令：
+#   开机第一件事自己扫一遍，结论写进 guard.log，原文留成 boot.log.prev。
+#   旧版滚动的 boot.log.1 不再使用，见到就并进 prev（否则同一份现场两处都是）。
+if [ -f "$BOOT_LOG.1" ]; then
+    if [ -f "$BOOT_LOG.prev" ]; then
+        rm -f "$BOOT_LOG.1" 2>/dev/null
+    else
+        mv -f "$BOOT_LOG.1" "$BOOT_LOG.prev" 2>/dev/null
+    fi
 fi
+# 扫描逻辑写成一个函数：开机自动扫 + 手动 sf-scan.sh 用**同一份判据**，
+# 不许两套模式各写一遍（分叉了就会「自动扫说命中 0，手动扫说命中 3」）。
+# 用法：scan_boot_log <文件> <输出后缀行，例如「  扫描」>
+scan_boot_log() {
+    _f=$1
+    _tag=${2:-  扫描}
+    [ -f "$_f" ] && [ -s "$_f" ] || return 0
+    _pl=$(wc -l < "$_f" 2>/dev/null)
+    _pb=$(wc -c < "$_f" 2>/dev/null)
+    case "$_pl" in ''|*[!0-9]*) _pl='?' ;; esac
+    case "$_pb" in ''|*[!0-9]*) _pb='?' ;; esac
+    printf '%s%s：%s 行 / %s 字节\n' "$(now) " "$_tag" "$_pl" "$_pb" >> "$GUARD_LOG" 2>/dev/null
+    # 模式必须覆盖真机原句：vold/statsd 是「receiving signal 15」，ccci 是「signal number=15」，
+    # 内核是「Signal 15 received」。只写 received 会漏掉真机那两行（我自己漏过一次）。
+    for _pat in 'sys.shutdown.requested' 'signal 15|signal number=15|Signal 15' \
+                'Watchdog|WATCHDOG' 'FATAL EXCEPTION|ANR in ' 'Blocked in|blocked in' \
+                'minikin|FontManager|Typeface' 'Shutting down|Rebooting|reboot'; do
+        _c=$(grep -c -E "$_pat" "$_f" 2>/dev/null)
+        case "$_c" in ''|*[!0-9]*) _c='?' ;; esac
+        printf '%s%s：%-46s 命中 %s\n' "$(now) " "$_tag" "$_pat" "$_c" >> "$GUARD_LOG" 2>/dev/null
+    done
+    grep -E 'sys.shutdown.requested|Shutting down|Watchdog|FATAL EXCEPTION|ANR in ' "$_f" 2>/dev/null \
+        | tail -n 8 | while IFS= read -r _ln; do
+            printf '%s  扫描原文：%s\n' "$(now)" "$_ln" >> "$GUARD_LOG" 2>/dev/null
+        done
+}
+
+if [ -f "$BOOT_LOG" ] && [ -s "$BOOT_LOG" ]; then
+    echo "$(now) —— 上一轮日志扫描（原文留成 $BOOT_LOG.prev；命中 0 也是信息）" >> "$GUARD_LOG" 2>/dev/null
+    scan_boot_log "$BOOT_LOG" '  扫描'
+    mv -f "$BOOT_LOG" "$BOOT_LOG.prev" 2>/dev/null
+fi
+# 新一轮从空文件开始，避免新旧两轮混在一份里（混了就说不清哪行属于哪次开机）。
+: > "$BOOT_LOG" 2>/dev/null
 
 [ "${SELFFONT_NO_LOGCAT:-0}" = "1" ] && exit 0
 

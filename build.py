@@ -2410,6 +2410,78 @@ def runtime_scripts():
             "心跳没写出来：真机上就分不清「一直在抓」和「第 54 秒就断了」"
         assert "上一轮的旧错误" not in (hbd / "d/logcat.err").read_text(encoding="utf-8"), \
             "logcat.err 跨开机累积：上一轮的错误还在，这一轮的查不出来"
+        # ★ 2026-11-09 教训：上一轮的现场不是「分析完」才没的，是被清账命令 rm 掉的。
+        #   那次 guard.log 停在「logcat 自己结束」，而「谁发起重启」的证据就在 boot.log 里。
+        #   所以开机必须**自动扫上一轮日志**：结论进 guard.log，原文留成 boot.log.prev，
+        #   新一轮从空文件开始（混在一份里就说不清哪行属于哪次开机）。
+        assert "scan_boot_log" in gsrc, "没有把扫描逻辑函数化：自动扫和手动扫会分成两套判据"
+        assert "boot.log.prev" in gsrc, "上一轮原文没留档：清账一删就再没有现场"
+        scd = tmp / "scantest"
+        (scd / "d").mkdir(parents=True)
+        (scd / "m/selffont-bench").mkdir(parents=True)
+        (scd / "d/boot.log").write_text(
+            "11-09 18:01:56.312  1209  1209 W statsd  : statsd terminated on receiving signal 15.\n"
+            "11-09 18:01:56.336  1646  1662 D EMDLOGGER1: sys.shutdown.requested =\n"
+            "11-09 18:01:50.000  1000  1000 E Watchdog: WATCHDOG KILLING SYSTEM PROCESS\n",
+            encoding="utf-8")
+        esc = {h: v for h, v in os.environ.items() if h != "MODDIR"}
+        esc.update({"SELFFONT_DATA": str(scd / "d"), "SELFFONT_MODULES": str(scd / "m"),
+                    "SELFFONT_BOOT_ID": "494", "SELFFONT_NO_LOGCAT": "1",
+                    "SELFFONT_FAST_REBOOT_WINDOW": "999999999"})
+        sh([str(guard)], esc)
+        st = (scd / "d/guard.log").read_text(encoding="utf-8")
+        assert "上一轮日志扫描" in st, "开机没有自动扫上一轮日志：又得靠人记得跑命令"
+        assert "sys.shutdown.requested" in st and "命中 1" in st, "扫描没认出 sys.shutdown.requested"
+        # 真机原句是「receiving signal 15」和「signal number=15」，模式写 received 会漏。
+        # 单独验 signal 那条：只放真机原句「receiving signal 15」，
+        # 别的模式一条都不该命中，所以「命中 1」必须出现在 signal 那一行。
+        sd2 = tmp / "sig15"
+        (sd2 / "d").mkdir(parents=True)
+        (sd2 / "m/selffont-bench").mkdir(parents=True)
+        (sd2 / "d/boot.log").write_text(
+            "11-09 18:01:56.312  1209  1209 W statsd  : statsd terminated on receiving signal 15.\n",
+            encoding="utf-8")
+        sh([str(guard)], {**os.environ, "SELFFONT_DATA": str(sd2 / "d"),
+                          "SELFFONT_MODULES": str(sd2 / "m"), "SELFFONT_BOOT_ID": "495",
+                          "SELFFONT_NO_LOGCAT": "1",
+                          "SELFFONT_FAST_REBOOT_WINDOW": "999999999"})
+        s15 = [ln for ln in (sd2 / "d/guard.log").read_text(encoding="utf-8").splitlines()
+               if "signal 15|" in ln]
+        assert s15 and s15[0].endswith("命中 1"), \
+            f"signal 15 那条模式没命中真机原句「receiving signal 15」：{s15}"
+        assert "扫描原文" in st and "WATCHDOG KILLING" in st, "没有摘出原文：还得再去 grep"
+        assert (scd / "d/boot.log.prev").exists(), "上一轮原文没留成 boot.log.prev"
+        assert (scd / "d/boot.log").read_text(encoding="utf-8") == "", \
+            "新一轮 boot.log 不是空的：新旧两轮混在一份里，说不清哪行属于哪次开机"
+        # 手动扫描脚本必须与守卫共用**同一份**判据（scan_boot_log），不许另写一套；
+        # 并且输出不许走 /dev/stdout、/dev/tty、/proc/self/fd/1 —— 这三样在 Android 的
+        # root shell 下会「探测能写、实际写不进去」，整段扫描一行都出不来（撞过三次）。
+        scan = ROOT / "tools/sf-scan.sh"
+        ssrc = scan.read_text(encoding="utf-8")
+        scode = [ln for ln in ssrc.splitlines() if not ln.lstrip().startswith("#")]
+        assert any("scan_boot_log" in ln for ln in scode), "手动扫描没有复用守卫的 scan_boot_log"
+        assert 'awk \'/^scan_boot_log' in ssrc or "scan_boot_log\\(\\)" in ssrc, \
+            "没有从守卫里抽 scan_boot_log 函数体"
+        for bad in ("/dev/stdout", "/dev/tty", "/proc/self/fd/1"):
+            hits = [ln for ln in scode if bad in ln]
+            assert not hits, \
+                f"手动扫描把输出直连到 {bad}（{hits}）：真机上打不开，整段结果一行都出不来"
+        assert "cat \"$OUT\"" in ssrc, "扫描结果没有打回终端"
+        # 夹具：跑一遍手动扫描，必须真的把命中数打出来
+        st2 = tmp / "scantool"
+        (st2 / "data").mkdir(parents=True)
+        (st2 / "data/boot.log.prev").write_text(
+            "11-09 18:01:56.312 W statsd  : statsd terminated on receiving signal 15.\n"
+            "11-09 18:01:50.000 E Watchdog: WATCHDOG KILLING SYSTEM PROCESS\n", encoding="utf-8")
+        (st2 / "data/boot.log").write_text("11-09 18:10:00.000 I ActivityManager: 新一轮\n",
+                                           encoding="utf-8")
+        rout = sh([str(scan)], {**os.environ, "SELFFONT_DATA": str(st2 / "data"),
+                               "SELFFONT_GUARD": str(guard),
+                               "SELFFONT_SCAN_OUT": str(st2 / "out.txt")})
+        assert rout.returncode == 0, rout
+        assert "boot.log.prev" in rout.stdout, "手动扫描没扫上一轮日志"
+        assert "命中 1" in rout.stdout, f"手动扫描没打出命中数：{rout.stdout[:400]}"
+        assert "WATCHDOG KILLING" in rout.stdout, "手动扫描没摘原文"
         # 不设 SELFFONT_BOOT_LOG_BYTES 时必须用 8 MiB（41943 行），这是主人这一轮要的。
         ec2 = {k: v for k, v in ec.items() if k != "SELFFONT_BOOT_LOG_BYTES"}
         ec2["SELFFONT_BOOT_ID"] = "32"
