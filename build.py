@@ -2266,8 +2266,21 @@ def runtime_scripts():
         assert cap_defaults[0] == max_defaults[0], (
             f"抓取上限两处默认值分叉：_cap={cap_defaults[0]} / MAX_BYTES={max_defaults[0]}"
             "——真机就是这么只抓到 2.8 秒 / 10485 行（2097152/200）的")
-        assert cap_defaults[0] == "8388608", \
-            f"抓取上限不是 8 MiB（现在 {cap_defaults[0]}）：2 MiB 只够装开机头 2.8 秒"
+        # 2026-11-09 真机第三轮：8 MiB 预算只写出 4.79 MiB 就断，因为断的是**行数**
+        # （41943 = 8388608 ÷ 200），而实测每行只有 119.6 字节。行数必须由字节预算推出来，
+        # 且不许再加「最小行数」下限，否则两层封顶再次脱钩。
+        assert "_lines=$(( _cap / 50 ))" in gsrc, \
+            "行数封顶没从字节预算推出来：真机上就出现 8 MiB 只写 4.79 MiB（41943 = 8388608÷200）"
+        _glines = [ln for ln in gsrc.splitlines()
+                   if not ln.lstrip().startswith("#") and "_lines" in ln and "-lt" in ln]
+        assert not _glines, \
+            f"行数又加了最小下限（{_glines}）：两层封顶会脱钩，真机上 8 MiB 只写出 4.79 MiB"
+        # 覆盖能力必须够到真机 81 秒自重启：实测写入速率 219 KB/s（5,017,814 字节 / 22.4 秒）。
+        _capn = int(cap_defaults[0])
+        cover = _capn / (5017814 / 22.4)
+        assert cover >= 81, f"上限 {_capn} 字节只够覆盖 {cover:.0f} 秒，真机 81 秒就重启，抓不到卡死那一步"
+        assert cap_defaults[0] == "25165824", \
+            f"抓取上限不是 24 MiB（现在 {cap_defaults[0]}）：2 MiB 只够 2.8 秒，8 MiB 只够 37 秒"
         # 夹具：假 logcat 无限吐行，跑一次必须**真的停在上限附近**，
         # 而不是「报了个上限然后自己就断了」。没有这个夹具，上一轮的分叉就是这么漏过去的。
         capd = tmp / "captest"
@@ -2299,10 +2312,14 @@ def runtime_scripts():
         gt = glog.read_text(encoding="utf-8")
         assert "抓日志：开始" in gt, "夹具里的抓日志根本没启动：这段现在验不到，别当它过了"
         assert "抓日志：停止" in gt, "抓日志没有真正停下：边抓边封顶失效了"
-        n_cap = len((capd / "d/boot.log").read_text(encoding="utf-8").splitlines())
-        # 2097152/200 = 10485（真机就是这个数）；给一点余量，但必须落在万行量级。
-        assert 10000 <= n_cap <= 11000, \
-            f"给了 2 MiB 却抓了 {n_cap} 行（应约 10485），封顶没按字节算"
+        b_cap = (capd / "d/boot.log").stat().st_size
+        # 关键：断的是**字节**，不是行数。真机 8 MiB 那轮只写出 4.79 MiB
+        # （41943 = 8388608÷200）就是按行数断的。这里要求顶到 2 MiB 的 95% 以上。
+        # 上下都要卡：只卡下限抓不到「按行数断」的反向错误——按行数算会**超出**字节预算
+        # （半行都不许超，awk 超了就 exit，最多多出一行的余量）。
+        assert 2097152 * 0.95 <= b_cap <= 2097152 + 200, \
+            (f"给了 2 MiB 却写出 {b_cap} 字节（{b_cap/2097152*100:.0f}%）："
+             "封顶不是按实际字节算的（按行数算会写到 5 MB 外）")
         # 不设 SELFFONT_BOOT_LOG_BYTES 时必须用 8 MiB（41943 行），这是主人这一轮要的。
         ec2 = {k: v for k, v in ec.items() if k != "SELFFONT_BOOT_LOG_BYTES"}
         ec2["SELFFONT_BOOT_ID"] = "32"
@@ -2316,8 +2333,8 @@ def runtime_scripts():
             if "抓日志：停止" in glog2.read_text(encoding="utf-8"):
                 break
             time.sleep(0.2)
-        assert "上限 1 秒 / 8388608 字节" in glog2.read_text(encoding="utf-8"), \
-            "默认上限不是 8 MiB：真机上 2 MiB 只够开机头 2.8 秒，关键词全 0"
+        assert "上限 1 秒 / 25165824 字节" in glog2.read_text(encoding="utf-8"), \
+            "默认上限不是 24 MiB：2 MiB 只够 2.8 秒、8 MiB 只够 37 秒，真机 81 秒才重启"
         win = tmp / "wintest"
         (win / "d").mkdir(parents=True)
         (win / "m/selffont-bench").mkdir(parents=True)

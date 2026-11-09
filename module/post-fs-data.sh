@@ -149,9 +149,10 @@ echo "$(now) 第 $n 次开机开始（阈值 $MAX）" >> "$GUARD_LOG" 2>/dev/nul
 # ---- ② 卡住那次的日志落盘 ----
 # 体积上限。**这是两份加起来的上限**，磁盘占用最多约 2×MAX_BYTES（滚动的瞬间两份都在）。
 # 2026-11-09 真机：2 MiB 只够装开机头 2.8 秒，ActivityManager 那时还没起来。
-# 放到 8 MiB（约 4 万行，够覆盖到 system_server 起来之后）。
-MAX_BYTES=${SELFFONT_BOOT_LOG_BYTES:-8388608}
-case "$MAX_BYTES" in ''|*[!0-9]*) MAX_BYTES=8388608 ;; esac
+# 第三轮（17:45）实测：写入速率 219 KB/s，要覆盖到 81 秒自重启需要约 17.3 MiB。
+# 取 24 MiB（两份最多 48 MiB，占 /data 极小），按实测速率可覆盖约 112 秒 > 81 秒。
+MAX_BYTES=${SELFFONT_BOOT_LOG_BYTES:-25165824}
+case "$MAX_BYTES" in ''|*[!0-9]*) MAX_BYTES=25165824 ;; esac
 # ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
 #   两个原因叠在一起：①旧版只在本次开机给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1
 #   之后**再没人管它**；②这段清理原本写在 NO_LOGCAT 提前退出的后面，
@@ -224,17 +225,25 @@ grab() {
     #   我上一轮只改了 MAX_BYTES 的默认值，这里漏了，于是 8 MiB 根本没生效，
     #   七个关键词（ActivityManager/Watchdog/minikin/FontManager）依旧全 0。
     #   两处默认值必须一致，这条现在由 build.py 钉死，不许再分叉。
-    _cap=${SELFFONT_BOOT_LOG_BYTES:-8388608}
-    case "$_cap" in ''|*[!0-9]*) _cap=8388608 ;; esac
-    # 每行按 200 字节估（threadtime 实测约 112 字节，估 200 是往小里算，宁可早停）。
-    _lines=$(( _cap / 200 ))
-    [ "$_lines" -lt 2000 ] && _lines=2000
+    _cap=${SELFFONT_BOOT_LOG_BYTES:-25165824}
+    case "$_cap" in ''|*[!0-9]*) _cap=25165824 ;; esac
+    # ★ 2026-11-09 真机第三轮（17:45:42）：8 MiB 那轮报了「41943 行 / 5,017,814 字节」，
+    #   22.4 秒就断。两个数放在一起就说明断的不是字节而是**行数**：
+    #   41943 = 8388608 ÷ 200（我按每行 200 字节估的），而实测每行只有 119.6 字节，
+    #   8 MiB 预算只用了 60%。行数封顶和字节封顶对不上，等于自己砍掉 40%。
+    #   现在两层都用**实际字节数**数，行数只当保险丝（100 万行，正常永远用不到）。
+    # 行数保险丝：只在极短行（<50 字节）时才可能先撞上；正常行 119 字节，字节封顶先到。
+    # ★ 不许再给它加「最小行数」下限——上一版的下限让「行数封顶」和字节预算脱钩，
+    #   真机上 8 MiB 只写出 4.79 MiB 就断了（41943 = 8388608 ÷ 200）。
+    _lines=$(( _cap / 50 ))
     # 秒级 date 分辨不出亚秒差：夹具里跑 0.2 秒会印成「实际跑了 0 秒」，也是假话。
     # 有 /proc/uptime 就用它（带两位小数）；没有就退回秒级并标明「精度 1 秒」。
     _t0=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
     [ -n "$_t0" ] || _t0=$(date +%s 2>/dev/null || echo 0)
     echo "$(now) 抓日志：开始（全量，排除刷屏标签），上限 $_limit_s 秒 / $_cap 字节" >> "$GUARD_LOG" 2>/dev/null
-    grab "$_limit_s" | awk -v cap="$_lines" 'NR > cap { exit } { print }' >> "$BOOT_LOG"
+    # 字节封顶：按**实际累计字节**算，不再按行数折算。行数只做保险丝。
+    grab "$_limit_s" | awk -v cap="$_cap" -v maxl="$_lines" \
+        '{ n += length($0) + 1; if (n > cap || NR > maxl) exit; print }' >> "$BOOT_LOG"
     _t1=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
     [ -n "$_t1" ] || _t1=$(date +%s 2>/dev/null || echo 0)
     _el=$(awk -v a="$_t0" -v b="$_t1" 'BEGIN{ if (a+0 == 0 && b+0 == 0) { print "?"; exit }
