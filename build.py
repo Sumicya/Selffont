@@ -2201,6 +2201,48 @@ def runtime_scripts():
         assert (nd / "d" / "boot-count").read_text().strip() == "1", \
             "没等到 sys.boot_completed 却把计数清了：下次开机就分不清上次卡没卡"
 
+        # ★ 2026-11-09 自查（不看真机，自己找出来的）三处：
+        #   ① ⑫ 的去重用 `for seen in $SHOWN`，路径带空格会被拆词，去重整个失效。
+        #      真机 Download 里就有 `Nagram/Saved Attachments` 这种名字。
+        #   ② MAX / MAX_BYTES / WAIT / SECONDS 四个环境变量裸取，给非数字时
+        #      `[ -gt ]` 报 Illegal number 返回 2，if 判假 —— 守卫**永远不停用**，
+        #      而且日志里一个字都不提。
+        #   ③ sf-why.sh 只要 boot.log 存在就算「读到证据」，哪怕七个关键词全是 0。
+        cleanup_src = (ROOT / "tools/sf-clean.sh").read_text(encoding="utf-8")
+        # 只看代码行：注释里那句复盘会被字符串匹配误判成功。
+        cleanup_code = [ln for ln in cleanup_src.splitlines() if not ln.lstrip().startswith("#")]
+        assert not any("for seen in $SHOWN" in ln for ln in cleanup_code), \
+            "⑫ 的去重又在按空格拆词：路径带空格时整个失效（真机有 Saved Attachments）"
+        assert any("while IFS= read -r seen" in ln for ln in cleanup_code), "⑫ 去重没有按行读"
+        for f, name in ((guard, "post-fs-data.sh"), (night, "service.sh")):
+            txt = f.read_text(encoding="utf-8")
+            for var in ("MAX", "MAX_BYTES", "_limit_s", "WAIT"):
+                if f"${{{var}" in txt:
+                    assert f'case "${var}" in' in txt, \
+                        f"{name} 的 {var} 裸取：非数字时 [ -gt ] 报错并判假，守卫静默失效"
+        why_src = (ROOT / "tools/sf-why.sh").read_text(encoding="utf-8")
+        why_code = [ln for ln in why_src.splitlines() if not ln.lstrip().startswith("#")]
+        # 结构断言：必须有「按命中总数决定算不算证据」这段，而不是只查字面词。
+        assert any('if [ "$total" -gt 0 ]' in ln for ln in why_code), \
+            "sf-why 又把空 boot.log 当成证据：文件在、七个关键词全是 0，也算「读到了」"
+
+        # ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
+        #   旧版只在**本次开机开始时**给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1 之后
+        #   再没人管它；清理命令只删 boot.log，宿主机上就永远留一份 13 MB。
+        #   夹具：给一个超上限的 .1，跑一次开机，.1 必须整份消失。
+        big = tmp / "big1"
+        (big / "d").mkdir(parents=True)
+        (big / "m").mkdir(parents=True)
+        (big / "d" / "boot.log.1").write_bytes(b"x" * 50000)
+        (big / "d" / "boot.log").write_bytes(b"y" * 100)
+        eb = {h: v for h, v in os.environ.items() if h != "MODDIR"}
+        eb.update({"SELFFONT_DATA": str(big / "d"), "SELFFONT_MODULES": str(big / "m"),
+                   "SELFFONT_BOOT_ID": "1", "SELFFONT_BOOT_LOG_BYTES": "2048",
+                   "SELFFONT_NO_LOGCAT": "1"})
+        sh([str(guard)], eb)
+        assert not (big / "d" / "boot.log.1").exists(), \
+            "超过上限的 boot.log.1 没人管：真机上就留了一份 12.6 MB（清理命令只删 boot.log）"
+
         # 日志上界：不封顶的话卡死循环里每次开机都写，能把 /data 写满。
         assert "SELFFONT_BOOT_LOG_BYTES" in guard.read_text(encoding="utf-8"), \
             "开机日志没有体积上界"

@@ -285,7 +285,8 @@ head1 '⑫ 全盘按名字找（selffont / Selfrounds / MFGA / Maruko）'
 SCANNED=''
 SCAN_TMP=$(mktemp 2>/dev/null || echo /data/local/tmp/.sfscan.$$)
 : > "$SCAN_TMP"
-SHOWN=''
+SHOWN=$(mktemp 2>/dev/null || echo /data/local/tmp/.sfshown.$$)
+: > "$SHOWN"
 for root in /data /storage/emulated/0 /cache; do
     [ -d "$root" ] || continue
     SCANNED="$SCANNED $root"
@@ -340,15 +341,21 @@ sort -u "$SCAN_TMP" | while IFS= read -r f; do
         */modules/selffont-bench/*)
             continue ;;                       # 本模块自己的文件，不是垃圾
     esac
+    # ★ 2026-11-09 自查发现的真 bug：`for seen in $SHOWN` 不加引号，
+    #   路径里有空格就会被拆成好几个词，去重**整个失效**。
+    #   真机上 Download 里就有 `Nagram/Saved Attachments` 这种名字，
+    #   夹具里父子两层都带空格时，子目录照样被列出来。
+    #   改成用换行分隔的文件，`while IFS= read -r` 逐行读，不拆词。
     skip=0
-    for seen in $SHOWN; do
+    while IFS= read -r seen; do
+        [ -n "$seen" ] || continue
         case "$f" in "$seen"/*) skip=1 ; break ;; esac
-    done
+    done < "$SHOWN"
     [ "$skip" = 1 ] && continue
-    SHOWN="$SHOWN $f"
+    printf '%s\n' "$f" >> "$SHOWN"
     printf '  [看] %6s KB  %s  %s\n' "$(kb "$f")" "$(when "$f")" "$f"
 done
-rm -f "$SCAN_TMP" 2>/dev/null
+rm -f "$SCAN_TMP" "$SHOWN" 2>/dev/null
 echo '  ※ 这一节只列不删：名字带这些字的东西，可能正是你要刷的包、要留的证据。'
 
 # ---------------------------------------------------------------- ⑬ 大文件排行

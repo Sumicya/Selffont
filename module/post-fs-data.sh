@@ -44,7 +44,13 @@ COUNT="$DATA/boot-count"
 GUARD_LOG="$DATA/guard.log"
 BOOT_LOG="$DATA/boot.log"
 MAX=${SELFFONT_MAX_BOOT_FAIL:-2}
+# ★ 2026-11-09 自查：这些环境变量是**裸取**的。给一个非数字，
+#   `[ "$n" -gt "$MAX" ]` 会报 Illegal number 并返回 2，if 判假 ——
+#   于是「连续 3 次没走到底自动停用」**永远不触发**，而日志里一个字都不提。
+#   真机上没人会去设它，但我不能靠「没人会这么干」把守卫写脆。
+case "$MAX" in ''|*[!0-9]*) MAX=2 ;; esac
 _limit_s=${SELFFONT_BOOT_LOG_SECONDS:-180}
+case "$_limit_s" in ''|*[!0-9]*) _limit_s=180 ;; esac
 
 mkdir -p "$DATA" 2>/dev/null
 # 无条件先留一行：只要这行在，就证明「这个脚本真的被执行了」。
@@ -105,14 +111,29 @@ fi
 echo "$(now) 第 $n 次开机开始（阈值 $MAX）" >> "$GUARD_LOG" 2>/dev/null
 
 # ---- ② 卡住那次的日志落盘 ----
+# 体积上限。**这是两份加起来的上限**，磁盘占用最多约 2×MAX_BYTES（滚动的瞬间两份都在）。
+MAX_BYTES=${SELFFONT_BOOT_LOG_BYTES:-2097152}
+case "$MAX_BYTES" in ''|*[!0-9]*) MAX_BYTES=2097152 ;; esac
+# ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
+#   两个原因叠在一起：①旧版只在本次开机给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1
+#   之后**再没人管它**；②这段清理原本写在 NO_LOGCAT 提前退出的后面，
+#   关掉抓日志时根本走不到。现在挪到前面，并且 .1 超上限就整份丢掉。
+if [ -f "$BOOT_LOG.1" ]; then
+    _old1=$(wc -c < "$BOOT_LOG.1" 2>/dev/null)
+    case "$_old1" in ''|*[!0-9]*) _old1=0 ;; esac
+    if [ "$_old1" -gt "$MAX_BYTES" ]; then
+        echo "$(now) boot.log.1 有 ${_old1} 字节，超过上限 ${MAX_BYTES}，整份丢弃（旧版没管它）" >> "$GUARD_LOG" 2>/dev/null
+        rm -f "$BOOT_LOG.1" 2>/dev/null
+    fi
+fi
+if [ -f "$BOOT_LOG" ]; then
+    _cur=$(wc -c < "$BOOT_LOG" 2>/dev/null)
+    case "$_cur" in ''|*[!0-9]*) _cur=0 ;; esac
+    [ "$_cur" -gt "$MAX_BYTES" ] && mv -f "$BOOT_LOG" "$BOOT_LOG.1" 2>/dev/null
+fi
+
 [ "${SELFFONT_NO_LOGCAT:-0}" = "1" ] && exit 0
 
-# 上一轮留下的 boot.log 若超过保留上限就滚一份，只留最近两份。
-# 目的是让磁盘占用有上界：卡死循环里每次开机都写，不封顶会把 /data 写满。
-MAX_BYTES=${SELFFONT_BOOT_LOG_BYTES:-2097152}
-if [ -f "$BOOT_LOG" ] && [ "$(wc -c < "$BOOT_LOG" 2>/dev/null || echo 0)" -gt "$MAX_BYTES" ]; then
-    mv -f "$BOOT_LOG" "$BOOT_LOG.1" 2>/dev/null
-fi
 
 # 后台抓日志。
 #

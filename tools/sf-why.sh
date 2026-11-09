@@ -172,12 +172,23 @@ if [ -r "$D/boot.log" ]; then
         say '空文件 → 那次开机在 logd 起来之前就卡死了，或守卫没来得及抓。'
         say '这种情形只能靠 ⑤ 的计数确认「确实每次都卡在同一处」。'
     else
+        total=0
         for k in FATAL Watchdog 'ANR in' blocked minikin FontManager RescueParty; do
-            printf '  %-14s %s 次\n' "$k" "$(grep -c -F "$k" "$D/boot.log")"
+            c=$(grep -c -F "$k" "$D/boot.log")
+            case "$c" in ''|*[!0-9]*) c=0 ;; esac
+            total=$((total + c))
+            printf '  %-14s %s 次\n' "$k" "$c"
         done
         printf '  --- 最后 15 行\n'
         tail -15 "$D/boot.log" | sed 's/^/    /'
-        HIT=$((HIT + 1))
+        # ★ 2026-11-09 自查：原来只要 boot.log 存在就 +1，哪怕它只有 9 字节、
+        #   七个关键词**全是 0**，也算「读到的证据块」，最后给出「按 ①→⑥ 认」的结论。
+        #   空日志被当成证据，就是「假装查了」。有关键词命中才算。
+        if [ "$total" -gt 0 ]; then
+            HIT=$((HIT + 1))
+        else
+            miss "$D/boot.log 里七个关键词一个都没有（文件在，但没内容可认）"
+        fi
     fi
 else
     miss "$D/boot.log"

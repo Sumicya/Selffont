@@ -15,6 +15,9 @@ DATA=${SELFFONT_DATA:-/data/adb/selffont}
 COUNT="$DATA/boot-count"
 GUARD_LOG="$DATA/guard.log"
 WAIT=${SELFFONT_BOOT_WAIT:-120}
+# 同 post-fs-data.sh：非数字会让 [ -lt ] 报 Illegal number，循环一秒都不跑，
+# 守夜直接落到「超时」分支，把好机器记成「没能确认走到底」。
+case "$WAIT" in ''|*[!0-9]*) WAIT=120 ;; esac
 
 now() { date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻; }
 
