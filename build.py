@@ -2063,8 +2063,12 @@ def runtime_scripts():
         assert sh(["-n", str(night)], os.environ).returncode == 0, "service.sh 语法错误"
         moddir = tmp / "module"
         moddir.mkdir()
+        # 窗口给极大值：这个夹具测的是「第 1/2/3 次开机」的计数与停用，
+        # 不是快速重启保护。默认 300 在沙箱里（uptime 百来秒）会被判成「活过了」
+        # 而反复清零，夹具就测歪了。
         env = {**os.environ, "MODDIR": str(moddir), "SELFFONT_DATA": str(data),
-               "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "2"}
+               "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "2",
+               "SELFFONT_FAST_REBOOT_WINDOW": "999999999"}
 
         # 每一「次开机」给一个不同的 btime，模拟真的重启。不给的话会全部被去重判成
         # 同一次开机——这正是第一版拿 uptime 当判据时的错法。
@@ -2109,9 +2113,13 @@ def runtime_scripts():
         (dup / "d").mkdir(parents=True)
         (dup / "m").mkdir(parents=True)
         ed = {k: v for k, v in os.environ.items() if k != "MODDIR"}
+        # 这个夹具测的是「同一次开机去重」，不是快速重启保护。
+        # 窗口必须给一个**极大值**让「快速重启」恒成立、不触发清零；
+        # 给 0 会反过来每次都清零（uptime 恒大于 0），给默认 300 又会被沙箱的
+        # 百来秒 uptime 判成「活过了」——三种都不对，只有极大值才是中性。
         ed.update({"SELFFONT_DATA": str(dup / "d"), "SELFFONT_MODULES": str(dup / "m"),
                    "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "99",
-                   "SELFFONT_BOOT_ID": "100000"})
+                   "SELFFONT_BOOT_ID": "100000", "SELFFONT_FAST_REBOOT_WINDOW": "999999999"})
         sh([str(guard)], ed)
         sh([str(guard)], ed)
         cnt = (dup / "d" / "boot-count").read_text().strip()
@@ -2225,6 +2233,28 @@ def runtime_scripts():
         # 结构断言：必须有「按命中总数决定算不算证据」这段，而不是只查字面词。
         assert any('if [ "$total" -gt 0 ]' in ln for ln in why_code), \
             "sf-why 又把空 boot.log 当成证据：文件在、七个关键词全是 0，也算「读到了」"
+
+        # ★ 2026-11-09 真机实测后的两条硬要求：
+        #   ① 阈值默认必须是 1。真机卡住是「开机 81 秒自己重启」的自循环，
+        #      阈值 2 要白挨约 4 分钟；主人要求「检测 1 次就 ban」。
+        #   ② 判据必须是 -gt。-ge 会让**第 1 次开机**就停用，好机器也被关
+        #      —— 我自己改错过一次，夹具当场打回。
+        assert "MAX=${SELFFONT_MAX_BOOT_FAIL:-1}" in gsrc, \
+            "阈值默认不是 1：主人要的是一次就停，卡住时每轮约 81 秒"
+        assert 'if [ "$n" -gt "$MAX" ]' in gsrc, \
+            "判据不是 -gt：改成 -ge 会让第一次开机就自己停用（好机器也被关）"
+        assert "SELFFONT_FAST_REBOOT_WINDOW" in gsrc, "没有快速重启窗口：意外断电会误杀模块"
+        win = tmp / "wintest"
+        (win / "d").mkdir(parents=True)
+        (win / "m/selffont-bench").mkdir(parents=True)
+        (win / "d" / "boot-count").write_text("1\n")
+        ew = {h: v for h, v in os.environ.items() if h != "MODDIR"}
+        ew.update({"SELFFONT_DATA": str(win / "d"), "SELFFONT_MODULES": str(win / "m"),
+                   "SELFFONT_BOOT_ID": "7", "SELFFONT_NO_LOGCAT": "1",
+                   "SELFFONT_FAST_REBOOT_WINDOW": "1"})   # uptime 必然 > 1 秒
+        sh([str(guard)], ew)
+        assert not (win / "m/selffont-bench/disable").exists(), \
+            "上次开机活过了窗口期，这次却把它停用了：一次意外重启就误杀模块"
 
         # ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
         #   旧版只在**本次开机开始时**给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1 之后

@@ -43,12 +43,15 @@ DATA=${SELFFONT_DATA:-/data/adb/selffont}
 COUNT="$DATA/boot-count"
 GUARD_LOG="$DATA/guard.log"
 BOOT_LOG="$DATA/boot.log"
-MAX=${SELFFONT_MAX_BOOT_FAIL:-2}
+# ★ 2026-11-09 真机：卡住时是「开机 → 约 81 秒自己重启」的自循环，不是等主人长按。
+#   三次实测间隔 82 / 81 秒，守夜每次都停在 50 秒那条（第 60 秒永远不到）。
+#   阈值 2 意味着要白挨 3 轮、约 4 分钟；改成 1，卡一次下一轮就停。
+MAX=${SELFFONT_MAX_BOOT_FAIL:-1}
 # ★ 2026-11-09 自查：这些环境变量是**裸取**的。给一个非数字，
 #   `[ "$n" -gt "$MAX" ]` 会报 Illegal number 并返回 2，if 判假 ——
 #   于是「连续 3 次没走到底自动停用」**永远不触发**，而日志里一个字都不提。
 #   真机上没人会去设它，但我不能靠「没人会这么干」把守卫写脆。
-case "$MAX" in ''|*[!0-9]*) MAX=2 ;; esac
+case "$MAX" in ''|*[!0-9]*) MAX=1 ;; esac
 _limit_s=${SELFFONT_BOOT_LOG_SECONDS:-180}
 case "$_limit_s" in ''|*[!0-9]*) _limit_s=180 ;; esac
 
@@ -89,6 +92,32 @@ if [ -n "$boot_id" ]; then
 fi
 
 # ---- ① 开机计数 ----
+# ★ 阈值降到 1 之后有个新风险：**意外重启**（断电、电量耗尽、系统更新）也会被算成
+#   「没走到底」，一次就把模块关掉。真机上卡住的特征是「开机后 81 秒就重启」，
+#   正常用了一阵再重启完全不是一回事。所以只有**上次开机存活不到 WINDOW 秒**才算失败。
+#   $SELFFONT_FAST_REBOOT_WINDOW 默认 300 秒；判不出来（没有 /proc/uptime）时按「算失败」，
+#   宁可误关也不许因为算不出来而永远不关。
+WINDOW=${SELFFONT_FAST_REBOOT_WINDOW:-300}
+case "$WINDOW" in ''|*[!0-9]*) WINDOW=300 ;; esac
+_up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+case "$_up" in ''|*[!0-9.]*) _up='' ;; esac
+if [ -n "$_up" ]; then
+    # awk 比较小数（busybox 的 test 不收小数）
+    if awk -v u="$_up" -v w="$WINDOW" 'BEGIN{exit !(u < w)}'; then
+        FAST=1
+    else
+        FAST=0
+    fi
+else
+    FAST=1
+fi
+if [ "$FAST" = "0" ]; then
+    # 上次开机活过了窗口期：那是主人正常用了一阵再重启，不是卡住，计数清零重来。
+    if [ -s "$COUNT" ]; then
+        echo "$(now) 上次开机已存活超过 ${WINDOW} 秒（本次 uptime=${_up}），不算卡住，计数清零" >> "$GUARD_LOG" 2>/dev/null
+    fi
+    : > "$COUNT"
+fi
 # 先写计数再干别的：万一本脚本自己后面卡住，这次开机也已经算进去了。
 n=$(cat "$COUNT" 2>/dev/null)
 case "$n" in ''|*[!0-9]*) n=0 ;; esac
@@ -96,7 +125,14 @@ n=$((n + 1))
 echo "$n" > "$COUNT" 2>/dev/null
 
 if [ "$n" -gt "$MAX" ]; then
-    # 连续 MAX+1 次没走到 boot-completed：判定本模块是卡住的原因，自己停用自己。
+    # ★ 2026-11-09：判据**必须**是 -gt，不许改成 -ge。
+    #   守卫在开机时数第 n 次，但「这次会不会走到底」此刻还不知道——
+    #   要等下一次开机数出更大的 n 才能判定上一次失败。
+    #   -gt 的语义：n > MAX，即「前 MAX 次都没走到底」。
+    #     MAX=1 → 第 2 次开机停用（卡 1 次就停，正是主人要的）
+    #     MAX=2 → 第 3 次开机停用（真机实测过）
+    #   改成 -ge 就变成「第 1 次开机就停用」——**好机器正常开机一次也被关掉**。
+    #   我自己改错过一次，夹具当场打回：count=1 且 disable=有。
     # 停用是 KernelSU 的官方机制（模块目录下一个叫 disable 的空文件），可逆：
     # 主人把那个文件删掉、重启，模块就回来。
     [ -n "$MODDIR" ] && : > "$MODDIR/disable" 2>/dev/null
@@ -112,8 +148,10 @@ echo "$(now) 第 $n 次开机开始（阈值 $MAX）" >> "$GUARD_LOG" 2>/dev/nul
 
 # ---- ② 卡住那次的日志落盘 ----
 # 体积上限。**这是两份加起来的上限**，磁盘占用最多约 2×MAX_BYTES（滚动的瞬间两份都在）。
-MAX_BYTES=${SELFFONT_BOOT_LOG_BYTES:-2097152}
-case "$MAX_BYTES" in ''|*[!0-9]*) MAX_BYTES=2097152 ;; esac
+# 2026-11-09 真机：2 MiB 只够装开机头 2.8 秒，ActivityManager 那时还没起来。
+# 放到 8 MiB（约 4 万行，够覆盖到 system_server 起来之后）。
+MAX_BYTES=${SELFFONT_BOOT_LOG_BYTES:-8388608}
+case "$MAX_BYTES" in ''|*[!0-9]*) MAX_BYTES=8388608 ;; esac
 # ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
 #   两个原因叠在一起：①旧版只在本次开机给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1
 #   之后**再没人管它**；②这段清理原本写在 NO_LOGCAT 提前退出的后面，
