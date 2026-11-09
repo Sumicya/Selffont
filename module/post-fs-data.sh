@@ -193,28 +193,40 @@ fi
 #   又一个「看着说了，其实没查」。现在前后各取一次时间戳，差多少就报多少。
 grab() {
     _limit=${1:-180}
+    # 夹具里把 logcat 换成假命令（无限吐行），才验得到「边抓边封顶」到底停没停。
+    _lc=${SELFFONT_LOGCTL:-logcat}
     if command -v timeout >/dev/null 2>&1; then
-        timeout "$_limit" logcat -b main,system,crash -v threadtime
+        timeout "$_limit" "$_lc" -b main,system,crash -v threadtime
     else
-        logcat -b main,system,crash -v threadtime
+        "$_lc" -b main,system,crash -v threadtime
     fi | grep -v -E 'Typeface: Preloading|reportOneUidFrozenStateChanged|skip deliver sticky broadcast|Async freezing|Cancel freezing|ProcessObserver broadcast disabled'
 }
 
 (
     # 等 logd 起来（最多 15 秒）。post-fs-data 阶段 logd 通常已经在跑，但不保证。
     # 等不到**记一行**再退出：静默退出等于这次开机白抓，说不清是没 logd 还是没跑。
+    # ★ 2026-11-09：夹具要能跑这段，才验得到「上限到底生效没有」。真机路径不许变，
+    #   只有 SELFFONT_LOGCTL 给了值时才用它（夹具传一个假 logcat，真机不设=走原路）。
+    _sock=${SELFFONT_LOGD_SOCKET:-/dev/socket/logdw}
     i=0
-    while [ ! -e /dev/socket/logdw ] && [ "$i" -lt 15 ]; do
+    while [ ! -e "$_sock" ] && [ "$i" -lt 15 ]; do
         i=$((i + 1))
         sleep 1
     done
-    if [ ! -e /dev/socket/logdw ]; then
-        echo "$(now) 抓日志：等了 15 秒没有 /dev/socket/logdw，本次没抓到（不是没跑，是 logd 没起来）" >> "$GUARD_LOG" 2>/dev/null
+    if [ ! -e "$_sock" ]; then
+        echo "$(now) 抓日志：等了 15 秒没有 $_sock，本次没抓到（不是没跑，是 logd 没起来）" >> "$GUARD_LOG" 2>/dev/null
         exit 0
     fi
     # 体积封顶用**边抓边看**：每 2000 行检查一次，超了就停。
     # 原来只在「下次开机」检查，跑的过程中不设防——真机一次就写了 100,453 行、22 MB。
-    _cap=${SELFFONT_BOOT_LOG_BYTES:-2097152}
+    # ★ 2026-11-09 真机第二轮（17:30:35）：守卫自己报「上限 2097152 字节」，
+    #   实际只跑 2.8 秒 / 10485 行就断——因为**控制抓多少的是这一行**，不是上面的 MAX_BYTES。
+    #   我上一轮只改了 MAX_BYTES 的默认值，这里漏了，于是 8 MiB 根本没生效，
+    #   七个关键词（ActivityManager/Watchdog/minikin/FontManager）依旧全 0。
+    #   两处默认值必须一致，这条现在由 build.py 钉死，不许再分叉。
+    _cap=${SELFFONT_BOOT_LOG_BYTES:-8388608}
+    case "$_cap" in ''|*[!0-9]*) _cap=8388608 ;; esac
+    # 每行按 200 字节估（threadtime 实测约 112 字节，估 200 是往小里算，宁可早停）。
     _lines=$(( _cap / 200 ))
     [ "$_lines" -lt 2000 ] && _lines=2000
     # 秒级 date 分辨不出亚秒差：夹具里跑 0.2 秒会印成「实际跑了 0 秒」，也是假话。

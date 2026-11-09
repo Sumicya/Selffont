@@ -2179,8 +2179,12 @@ def runtime_scripts():
             "logcat 又用 -s 白名单了：刷屏标签会把主干挤掉（真机 1707 行全是 Typeface）"
         assert any("grep -v" in ln and "Typeface: Preloading" in ln for ln in gc), \
             "没有用黑名单排除刷屏标签"
-        assert "没有 /dev/socket/logdw" in gsrc, \
+        # 只查字面句会被自己改文案坑（这次就是：句子改成 $_sock 就误红）。
+        # 结构断言：**没 logd 时的那行日志**必须在，且真机默认路径必须是 /dev/socket/logdw。
+        assert "抓日志：等了 15 秒没有" in gsrc, \
             "抓不到日志时静默退出：说不清是没跑还是 logd 没起来"
+        assert "_sock=${SELFFONT_LOGD_SOCKET:-/dev/socket/logdw}" in gsrc, \
+            "logd 探针的默认路径被改了：真机上就是 /dev/socket/logdw"
         assert "实际跑了" in gsrc, "抓完不记真实时长：真机上写死「180 秒到」，实际跑了 31 分钟"
         # ★ 真机实测：写死「180 秒到」时，22:33:15 → 23:04:44 跑了 31 分 29 秒。
         #   时长必须现算。锁死：不许再出现写死的「180 秒到」这种句子。
@@ -2224,8 +2228,12 @@ def runtime_scripts():
         assert any("while IFS= read -r seen" in ln for ln in cleanup_code), "⑫ 去重没有按行读"
         for f, name in ((guard, "post-fs-data.sh"), (night, "service.sh")):
             txt = f.read_text(encoding="utf-8")
-            for var in ("MAX", "MAX_BYTES", "_limit_s", "WAIT"):
-                if f"${{{var}" in txt:
+            # _cap 也必须有非数字兜底：它是真正限制抓取量的那个变量。
+            for var in ("MAX", "MAX_BYTES", "_cap", "_limit_s", "WAIT"):
+                # 判据不能用「出现过 ${VAR}」——把兜底那行删掉后 ${VAR} 也就不在了，
+                # 检查会被**整个跳过**（我自己撞过一次：删掉兜底，检查仍然绿）。
+                # 改成看赋值本身：只要这个变量被赋过默认值，就必须有 case 兜底。
+                if f"{var}=${{" in txt or f"{var}=$" in txt:
                     assert f'case "${var}" in' in txt, \
                         f"{name} 的 {var} 裸取：非数字时 [ -gt ] 报错并判假，守卫静默失效"
         why_src = (ROOT / "tools/sf-why.sh").read_text(encoding="utf-8")
@@ -2244,6 +2252,72 @@ def runtime_scripts():
         assert 'if [ "$n" -gt "$MAX" ]' in gsrc, \
             "判据不是 -gt：改成 -ge 会让第一次开机就自己停用（好机器也被关）"
         assert "SELFFONT_FAST_REBOOT_WINDOW" in gsrc, "没有快速重启窗口：意外断电会误杀模块"
+        # ★ 2026-11-09 真机第二轮（17:30:35）打回来的：守卫自己报「上限 2097152 字节」，
+        #   只跑 2.8 秒 / 10485 行就断，七个关键词里 ActivityManager/Watchdog/minikin/
+        #   FontManager 全是 0。根因是**两处默认值分叉**：MAX_BYTES 我改成了 8 MiB，
+        #   但真正限制「本次抓多少」的 _cap 还写着 2097152；2097152/200 = 10485，
+        #   和真机行数一模一样。上次的断言只查字符串「SELFFONT_BOOT_LOG_BYTES 存在」，
+        #   所以这种分叉照样通过——现在必须逐个默认值相等。
+        import re as _re
+        cap_defaults = _re.findall(r"_cap=\$\{SELFFONT_BOOT_LOG_BYTES:-([0-9]+)\}", gsrc)
+        max_defaults = _re.findall(r"MAX_BYTES=\$\{SELFFONT_BOOT_LOG_BYTES:-([0-9]+)\}", gsrc)
+        assert cap_defaults, "找不到实际控制抓取上限的 _cap（抓多少由它决定，不是 MAX_BYTES）"
+        assert max_defaults, "找不到 MAX_BYTES 默认值"
+        assert cap_defaults[0] == max_defaults[0], (
+            f"抓取上限两处默认值分叉：_cap={cap_defaults[0]} / MAX_BYTES={max_defaults[0]}"
+            "——真机就是这么只抓到 2.8 秒 / 10485 行（2097152/200）的")
+        assert cap_defaults[0] == "8388608", \
+            f"抓取上限不是 8 MiB（现在 {cap_defaults[0]}）：2 MiB 只够装开机头 2.8 秒"
+        # 夹具：假 logcat 无限吐行，跑一次必须**真的停在上限附近**，
+        # 而不是「报了个上限然后自己就断了」。没有这个夹具，上一轮的分叉就是这么漏过去的。
+        capd = tmp / "captest"
+        (capd / "d").mkdir(parents=True)
+        (capd / "m/selffont-bench").mkdir(parents=True)
+        (capd / "sock").mkdir()
+        (capd / "sock/logdw").touch()
+        fake_lc = capd / "fakelogcat"
+        fake_lc.write_text(
+            "#!/bin/sh\ni=0\nwhile [ $i -lt 200000 ]; do i=$((i+1)); \n"
+            "printf '11-09 17:30:35.123  1074  1099 I ActivityManager: 第 %06d 行，这是一条长度接近真机平均的测试日志内容用于占位填充字符\\n' $i\n"
+            "done\n", encoding="utf-8")
+        fake_lc.chmod(0o755)
+        ec = {h: v for h, v in os.environ.items() if h != "MODDIR"}
+        ec.update({"SELFFONT_DATA": str(capd / "d"), "SELFFONT_MODULES": str(capd / "m"),
+                   "SELFFONT_BOOT_ID": "31", "SELFFONT_BOOT_LOG_SECONDS": "1",
+                   "SELFFONT_BOOT_LOG_BYTES": "2097152",
+                   "SELFFONT_FAST_REBOOT_WINDOW": "999999999",
+                   "SELFFONT_LOGD_SOCKET": str(capd / "sock/logdw"),
+                   "SELFFONT_LOGCTL": str(fake_lc),
+                   "PATH": f"{capd}:{os.environ.get('PATH','')}"})
+        rcap = sh([str(guard)], ec)
+        assert rcap.returncode == 0, rcap
+        glog = capd / "d/guard.log"
+        for _ in range(60):
+            if "抓日志：停止" in glog.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.2)
+        gt = glog.read_text(encoding="utf-8")
+        assert "抓日志：开始" in gt, "夹具里的抓日志根本没启动：这段现在验不到，别当它过了"
+        assert "抓日志：停止" in gt, "抓日志没有真正停下：边抓边封顶失效了"
+        n_cap = len((capd / "d/boot.log").read_text(encoding="utf-8").splitlines())
+        # 2097152/200 = 10485（真机就是这个数）；给一点余量，但必须落在万行量级。
+        assert 10000 <= n_cap <= 11000, \
+            f"给了 2 MiB 却抓了 {n_cap} 行（应约 10485），封顶没按字节算"
+        # 不设 SELFFONT_BOOT_LOG_BYTES 时必须用 8 MiB（41943 行），这是主人这一轮要的。
+        ec2 = {k: v for k, v in ec.items() if k != "SELFFONT_BOOT_LOG_BYTES"}
+        ec2["SELFFONT_BOOT_ID"] = "32"
+        ec2["SELFFONT_DATA"] = str(capd / "d2")
+        ec2["SELFFONT_MODULES"] = str(capd / "m2")
+        (capd / "d2").mkdir()
+        (capd / "m2/selffont-bench").mkdir(parents=True)
+        sh([str(guard)], ec2)
+        glog2 = capd / "d2/guard.log"
+        for _ in range(60):
+            if "抓日志：停止" in glog2.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.2)
+        assert "上限 1 秒 / 8388608 字节" in glog2.read_text(encoding="utf-8"), \
+            "默认上限不是 8 MiB：真机上 2 MiB 只够开机头 2.8 秒，关键词全 0"
         win = tmp / "wintest"
         (win / "d").mkdir(parents=True)
         (win / "m/selffont-bench").mkdir(parents=True)
