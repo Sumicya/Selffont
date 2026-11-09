@@ -2371,6 +2371,45 @@ def runtime_scripts():
             if tag == "rc0":
                 assert (rd / "d/logcat.err").exists(), "logcat 的 stderr 没落盘（rc0 夹具）"
                 assert "failed to connect" in (rd / "d/logcat.err").read_text(encoding="utf-8")
+        # ★ 2026-11-09：logcat.err 必须**每次开机重写**。跨开机追加会越滚越大，
+        #   而每次开机只关心这一轮为什么停。
+        assert ': > "$DATA/logcat.err"' in gsrc, "logcat.err 没有每次开机重写：会跨开机无限累积"
+        # ★ 心跳：真机 logcat 在第 54 秒自己断（那是系统开始关机），只靠「实际跑了 N 秒」
+        #   看不出断的那一刻写到哪儿了。每 10 秒必须留一行「已 N 秒 / N 行 / N 字节」。
+        assert "抓日志心跳" in gsrc, "没有抓取心跳：分不清「一直在抓」和「早就断了、只是没退出」"
+        hbd = tmp / "hbtest"
+        (hbd / "d").mkdir(parents=True)
+        (hbd / "m/selffont-bench").mkdir(parents=True)
+        (hbd / "sock").mkdir()
+        (hbd / "sock/logdw").touch()
+        # 慢速持续吐：每 30 行停 1 秒，保证活过 12 秒的时长上限，心跳才有机会写。
+        hbl = hbd / "fakelogcat"
+        hbl.write_text(
+            "#!/bin/sh\ni=0\nwhile :; do i=$((i+1)); "
+            "printf '11-09 18:01:30.123  1074  1099 I Typeface: 第 %06d 行，长度接近真机平均值的填充内容用于占位\\n' $i; "
+            "[ $((i % 30)) -eq 0 ] && sleep 1; done\n", encoding="utf-8")
+        hbl.chmod(0o755)
+        (hbd / "d/logcat.err").write_text("上一轮的旧错误\n", encoding="utf-8")
+        ehb = {h: v for h, v in os.environ.items() if h != "MODDIR"}
+        ehb.update({"SELFFONT_DATA": str(hbd / "d"), "SELFFONT_MODULES": str(hbd / "m"),
+                    "SELFFONT_BOOT_ID": "493", "SELFFONT_BOOT_LOG_SECONDS": "12",
+                    "SELFFONT_BOOT_LOG_BYTES": "25165824",
+                    "SELFFONT_FAST_REBOOT_WINDOW": "999999999",
+                    "SELFFONT_LOGD_SOCKET": str(hbd / "sock/logdw"),
+                    "SELFFONT_LOGCTL": str(hbl),
+                    "PATH": f"{hbd}:{os.environ.get('PATH','')}"})
+        sh([str(guard)], ehb)
+        hl = hbd / "d/guard.log"
+        for _ in range(200):
+            if "抓日志：停止" in hl.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.2)
+        htt = hl.read_text(encoding="utf-8")
+        assert "抓日志：停止" in htt, "心跳夹具：抓日志没停下"
+        assert "抓日志心跳：已 10 秒" in htt, \
+            "心跳没写出来：真机上就分不清「一直在抓」和「第 54 秒就断了」"
+        assert "上一轮的旧错误" not in (hbd / "d/logcat.err").read_text(encoding="utf-8"), \
+            "logcat.err 跨开机累积：上一轮的错误还在，这一轮的查不出来"
         # 不设 SELFFONT_BOOT_LOG_BYTES 时必须用 8 MiB（41943 行），这是主人这一轮要的。
         ec2 = {k: v for k, v in ec.items() if k != "SELFFONT_BOOT_LOG_BYTES"}
         ec2["SELFFONT_BOOT_ID"] = "32"

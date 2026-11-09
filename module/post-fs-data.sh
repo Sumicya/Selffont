@@ -251,10 +251,27 @@ grab() {
     # 有 /proc/uptime 就用它（带两位小数）；没有就退回秒级并标明「精度 1 秒」。
     _t0=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
     [ -n "$_t0" ] || _t0=$(date +%s 2>/dev/null || echo 0)
+    # 每次开机重写：跨开机追加会越滚越大，而每次开机只关心这一轮为什么停。
+    : > "$DATA/logcat.err" 2>/dev/null
+    : > "$DATA/.lc-rc" 2>/dev/null
     echo "$(now) 抓日志：开始（全量，排除刷屏标签），上限 $_limit_s 秒 / $_cap 字节" >> "$GUARD_LOG" 2>/dev/null
+    # 心跳：真机上 logcat 可能在第 54 秒自己断（那是系统开始关机），
+    # 只靠「实际跑了 N 秒」看不出断的那一刻还在写什么。每 10 秒记一次，独立可查。
+    (
+        _hb=0
+        while [ "$_hb" -lt "$_limit_s" ]; do
+            sleep 10
+            _hb=$((_hb + 10))
+            printf '%s 抓日志心跳：已 %s 秒，boot.log %s 行 / %s 字节\n' "$(now)" "$_hb" \
+                "$(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?)" \
+                "$(wc -c < "$BOOT_LOG" 2>/dev/null || echo ?)" >> "$GUARD_LOG" 2>/dev/null
+        done
+    ) &
+    _hbpid=$!
     # 字节封顶：按**实际累计字节**算，不再按行数折算。行数只做保险丝。
     grab "$_limit_s" | awk -v cap="$_cap" -v maxl="$_lines" \
         '{ n += length($0) + 1; if (n > cap || NR > maxl) exit; print }' >> "$BOOT_LOG"
+    kill "$_hbpid" 2>/dev/null
     _t1=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
     [ -n "$_t1" ] || _t1=$(date +%s 2>/dev/null || echo 0)
     _el=$(awk -v a="$_t0" -v b="$_t1" 'BEGIN{ if (a+0 == 0 && b+0 == 0) { print "?"; exit }
