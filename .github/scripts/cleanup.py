@@ -141,6 +141,36 @@ def pinned_anchor(rows: list[dict], now: datetime) -> int | None:
     return min(today)[2] if today else None
 
 
+def keep_runs(rows: list[dict], keep: int, anchor_id: int | None, run_id: str) -> tuple[list[int], list[dict]]:
+    """决定保留哪些运行、删/取消哪些（纯函数，自检可直接调它，不用读源码字符串）。
+
+    铁律：**保留总数恒 ≤ keep**。当日首条锚点占用其中一个名额，不是加在名额之外 ——
+    上一版把锚点钉在 top[:keep] 之外，总数变成 keep+1，同日跑满 6 次必在 verify() 自爆。
+    """
+    ordered = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
+    keep_ids: list[int] = []
+    rest: list[dict] = []
+    for row in ordered:
+        if len(keep_ids) < keep:
+            keep_ids.append(row["id"])
+            continue
+        rest.append(row)
+    if anchor_id is not None and anchor_id not in keep_ids:
+        # 锚点必须占名额：用它换掉保留区里最旧的那条（保留数不变）。
+        # 被换下来的那条要进待删集合；锚点自己**不许**留在 rest 里（否则又被当成待删）。
+        victim = keep_ids.pop()                       # ordered 新的在前，末尾即保留区最旧
+        rest.append(next(row for row in ordered if row["id"] == victim))
+        keep_ids.append(anchor_id)
+        rest = [row for row in rest if row["id"] != anchor_id]
+    victims = []
+    for row in rest:
+        if row["id"] == run_id:
+            keep_ids.append(row["id"])                # 本次运行自己永远留着（会被 verify 排除）
+            continue
+        victims.append(row)
+    return keep_ids, victims
+
+
 def plan(kind: str, endpoint: str, label: str, method: str = "DELETE", verb: str = "删除",
          tag: str | None = None) -> None:
     PENDING.append({"kind": kind, "endpoint": endpoint, "label": label,
@@ -224,24 +254,17 @@ def clean_actions() -> None:
         elif not workflow_file_exists(path):
             keep = 0
             print(f"工作流文件已删除：{path}（默认分支上取不到）→ 该工作流的运行一条不留")
-        ordered = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
-        # 当日首条钉住：删它等于把取号器的锚吃掉，取号器随后只能拒绝出包，多一条失败运行，
-        # 再进候选池 —— 自己把自己锁死。保留槽位不变，改删当日首条之后最旧的那条。
         anchor_id = pinned_anchor(rows, NOW)
         if anchor_id is not None:
-            print(f"钉住[run] {path} 当日首条 id={anchor_id}（取号器靠它算当日序号）")
-        for index, row in enumerate(ordered):
+            print(f"钉住[run] {path} 当日首条 id={anchor_id}（占保留名额，总数仍 ≤ {keep}）")
+        keep_ids, victims = keep_runs(rows, keep, anchor_id, str(RUN_ID))
+        for row in rows:
+            if row["id"] in keep_ids:
+                print(f"保留[run] {path} {stamp(row)} run_number={row['run_number']} "
+                      f"id={row['id']}（保留 {len(keep_ids)}/{keep}）")
+        for row in victims:
             label = (f"{path} {stamp(row)} run_number={row['run_number']} id={row['id']} "
                      f"status={row['status']}")
-            if index < keep:
-                print(f"保留[run] {label}（最新 {index + 1}/{keep}）")
-                continue
-            if row["id"] == anchor_id:
-                print(f"保留[run] {label}（当日首条，钉住不许删）")
-                continue
-            if row["id"] == RUN_ID:
-                print(f"保留[run] {label}（本次运行自己）")
-                continue
             if row["status"] != "completed":
                 plan("run", f"repos/{REPO}/actions/runs/{row['id']}/cancel", label,
                      method="POST", verb="取消")

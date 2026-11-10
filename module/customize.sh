@@ -51,13 +51,26 @@ ui_print "Selffont: 字件体检通过（引用 $checked 个，默认族齐全�
 # 同名配置的旧模块必须让路。上一版的 id 是 MFGA，与基础包同源；这一版改成 selffont-mother。
 # 两个模块同时挂 /system/etc/font_fallback.xml 会互相覆盖，字体可能整个起不来。
 # 发现旧 id 就给它打 disable 标记（KernelSU / Magisk 的官方机制，可逆），不是删它。
-OLD_MOD=/data/adb/modules/MFGA
-if [ -d "$OLD_MOD" ] && [ "$OLD_MOD" != "${MODPATH%/system}" ]; then
-    if [ ! -f "$OLD_MOD/disable" ] && [ ! -f "$OLD_MOD/remove" ]; then
-        touch "$OLD_MOD/disable" 2>/dev/null &&
-            ui_print "Selffont: 已停用旧模块 MFGA（同名配置，两份同时挂会冲突）；重启后生效"
+# ★ 2026-11-10 主人指出：仓库历史上用过三个模块 id（MFGA / selffont-mother /
+#   selffont-bench），这里却只写死 MFGA 一个，另两个不管。真机上若同时留着两份未停用的
+#   同源模块，它们会同时挂 fonts_base.xml / fonts_ule.xml，回退链互相覆盖 —— 卡第一屏的
+#   典型成因。改成遍历同一个来源清单，凡存在且不是自己的目录，一律打 disable。
+#   清单只写这一次，守卫脚本那边读同一份（见 post-fs-data.sh 的 SIBLING_IDS）。
+SIBLING_IDS="MFGA selffont-mother selffont-bench selffont"
+SELF_DIR="${MODPATH%/system}"
+SELF_DIR="${SELF_DIR%/}"
+for _id in $SIBLING_IDS; do
+    _old="/data/adb/modules/$_id"
+    [ -d "$_old" ] || continue
+    [ "$_old" = "$SELF_DIR" ] && continue
+    [ -f "$_old/disable" ] && continue
+    [ -f "$_old/remove" ] && continue
+    if touch "$_old/disable" 2>/dev/null; then
+        ui_print "Selffont: 已停用同源旧模块 $_id（同名配置，两份同时挂会冲突）；重启后生效"
+    else
+        ui_print "Selffont: 发现同源旧模块 $_id 但写不进 disable，请手动停用（否则可能卡开机）"
     fi
-fi
+done
 
 # 读配置的程序有两类，各读各的，两份都得换：
 #   font_fallback.xml / fonts_base.xml / fonts_ule.xml   新语法，Android 框架（SystemFonts）读

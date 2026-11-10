@@ -129,9 +129,21 @@ jobs:
               packed = z.read(f"system/fonts/{mother}")
               prop = z.read("module.prop").decode()
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
+              shell = (z.read("system/fonts/Roboto-Regular.ttf")
+                       if "system/fonts/Roboto-Regular.ttf" in fonts else None)
 
           fixed_bytes = open("work/vpos/" + mother, "rb").read()
-          assert packed == fixed_bytes, "包内字件不是修过定位的那一份"
+          # ★ 2026-11-10：出包时直通件会过 normalize_metrics 把行框对齐设备空壳
+          #   （930/-250/0），所以这里**不能**再要求整份字节相等 —— 那条断言等于
+          #   禁止行框归一，而直通件正是全包唯一没过归一的那一份。
+          #   改成：轮廓与 hmtx 必须与 work/vpos 那一份逐字相等（下面几段已经在查），
+          #   外加一条「hhea 已被对齐到空壳」的正面断言。
+          # 行框目标值取自**同一个包里的度量空壳**（不猜磁盘路径）；空壳不在包里
+          # 就直接挂 —— 不许「找不到就跳过」，那正是假绿。
+          assert shell is not None, "包里没有度量空壳 system/fonts/Roboto-Regular.ttf，无法验证行框对齐"
+          _want = TTFont(io.BytesIO(shell))["hhea"].ascent
+          _got = TTFont(io.BytesIO(packed))["hhea"].ascent
+          assert _got == _want, f"直通件行框没对齐空壳：hhea.ascent={_got}，应为 {_want}"
 
           before = TTFont(os.path.join("work", mother))
           after = TTFont(io.BytesIO(packed))

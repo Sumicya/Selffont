@@ -129,26 +129,6 @@ case "$n" in ''|*[!0-9]*) n=0 ;; esac
 n=$((n + 1))
 echo "$n" > "$COUNT" 2>/dev/null
 
-if [ "$n" -gt "$MAX" ]; then
-    # ★ 2026-11-09：判据**必须**是 -gt，不许改成 -ge。
-    #   守卫在开机时数第 n 次，但「这次会不会走到底」此刻还不知道——
-    #   要等下一次开机数出更大的 n 才能判定上一次失败。
-    #   -gt 的语义：n > MAX，即「前 MAX 次都没走到底」。
-    #     MAX=1 → 第 2 次开机停用（卡 1 次就停，正是主人要的）
-    #     MAX=2 → 第 3 次开机停用（真机实测过）
-    #   改成 -ge 就变成「第 1 次开机就停用」——**好机器正常开机一次也被关掉**。
-    #   我自己改错过一次，夹具当场打回：count=1 且 disable=有。
-    # 停用是 KernelSU 的官方机制（模块目录下一个叫 disable 的空文件），可逆：
-    # 主人把那个文件删掉、重启，模块就回来。
-    [ -n "$MODDIR" ] && : > "$MODDIR/disable" 2>/dev/null
-    if [ -n "$MODDIR" ]; then
-        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），已自动停用：$MODDIR/disable" >> "$GUARD_LOG" 2>/dev/null
-    else
-        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），但 MODDIR 不明，**没能自动停用**" >> "$GUARD_LOG" 2>/dev/null
-    fi
-    # 停用之后不再抓日志：模块既然不生效，日志也没有意义。
-    exit 0
-fi
 echo "$(now) 第 $n 次开机开始（阈值 $MAX）" >> "$GUARD_LOG" 2>/dev/null
 
 # ---- ② 卡住那次的日志落盘 ----
@@ -196,24 +176,79 @@ scan_boot_log() {
     printf '%s%s：%s 行 / %s 字节\n' "$(now) " "$_tag" "$_pl" "$_pb" >> "$GUARD_LOG" 2>/dev/null
     # 模式必须覆盖真机原句：vold/statsd 是「receiving signal 15」，ccci 是「signal number=15」，
     # 内核是「Signal 15 received」。只写 received 会漏掉真机那两行（我自己漏过一次）。
-    for _pat in 'sys.shutdown.requested' 'signal 15|signal number=15|Signal 15' \
-                'Watchdog|WATCHDOG' 'FATAL EXCEPTION|ANR in ' 'Blocked in|blocked in' \
-                'minikin|FontManager|Typeface' 'Shutting down|Rebooting|reboot'; do
+    # ★ 2026-11-10 主人指出两处：①原来第一条只搜 ShutdownThread / PowerManagerService，
+    #   那是进桌面后 Java 层的关机路径；卡第一屏时发起者只能是 init / Zygote / libc / art
+    #   或厂商开机看门狗。②「F DEBUG」在 threadtime 下是带空格的，写成 F/DEBUG 是 brief 格式。
+    for _pat in 'sys.shutdown.requested|sys\.powerctl|Reboot start' \
+                'init: .*(SIGTERM|Service .* exited|reboot)' \
+                'signal 15|signal number=15|Signal 15|Sending SIGTERM' \
+                'Watchdog|WATCHDOG|phoenix|theia|orms|OplusBoot' \
+                'FATAL EXCEPTION|ANR in |F DEBUG|Fatal signal' \
+                'Blocked in|blocked in' \
+                'minikin|FontManager|Typeface|FontListParser|SystemFonts|UpdatableFontDir|OplusFont' \
+                'boot_progress|am_proc_died' \
+                'Shutting down|Rebooting|reboot'; do
         _c=$(grep -c -E "$_pat" "$_f" 2>/dev/null)
         case "$_c" in ''|*[!0-9]*) _c='?' ;; esac
         printf '%s%s：%-46s 命中 %s\n' "$(now) " "$_tag" "$_pat" "$_c" >> "$GUARD_LOG" 2>/dev/null
     done
-    grep -E 'sys.shutdown.requested|Shutting down|Watchdog|FATAL EXCEPTION|ANR in ' "$_f" 2>/dev/null \
-        | tail -n 8 | while IFS= read -r _ln; do
-            printf '%s  扫描原文：%s\n' "$(now)" "$_ln" >> "$GUARD_LOG" 2>/dev/null
+    # ★ 2026-11-10 因果窗口：全机收 Signal 15 那一片是**结果**，起因一定在第一条关机/重启
+    #   信号**之前**几十到上百行。旧版只取匹配行最后 8 行，等于只读事故报告的伤亡名单。
+    #   这里定位第一条信号的行号 L，摘 [L-80, L+10] 整段原文。
+    #   找不到信号就显式写「未找到」，不许静默跳过（否则又变成「看着完整其实缺块」）。
+    # ★ 模式必须与上面统计那几条**同源**：漏掉 sys.shutdown.requested 就会出现
+    #   「统计说命中 1、窗口说未找到」的自相矛盾（端到端实测抓到过）。
+    _L=$(grep -n -m 1 -E 'sys\.shutdown\.requested|Sending SIGTERM|sys\.powerctl|Reboot start|receiving signal 15|signal number=15|Signal 15|vold.*shutdown|Shutting down|Rebooting' "$_f" 2>/dev/null | cut -d: -f1)
+    case "$_L" in ''|*[!0-9]*)
+        printf '%s%s：因果窗口——未找到任何关机/重启信号（这份日志里没有第一现场）\n' "$(now) " "$_tag" >> "$GUARD_LOG" 2>/dev/null
+        ;;
+    *)
+        _from=$(( _L - 80 )); [ "$_from" -lt 1 ] && _from=1
+        _to=$(( _L + 10 ))
+        printf '%s%s：因果窗口 第 %s 行前 80 行 → 后 10 行（原样摘录，见下）\n' "$(now) " "$_tag" "$_L" >> "$GUARD_LOG" 2>/dev/null
+        sed -n "${_from},${_to}p" "$_f" 2>/dev/null | while IFS= read -r _ln; do
+            printf '%s  窗口：%s\n' "$(now)" "$_ln" >> "$GUARD_LOG" 2>/dev/null
         done
+        ;;
+    esac
 }
-
+# ★ 调用必须排两处之后：①函数定义之后（sh 是顺序执行，函数没定义时调用会静默 127 /
+#   什么都不做 —— 我第一次把调用挪到前面，扫描当场静默失效，夹具立刻打回）；
+#   ②会 exit 的处置之前（否则自动停用那次开机永远走不到这里，就是第 0 号 bug）。
 if [ -f "$BOOT_LOG" ] && [ -s "$BOOT_LOG" ]; then
     echo "$(now) —— 上一轮日志扫描（原文留成 $BOOT_LOG.prev；命中 0 也是信息）" >> "$GUARD_LOG" 2>/dev/null
     scan_boot_log "$BOOT_LOG" '  扫描'
     mv -f "$BOOT_LOG" "$BOOT_LOG.prev" 2>/dev/null
 fi
+# ★ 2026-11-10 第 0 号 bug 的修法：**处置排在观测之后**。
+#   处置会 exit，所以它必须是这条路径上的最后一步。原版把这段写在扫描之前，
+#   于是「n > MAX」那次开机（唯一需要扫描的那次）直接 exit 0，扫描永远走不到。
+# ★ 2026-11-10 主人逐行核出的第 0 号 bug：这段扫描原先写在 `if n > MAX` 的 `exit 0` 之后。
+#   而「n > MAX」恰恰只在**卡住过一次之后的那次开机**成立 —— 也就是唯一需要这份扫描的开机
+#   走不到扫描，直接 exit 0。功能只在故障路径上有意义，却被故障路径跳过，等于没写。
+#   处置（打 disable、退出）必须是最后一步；观测一律排在它前面。
+if [ "$n" -gt "$MAX" ]; then
+    # ★ 2026-11-09：判据**必须**是 -gt，不许改成 -ge。
+    #   守卫在开机时数第 n 次，但「这次会不会走到底」此刻还不知道——
+    #   要等下一次开机数出更大的 n 才能判定上一次失败。
+    #   -gt 的语义：n > MAX，即「前 MAX 次都没走到底」。
+    #     MAX=1 → 第 2 次开机停用（卡 1 次就停，正是主人要的）
+    #     MAX=2 → 第 3 次开机停用（真机实测过）
+    #   改成 -ge 就变成「第 1 次开机就停用」——**好机器正常开机一次也被关掉**。
+    #   我自己改错过一次，夹具当场打回：count=1 且 disable=有。
+    # 停用是 KernelSU 的官方机制（模块目录下一个叫 disable 的空文件），可逆：
+    # 主人把那个文件删掉、重启，模块就回来。
+    [ -n "$MODDIR" ] && : > "$MODDIR/disable" 2>/dev/null
+    if [ -n "$MODDIR" ]; then
+        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），已自动停用：$MODDIR/disable" >> "$GUARD_LOG" 2>/dev/null
+    else
+        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），但 MODDIR 不明，**没能自动停用**" >> "$GUARD_LOG" 2>/dev/null
+    fi
+    # 停用之后不再抓日志：模块既然不生效，日志也没有意义。
+    exit 0
+fi
+
+
 # 新一轮从空文件开始，避免新旧两轮混在一份里（混了就说不清哪行属于哪次开机）。
 : > "$BOOT_LOG" 2>/dev/null
 
@@ -242,6 +277,18 @@ grab() {
     _limit=${1:-180}
     # 夹具里把 logcat 换成假命令（无限吐行），才验得到「边抓边封顶」到底停没停。
     _lc=${SELFFONT_LOGCTL:-logcat}
+    # ★ 2026-11-10 主人指出：原来只抓 main,system,crash，漏了 kernel 与 events ——
+    #   「谁按下关机键」（init 判定 zygote/surfaceflinger 崩太多、收到 sys.powerctl、
+    #   开始 Sending SIGTERM）记在 kernel；「卡在开机哪一步」（boot_progress_*、
+    #   am_proc_died、watchdog）记在 events。两个黑匣子一起关掉，剩下的全是果没有因。
+    #   两级：先试 -b all（一条命令覆盖全部），设备不认就退回逐项列举。
+    #   $2 是 stderr，用一个临时文件判成败，避免把两级都写进 logcat.err。
+    _bargs="-b all"
+    _probe="${_lc%% *}"
+    if command -v "$_probe" >/dev/null 2>&1; then
+        "$_probe" -b all -d -t 1 >/dev/null 2>&1 || _bargs="-b main,system,events,crash,kernel"
+    fi
+    echo "$(now) 抓日志：缓冲区 $_bargs（漏 events/kernel 就查不出是谁发起关机）" >> "$GUARD_LOG" 2>/dev/null
     # ★ 2026-11-09 真机第四轮（18:01:59）：预算 24 MiB 只用了 8.07 MiB、上限 180 秒只跑了
     #   56.8 秒就停。日志只写「实际跑了 56.8 秒」，**说不清为什么停**——这和当年写死
     #   「180 秒到」是同一类错：报了个数字，但那个数字不解释发生的事。
@@ -252,9 +299,9 @@ grab() {
     #     0   = logcat 自己结束 —— 这种情况最常见的原因是 **logd 断开，系统开始关机**
     {
         if command -v timeout >/dev/null 2>&1; then
-            timeout "$_limit" "$_lc" -b main,system,crash -v threadtime
+            timeout "$_limit" "$_lc" $_bargs -v threadtime
         else
-            "$_lc" -b main,system,crash -v threadtime
+            "$_lc" $_bargs -v threadtime
         fi 2>> "$DATA/logcat.err"
         echo "$?" > "$DATA/.lc-rc"
     } | grep -v -E 'Typeface: Preloading|reportOneUidFrozenStateChanged|skip deliver sticky broadcast|Async freezing|Cancel freezing|ProcessObserver broadcast disabled'

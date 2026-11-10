@@ -698,7 +698,7 @@ def is_cjk_locale(tag: str | None) -> bool:
 
 def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
                     cjk: bool = False, cjk_name: str | None = None,
-                    cjk_family: str | None = None) -> bytes:
+                    cjk_family: str | None = None, cjk_is_variable: bool = True) -> bytes:
     """主字体接管全部主家族、CJK 语言区与默认区；空壳留在度量家族；匿名字形回退紧随默认家族。
 
     输出统一是新语法（supportedAxes,Android 15+ 运行时实例化）：安装脚本只投放 font_fallback*.xml,
@@ -758,14 +758,22 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
             index = min([index, *cjk_locale_at])  # 抢在第一个 CJK 语言区族之前：同分时顺序取胜
         own = ET.Element("family")
         own.set("lang", CJK_LANG)
-        if cjk_family:
-            own.set("name", cjk_family)      # 母版直通：字节没改，族名也得是它自己的
-        if cjk_family:
-            # 静态母版：写 weight，不能写 supportedAxes（那是可变字体才有的）
-            node = ET.SubElement(own, "font", style="normal", weight="400")
-        else:
+        # ★★ 2026-11-10 主人实查出的头号嫌犯：这里原来无条件写 own.set("name", cjk_family)，
+        #   造出 `<family lang="zh-Hans,zh-Hant" name="Maruko Gothic CJKsc">` 这种混合节点。
+        #   原厂 fonts.xml 全部 192 个 <family> 里，同时含 name 与 lang 的是 **0 个**：
+        #   AOSP FontListParser 里带 name 走 readNamedFamily()，**不进入**语言回退链；
+        #   只有不带 name 的才走 readFamily() 进默认列表（fonts.xml 头注也这么写）。
+        #   一个本该出现在中文回退链里的族被写成「命名族」，中文就落不到它身上 ——
+        #   这一条与真机「启用基准件必卡第一屏」高度吻合，且 2026-10-28 正常开机版的配置
+        #   正是「无 name 的匿名语言族」。
+        #   字件写法也不能看 cjk_family 有没有值，要看字件自己有没有 fvar 表：
+        #   原来的 cjk_family 只在直通时才有值，于是任何可变字件被传进来都会误走静态分支。
+        if cjk_is_variable:
             # 可变字件：写 supportedAxes，不写 weight（运行时按 wght 实例化）。
             node = ET.SubElement(own, "font", style="normal", supportedAxes=CJK_AXES)
+        else:
+            # 静态母版：写 weight，不能写 supportedAxes（那是可变字体才有的）
+            node = ET.SubElement(own, "font", style="normal", weight="400")
         node.text = cjk_name or cjk_naming(CJK_RELEASE_VERSION)[1]
         root.insert(index, own)
         index += 1
@@ -933,6 +941,16 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             passthrough_name = mother_path.name
             glyphs = {}
             glyph_count = 0
+            # ★ 2026-11-10 主人实查出的二号嫌犯：文渊与自研 VF 进包前都过
+            #   normalize_metrics() 对齐设备空壳行框（930/-250/0）并剪空白映射，
+            #   唯独直通母版原样塞进去 —— 而它还被 fix_hpos/fix_vpos 平移过坐标。
+            #   全包唯一一个「行框与设备不一致」的字件，第一屏渲染就可能踩到未测分支。
+            #   轮廓一律不动（assert_glyphs_preserved 守着），只动 hhea/OS/2 与空白映射。
+            _raw_mother = cjk_font
+            cjk_font = normalize_metrics(cjk_font, carrier, characters="")
+            assert_glyphs_preserved(_raw_mother, cjk_font)
+            cjk_font, _mp = prune_blank_mappings(cjk_font)
+            warnings.append(f"母版直通：行框已对齐设备空壳，剪除空壳映射 {_mp} 个（轮廓零改动）")
             # 刷进手机后管理器里只有 module.prop 这几行能认人：直通包的 name/description
             # 必须自己说明白，否则会跟文渊圆体的发行件长得一模一样（版本号还更高）。
             digest = hashlib.sha256(cjk_font).hexdigest()[:7]
@@ -959,15 +977,18 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         # 框架读 font_fallback.xml（新语法）；Skia 读库存 fonts.xml（另一份，本模块也换）。
         template = (ROOT / "fonts.xml").read_bytes()
         cjk_file = passthrough_name or (cjk_naming(CJK_RELEASE_VERSION)[1] if glyph_count else None)
+        cjk_family = None
+        cjk_is_variable = True
         if cjk_file:
-            # 直通时按母版自己的内部族名写配置：字节没改，名字也得是它自己的。
-            with TTFont(io.BytesIO(cjk_font), lazy=True) as _mother:
-                cjk_family = (_mother["name"].getDebugName(16) or _mother["name"].getDebugName(1)
-                              or "Maruko Gothic")
-        else:
-            cjk_family = None
+            # 字件写法由**字件自己**决定，不看有没有族名：有 fvar 才是可变字体。
+            with TTFont(io.BytesIO(cjk_font), lazy=True) as _probe:
+                cjk_is_variable = "fvar" in _probe
+                if passthrough_name:
+                    cjk_family = (_probe["name"].getDebugName(16)
+                                  or _probe["name"].getDebugName(1) or "Maruko Gothic")
         xml = configure_fonts(template, name, ladder, cjk=bool(cjk_file),
-                              cjk_name=cjk_file, cjk_family=cjk_family)
+                              cjk_name=cjk_file, cjk_family=cjk_family,
+                              cjk_is_variable=cjk_is_variable)
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
         # 二创汉字只开放 wght 300–500（tools/cjk_vf.py），超出这条阶梯的请求本来就落到主字体。
@@ -1144,15 +1165,20 @@ def box(x0, y0, x1, y1):
     return pen.glyph()
 
 
-def make_font(family="Test Primary", upm=1000, axes=True):
-    order = [".notdef", "space", *"0123456789", "A"]
+def make_font(family="Test Primary", upm=1000, axes=True, han=False):
+    order = [".notdef", "space", *"0123456789", "A", *(["uni6C49"] if han else [])]
     b = FontBuilder(upm, isTTF=True)
     b.setupGlyphOrder(order)
-    b.setupCharacterMap({32: "space", 65: "A", **{ord(d): d for d in "0123456789"}})
+    cmap = {32: "space", 65: "A", **{ord(d): d for d in "0123456789"}}
+    if han:
+        cmap[0x6C49] = "uni6C49"        # 汉：让汉字包络有值
+    b.setupCharacterMap(cmap)
     glyphs = {".notdef": box(0, 0, 500, 700), "space": TTGlyphPen(None).glyph()}
     for digit in "0123456789":
         glyphs[digit] = box(40, -10, 460, 744)
     glyphs["A"] = box(20, 0, 480, 700)
+    if han:
+        glyphs["uni6C49"] = box(60, -60, 940, 860)
     b.setupGlyf(glyphs)
     b.setupHorizontalMetrics(dict.fromkeys(order, (500, 0)))
     b.setupHorizontalHeader(ascent=1160, descent=-288)
@@ -1785,8 +1811,28 @@ def ci_version_numbering():
     # ★ 只验证 pinned_anchor() 的返回值是不够的：删运行那段的 `if row["id"] == anchor_id`
     #   被删掉时，pinned_anchor() 照样返回正确值，自检照样绿 —— 变异测试抓不到就是假测试。
     #   所以直接检查「删除决策」这一层：钉住的那条必须不出现在待删清单里。
-    assert 'if row["id"] == anchor_id:' in (ROOT / ".github" / "scripts" / "cleanup.py").read_text(
-        encoding="utf-8"), "清理脚本删运行那段跳过了当日首条判据：钉住等于没钉"
+    # ★ 2026-11-10 主人打回：上一版这里读 cleanup.py 的源码、断言里面出现某个字符串 ——
+    #   那是「把实现抄一遍再和自己比对」，属伪断言（Fable 5.2：work isn't grading itself）。
+    #   改成构造输入、调用纯函数 keep_runs()、断言输出：同日 6 条运行 + 首条为锚点，
+    #   保留总数必须恒为 5，且锚点在保留集合里，锚点之外最旧的那条在待删集合里。
+    _z = datetime(2026, 10, 27, 9, 30, tzinfo=CLOCK)
+    def _row(n, minutes):
+        return {"id": n, "run_number": n, "event": "push", "status": "completed",
+                "run_started_at": (_z + timedelta(minutes=minutes)).astimezone(timezone.utc)
+                                  .isoformat().replace("+00:00", "Z")}
+    _six = [_row(n, n) for n in (206, 207, 208, 209, 210, 211)]      # 同日 6 条，206 最早
+    _keep, _victims = _cl.keep_runs(_six, 5, 206, "")
+    assert len(_keep) == 5, f"保留总数必须恒为 5，实际 {len(_keep)}（锚点不许加在名额之外）"
+    assert 206 in _keep, f"当日首条锚点必须占名额保留，实际保留 {sorted(_keep)}"
+    assert [r["id"] for r in _victims] == [207], \
+        f"锚点占名额后应删 207（保留区最旧），实际删 {[r['id'] for r in _victims]}"
+    # 不留锚点时应按时间只留最新 5 条
+    _keep2, _victims2 = _cl.keep_runs(_six, 5, None, "")
+    assert sorted(_keep2) == [207, 208, 209, 210, 211], sorted(_keep2)
+    assert [r["id"] for r in _victims2] == [206]
+    # 本次运行自己永远不能被删
+    _keep3, _victims3 = _cl.keep_runs(_six, 5, 206, "211")
+    assert 211 not in [r["id"] for r in _victims3], "本次运行自己进了待删集合"
     # 往日运行不参与钉住（钉的是「今天」的首条）。
     assert _cl.pinned_anchor([{"id": 1, "run_number": 1, "event": "push",
                               "run_started_at": "2026-10-26T12:00:00+00:00"}], now) is None
@@ -1897,6 +1943,13 @@ def firefox_bridge():
 @check
 def runtime_scripts():
     assert sh(["-n", str(ROOT / "module/customize.sh")], os.environ).returncode == 0, "customize.sh 语法错误"
+    # ★ 2026-11-10：安装脚本原来只停用 MFGA 一个旧模块，另两个同源 id 不管。
+    #   真机上两份同源模块同时挂 fonts_base.xml 会互相覆盖 —— 卡第一屏的典型成因。
+    _csrc = (ROOT / "module/customize.sh").read_text(encoding="utf-8")
+    for _id in ("MFGA", "selffont-mother", "selffont-bench"):
+        assert _id in _csrc, f"安装脚本没停用同源旧模块 {_id}：两份同时挂会冲突"
+    assert "OLD_MOD=/data/adb/modules/MFGA" not in _csrc, \
+        "安装脚本还写死单一旧模块路径，必须遍历清单"
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         modpath = tmp / "module"
@@ -2173,8 +2226,37 @@ def runtime_scripts():
             assert (data / "boot-count").read_text().strip() == want
             assert not (moddir / "disable").exists(), f"第 {want} 次就停用了（阈值是 2，太早）"
         # 第 3 次：越过阈值，必须自己打 disable。这是「主人不必再进安全模式」的那一步。
+        # ★ 2026-11-10 第 0 号 bug 的端到端反例（主人逐行核出来的）：
+        #   「n > MAX」只在卡住过一次之后的那次开机成立 —— 也就是唯一需要扫描的那次。
+        #   旧版把 scan_boot_log 写在 exit 0 之后，于是自动停用那次永远扫不到上一轮日志。
+        #   夹具：先让 boot.log 有内容、guard.log 清空，再触发停用，断言同一份 guard.log
+        #   里「已自动停用」与「上一轮日志扫描」两行**都在**。少任何一行都说明顺序错了。
+        (data / "boot.log").write_text("11-09 18:01:50.000 E Watchdog: WATCHDOG KILLING SYSTEM PROCESS\n",
+                                       encoding="utf-8")
+        (data / "guard.log").write_text("", encoding="utf-8")
         assert boot().returncode == 0
-        assert (moddir / "disable").exists(), "连续第 3 次开机没走到底却不停用：守卫是空的"
+        assert (moddir / "disable").exists(), "越过阈值却没停用"
+        _g = (data / "guard.log").read_text(encoding="utf-8")
+        assert "已自动停用" in _g, "停用那次开机没有记录停用：夹具本身失效\n" + _g[-800:]
+        assert "上一轮日志扫描" in _g, \
+            ("第 0 号 bug 回归：触发自动停用的那次开机走不到扫描 —— "
+             "观测必须排在会 exit 的处置之前\n" + _g[-800:])
+        # ★ 顺序断言要能单独观测：上面那条「两行都在」在处置块挪回扫描之前时**仍然会过**
+        #   （两行确实都在日志里，只是顺序反了），所以必须直接比行号。
+        #   实测：处置块挪回前面时，这条立刻变红。
+        _lines = _g.splitlines()
+        _scans = [i for i, ln in enumerate(_lines) if "上一轮日志扫描" in ln]
+        _kills = [i for i, ln in enumerate(_lines) if "已自动停用" in ln]
+        assert len(_scans) == 1, (f"扫描发生了 {len(_scans)} 次：函数或调用被复制了，"
+                                  "同一份现场会被扫两遍，日志里说不清哪次是准的")
+        assert len(_kills) == 1, f"停用记录出现 {len(_kills)} 次"
+        assert _scans[0] < _kills[0], \
+            (f"第 0 号 bug 回归：扫描（第 {_scans[0]} 行）排在自动停用（第 {_kills[0]} 行）之后，"
+             "处置会 exit，扫描永远走不到")
+        # 函数只许定义一次：复制定义会让「扫描一次」变成两次，是这条 bug 的另一种形态。
+        _src = (ROOT / "module/post-fs-data.sh").read_text(encoding="utf-8")
+        assert _src.count("scan_boot_log() {") == 1, \
+            f"scan_boot_log 定义了 {_src.count('scan_boot_log() {')} 次"
         # 计数不是从零硬编码：写一个脏值（非数字）不许把守卫带崩，也不许当成 0 之后立刻停用。
         (data / "boot-count").write_text("坏值\n")
         (moddir / "disable").unlink()
@@ -2516,6 +2598,23 @@ def runtime_scripts():
         st = (scd / "d/guard.log").read_text(encoding="utf-8")
         assert "上一轮日志扫描" in st, "开机没有自动扫上一轮日志：又得靠人记得跑命令"
         assert "sys.shutdown.requested" in st and "命中 1" in st, "扫描没认出 sys.shutdown.requested"
+        # ★ 单独一份只含 sys.shutdown.requested 的日志：这是真机上「关机请求」的唯一原文，
+        #   窗口的定位模式若漏了它，就会「统计命中 1、窗口说未找到」（实测抓到过）。
+        sz = tmp / "shutreq"
+        (sz / "d").mkdir(parents=True)
+        (sz / "m/selffont-bench").mkdir(parents=True)
+        (sz / "d/boot.log").write_text(
+            "11-09 18:01:56.336  1646  1662 D EMDLOGGER1: sys.shutdown.requested =\n",
+            encoding="utf-8")
+        sh([str(guard)], {**os.environ, "SELFFONT_DATA": str(sz / "d"),
+                          "SELFFONT_MODULES": str(sz / "m"), "SELFFONT_BOOT_ID": "496",
+                          "SELFFONT_NO_LOGCAT": "1",
+                          "SELFFONT_FAST_REBOOT_WINDOW": "999999999"})
+        _zs = (sz / "d/guard.log").read_text(encoding="utf-8")
+        assert "因果窗口 第 1 行" in _zs, \
+            ("只含 sys.shutdown.requested 的日志定位不到：窗口与统计的模式串不同源\n"
+             + _zs[-700:])
+        assert "未找到任何关机/重启信号" not in _zs, "统计命中却报未找到：给了假现场"
         # 真机原句是「receiving signal 15」和「signal number=15」，模式写 received 会漏。
         # 单独验 signal 那条：只放真机原句「receiving signal 15」，
         # 别的模式一条都不该命中，所以「命中 1」必须出现在 signal 那一行。
@@ -2533,7 +2632,30 @@ def runtime_scripts():
                if "signal 15|" in ln]
         assert s15 and s15[0].endswith("命中 1"), \
             f"signal 15 那条模式没命中真机原句「receiving signal 15」：{s15}"
-        assert "扫描原文" in st and "WATCHDOG KILLING" in st, "没有摘出原文：还得再去 grep"
+        # ★ 2026-11-10：旧版只取匹配行最后 8 行（果）。现在必须摘「第一条关机/重启信号
+        #   前 80 行 → 后 10 行」的第一现场（因），并在日志里写明窗口起点行号。
+        # ★ 2026-11-10：缓冲区必须覆盖 events 与 kernel（漏了它们就查不出谁发起关机 /
+        #   卡在开机哪一步）。这里直接读抓取命令行，检查参数里有全部/含 events 与 kernel。
+        # 注意读**仓库源文件**而不是打包副本：这条断言要能抓住「有人把参数改回去」，
+        # 读副本时变异仓库不会反映到副本上，断言会假绿（我第一版就这么假绿过）。
+        _gsrc = (ROOT / "module/post-fs-data.sh").read_text(encoding="utf-8")
+        # 必须精确断言**赋值那一行**：源文件里 `-b all` 还出现在探测命令里，
+        # 只查「全文有没有 -b all」会被探测那句蒙过去（我第一版就这么假绿过一次）。
+        assert '_bargs="-b all"' in _gsrc, \
+            "抓日志的主参数不是 -b all：漏 events/kernel 就只能看到果，看不到因"
+        assert 'main,system,events,crash,kernel' in _gsrc, \
+            "没有 -b all 的退路：设备不认 all 时要逐项列出，且必须含 events 与 kernel"
+        assert '-b main,system,crash -v' not in _gsrc and '$_bargs -v threadtime' in _gsrc, \
+            "抓日志还留着只抓三项的旧写法，或命令行没走 $_bargs"
+        assert "因果窗口" in st, ("没有因果窗口：只取结果不取起因，等于只读事故报告的伤亡名单\n"
+                                  + st[-900:])
+        assert "WATCHDOG KILLING" in st, "窗口里没有摘出原文行：还得再去 grep"
+        assert "因果窗口 第" in st, ("窗口没报起点行号：读的人无法判断窗口够不够\n" + st[-600:])
+        # ★ 自相矛盾检测：统计说某条关机信号命中 ≥1，窗口就不许说「未找到」。
+        #   实测抓到过：统计命中 1、窗口却报未找到 —— 因为两处的模式串不是同一份。
+        if "sys.shutdown.requested" in st and "命中 1" in st:
+            assert "未找到任何关机/重启信号" not in st, \
+                "统计说命中、窗口说未找到：两处模式串不是同源（等于给了假现场）"
         assert (scd / "d/boot.log.prev").exists(), "上一轮原文没留成 boot.log.prev"
         assert (scd / "d/boot.log").read_text(encoding="utf-8") == "", \
             "新一轮 boot.log 不是空的：新旧两轮混在一份里，说不清哪行属于哪次开机"
@@ -3314,6 +3436,24 @@ def workflow_format():
                 assert str(with_.get("retention-days")) == "5", \
                     f"{path.name}: 母版产物 retention-days 必须是 5（30 天太占，Actions 产物总量上限 5 个）"
 
+        # 8c. 验收段的判据本身要被钉住（2026-11-10）。
+        # 直通件出包时会过 normalize_metrics 把行框对齐设备空壳，所以「包内字节 == work/vpos 字节」
+        # 这条**必然**红的断言只能删掉；但删掉之后如果没人正面查行框，验收就等于什么都没查。
+        # 两头都要钉：一，不许再说「整份字节相等」；二，必须正面断言 hhea.ascent 等于空壳的值，
+        # 而且空壳缺失时必须挂（`shell is not None`），不许「读不到就跳过」那种假绿。
+        if stem == "build":
+            verify = [step for step in (data.get("jobs") or {}).get("build", {}).get("steps", [])
+                      if "验收" in str(step.get("name", ""))]
+            assert verify, f"{path.name}: 找不到验收步骤"
+            body = "\n".join(str(step.get("run", "")) for step in verify)
+            assert "assert packed == fixed_bytes" not in body, \
+                (f"{path.name}: 验收还在要求「包内字节整份等于 work/vpos」——"
+                 "直通件过行框归一后字节必然变，这条断言与归一互斥，只能改成逐项判据")
+            assert '["hhea"].ascent' in body, \
+                f"{path.name}: 验收没有正面查 hhea.ascent（删了字节相等又不查行框＝验收空转）"
+            assert "assert shell is not None" in body, \
+                f"{path.name}: 验收取空壳的方式允许「读不到就跳过」，那是假绿"
+
 
 @check
 def no_auto_publish():
@@ -3380,11 +3520,15 @@ def run_checks(only: str | None = None) -> None:
 
 @check
 def passthrough_font():
-    """母版直通：CJK 字件必须是母版的**同一串字节**，一个轮廓点都不许动。
+    """母版直通：轮廓、cmap、hmtx 一个点都不许动；只允许 hhea/OS/2 行框对齐设备空壳。
 
-    直通包是用来量基准的：五条判据对着它比，任何改动都跟它差多少一目了然。所以这里
-    断言三件事——包里的字件 sha256 等于源文件、配置引用的文件名是它自己的名字、
-    配置里的族名是母版内部族名（静态字体写 weight，不写 supportedAxes）。
+    ★ 2026-11-10 判据改了，写清为什么：
+      原判据是「包里字件 sha256 必须等于源文件」——那等于**禁止**行框归一。
+      但直通件是改过坐标（fix_hpos/fix_vpos 平移）之后唯一没过 normalize_metrics 的字件，
+      而它恰恰是第一屏渲染要用的那份。主人实查指出：文渊与自研 VF 都过了，只有它没过。
+      所以判据从「整份字节相等」收窄为「轮廓/cmap/hmtx 相等，行框允许被对齐」：
+      该动的动（行度量），不该动的用 glyph_signature + hmtx 逐字锁死。
+      另外断言配置里**不许**出现 name+lang 混合节点（原厂 192 个 family 里这种写法是 0 个）。
     """
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
@@ -3393,7 +3537,10 @@ def passthrough_font():
         regular = tmp / "P-Regular.ttf"
         regular.write_bytes(make_font())
         mother = tmp / "MarukoGothicCJKsc-Regular.ttf"
-        mother.write_bytes(make_font(family="Maruko Gothic", axes=False))
+        # 夹具必须带**汉字**字形：直通件现在也要过 normalize_metrics(characters="")，
+        # 那条路径用汉字包络判行框，纯拉丁夹具会被判「没有可用的墨迹」。
+        # 真机母版 27,559 个汉字，这不是迁就夹具，是夹具原本就缺了真实形态。
+        mother.write_bytes(make_font(family="Maruko Gothic", axes=False, han=True))
         output = tmp / "out" / "Selffont.zip"
         build(base=str(base), font=str(regular), output=output, build_num="9", day="2",
               date="26.9.30", cjk=False, supplemental_font_sources=(),
@@ -3401,8 +3548,20 @@ def passthrough_font():
         with zipfile.ZipFile(output) as archive:
             member = f"system/fonts/{mother.name}"
             assert member in archive.namelist(), sorted(archive.namelist())
-            assert hashlib.sha256(archive.read(member)).hexdigest() == digest(mother), \
-                "直通包里的母版被改了字节（只许原样挂载）"
+            packed = archive.read(member)
+            # 轮廓 / cmap / 家族名 / 可变轴：逐项相等（这是「一个点都不许动」）
+            assert_glyphs_preserved(mother.read_bytes(), packed)
+            # hmtx 逐字相等（字宽也是「点」的一部分，行框归一不许碰它）
+            with TTFont(io.BytesIO(mother.read_bytes())) as _a, TTFont(io.BytesIO(packed)) as _b:
+                _ma = {n: _a["hmtx"][n] for n in _a.getGlyphOrder()}
+                _mb = {n: _b["hmtx"][n] for n in _b.getGlyphOrder()}
+                assert _ma == _mb, "直通件的 hmtx 被改了：行框归一不许动字宽"
+                # 行框必须真的被对齐到设备空壳（否则等于没做这一步）
+                _c = carrier_metrics(make_carrier())
+                assert _b["hhea"].ascent == _c["hhea"][0], \
+                    f"直通件行框没对齐空壳：hhea.ascent={_b['hhea'].ascent}"
+            assert hashlib.sha256(packed).hexdigest() != digest(mother), \
+                "直通件字节完全没变：说明 normalize_metrics 根本没执行"
             xml = archive.read("font_fallback.xml").decode()
             root = ET.fromstring(xml)
             own = [f for f in root.iter("family")
@@ -3411,7 +3570,12 @@ def passthrough_font():
             node = own[0].find("font")
             assert node.get("weight") == "400" and node.get("supportedAxes") is None, \
                 "静态母版不许写成 supportedAxes（那是可变字件的写法）"
-            assert own[0].get("name") and "Maruko" in own[0].get("name"), own[0].get("name")
+            # ★ 混合节点必须绝迹：原厂 192 个 family 里同时带 name 与 lang 的是 0 个。
+            #   带 name 走 readNamedFamily()，不进语言回退链 —— 中文就落不到这个族。
+            for _fam in root.findall("family"):
+                assert not (_fam.get("name") and (_fam.get("lang") or _fam.get("variant"))), \
+                    (f"配置里出现了 name+lang 混合 family：{_fam.get('name')!r} / "
+                     f"{_fam.get('lang')!r} —— 原厂一个都没有，带 name 的不进语言回退链")
             assert archive.read("fonts-insert.xml").decode().count(mother.name) >= 1, \
                 "Skia 那份插入行里也得有直通字件"
 
