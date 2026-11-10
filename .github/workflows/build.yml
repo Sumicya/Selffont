@@ -140,10 +140,19 @@ jobs:
           #   外加一条「hhea 已被对齐到空壳」的正面断言。
           # 行框目标值取自**同一个包里的度量空壳**（不猜磁盘路径）；空壳不在包里
           # 就直接挂 —— 不许「找不到就跳过」，那正是假绿。
+          # ★ 2026-11-10 第二次修：空壳是 1000 upm，母版是 2048 upm，`normalize_metrics`
+          #   按 `upm / carrier_upm` **换算**行框（930 → 1905），所以判据必须同样换算。
+          #   上一版直接拿空壳原值 930 比 1905，第一次推送就被这条判据拦住 —— 说明它会红，
+          #   但它红的原因是判据自己没换算，不是字件没归一。
           assert shell is not None, "包里没有度量空壳 system/fonts/Roboto-Regular.ttf，无法验证行框对齐"
-          _want = TTFont(io.BytesIO(shell))["hhea"].ascent
-          _got = TTFont(io.BytesIO(packed))["hhea"].ascent
-          assert _got == _want, f"直通件行框没对齐空壳：hhea.ascent={_got}，应为 {_want}"
+          _shell_font, _packed_font = TTFont(io.BytesIO(shell)), TTFont(io.BytesIO(packed))
+          _scale = _packed_font["head"].unitsPerEm / _shell_font["head"].unitsPerEm
+          for _key in ("ascent", "descent", "lineGap"):
+              _want = round(getattr(_shell_font["hhea"], _key) * _scale)
+              _got = getattr(_packed_font["hhea"], _key)
+              assert _got == _want, (
+                  f"直通件行框没对齐空壳：hhea.{_key}={_got}，"
+                  f"按 {_packed_font['head'].unitsPerEm}/{_shell_font['head'].unitsPerEm} 换算应为 {_want}")
 
           before = TTFont(os.path.join("work", mother))
           after = TTFont(io.BytesIO(packed))

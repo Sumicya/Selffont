@@ -3449,8 +3449,16 @@ def workflow_format():
             assert "assert packed == fixed_bytes" not in body, \
                 (f"{path.name}: 验收还在要求「包内字节整份等于 work/vpos」——"
                  "直通件过行框归一后字节必然变，这条断言与归一互斥，只能改成逐项判据")
-            assert '["hhea"].ascent' in body, \
-                f"{path.name}: 验收没有正面查 hhea.ascent（删了字节相等又不查行框＝验收空转）"
+            assert '"hhea"' in body and '"ascent"' in body, \
+                f"{path.name}: 验收没有正面查 hhea 的行框（删了字节相等又不查行框＝验收空转）"
+            # 换算不能漏：空壳 1000 upm、母版 2048 upm，`normalize_metrics` 是按比例缩放的。
+            # 第一次推送就被这条判据自己拦住（ascent 1905 ≠ 930），红的原因却是判据没换算 ——
+            # 那种红会误导我把已经正确的实现又改坏。
+            # 判据不能只查「有没有 unitsPerEm」（那样删掉换算、只留一行取单位也能过：
+            # 变异实测就是这么蒙过第一版的），必须咬住「目标值 = 空壳值 × 比例」这个算式。
+            assert re.search(r'getattr\(_shell_font\["hhea"\],\s*_key\)\s*\*\s*_scale', body), \
+                (f"{path.name}: 验收拿空壳行框却没乘单位比例——"
+                 "空壳 1000 upm、母版 2048 upm，行框按比例缩放，直接比原值必误报")
             assert "assert shell is not None" in body, \
                 f"{path.name}: 验收取空壳的方式允许「读不到就跳过」，那是假绿"
 
