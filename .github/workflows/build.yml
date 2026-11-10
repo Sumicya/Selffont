@@ -82,13 +82,26 @@ jobs:
           python tools/fix_vpos.py "work/hpos/${MOTHER_NAME}" -o "work/vpos/${MOTHER_NAME}" \
             | tee -a build/hpos.md
           cp build/hpos.md "$GITHUB_STEP_SUMMARY"
+      - name: 取版本号（五段，不带 SHA）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 号源只有一处实现（tools/ci_version.py），当日号按当日运行数算。
+          # 上一版这里写死 `--day 1`，于是同一天出多少个包当日号都是假的 1
+          # （主人 2026-11-09 实查 build-26.11.9.1.367 / .368 发现），违 §14。
+          VERSION=$(python3 tools/ci_version.py --workflow build.yml)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "产物名 build-${VERSION}"
       - name: 出包（母版 + 水平/竖向定位修正）
         run: |
           set -euo pipefail
-          date=$(TZ=Asia/Shanghai date +%y.%-m.%-d)
-          name="build-${MOTHER_REF}-${{ github.run_number }}"
+          # 五段 yy.m.d.当日号.总序号，全部来自上一步取号，不再自己拼日期。
+          name="build-${VERSION}"
           python build.py --passthrough-mother "work/vpos/${MOTHER_NAME}" \
-            --date "$date" --day 1 --build "${{ github.run_number }}" --module-id selffont-bench \
+            --date "$(echo "$VERSION" | cut -d. -f1-3)" \
+            --day "$(echo "$VERSION" | cut -d. -f4)" \
+            --build "$(echo "$VERSION" | cut -d. -f5)" --module-id selffont-bench \
             --output "build/${name}.zip"
           echo "NAME=${name}" >> "$GITHUB_ENV"
       - name: 解包为可直刷目录
@@ -99,8 +112,10 @@ jobs:
           test -f build/root/module.prop
           test -f build/root/customize.sh
           ver=$(sed -n 's/^version=//p' build/root/module.prop)
-          echo "VERSION=${ver}" >> "$GITHUB_ENV"
-          echo "产物名 build-${ver}"
+          # 取号器算出的版本与包内 module.prop 的 version 必须同一串：
+          # 上一版这里直接覆盖 VERSION，产物名就跟着包内版本走，号源等于被绕过。
+          test "$ver" = "$VERSION" || { echo "::error::包内 version=${ver} 与取号 ${VERSION} 不一致"; exit 1; }
+          echo "产物名 build-${VERSION}"
       - name: 验收（纯平移、字宽不变、横竖墨心归位）
         run: |
           set -euo pipefail

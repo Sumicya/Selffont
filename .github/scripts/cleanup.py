@@ -25,6 +25,8 @@ KEEP_RUNS = 5
 KEEP_ARTIFACTS = 5
 KEEP_RELEASES = 1
 CLOCK = timezone(timedelta(hours=8))
+# 「今天」的口径必须与 tools/ci_version.py 同源，否则钉住的和取号认识的不是同一天。
+NOW = datetime.now(timezone.utc)
 
 
 def env_value(name: str, default: str | None = None) -> str:
@@ -115,6 +117,30 @@ def stamp(row: dict) -> str:
 
 
 
+def pinned_anchor(rows: list[dict], now: datetime) -> int | None:
+    """当日（UTC+8）最早那条非 PR 运行的 id —— 清理时必须钉住，不许删。
+
+    取号器算当日序号靠「现存运行里当日最小号」。删它 → 锚被吃掉 → 取号器拒绝出包 →
+    多一条失败运行 → 又被清理补齐 → 再拒绝，从来没成功过的工作流会永远卡死
+    （2026-11-09 selfrounds #44/#45 实测）。钉住后最小号恒等于真首条。None = 当日无运行。
+    """
+    day = now.astimezone(CLOCK).date()
+    today = []
+    for row in rows:
+        if row.get("event") == "pull_request":
+            continue
+        raw = run_time(row)
+        if not raw:
+            continue
+        try:
+            started = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(CLOCK).date()
+        except ValueError:
+            continue
+        if started == day:
+            today.append((run_time(row), row.get("run_number") or 0, row["id"]))
+    return min(today)[2] if today else None
+
+
 def plan(kind: str, endpoint: str, label: str, method: str = "DELETE", verb: str = "删除",
          tag: str | None = None) -> None:
     PENDING.append({"kind": kind, "endpoint": endpoint, "label": label,
@@ -199,11 +225,19 @@ def clean_actions() -> None:
             keep = 0
             print(f"工作流文件已删除：{path}（默认分支上取不到）→ 该工作流的运行一条不留")
         ordered = sorted(rows, key=lambda row: (run_time(row), row["id"]), reverse=True)
+        # 当日首条钉住：删它等于把取号器的锚吃掉，取号器随后只能拒绝出包，多一条失败运行，
+        # 再进候选池 —— 自己把自己锁死。保留槽位不变，改删当日首条之后最旧的那条。
+        anchor_id = pinned_anchor(rows, NOW)
+        if anchor_id is not None:
+            print(f"钉住[run] {path} 当日首条 id={anchor_id}（取号器靠它算当日序号）")
         for index, row in enumerate(ordered):
             label = (f"{path} {stamp(row)} run_number={row['run_number']} id={row['id']} "
                      f"status={row['status']}")
             if index < keep:
                 print(f"保留[run] {label}（最新 {index + 1}/{keep}）")
+                continue
+            if row["id"] == anchor_id:
+                print(f"保留[run] {label}（当日首条，钉住不许删）")
                 continue
             if row["id"] == RUN_ID:
                 print(f"保留[run] {label}（本次运行自己）")

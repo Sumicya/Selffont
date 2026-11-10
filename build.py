@@ -835,7 +835,6 @@ def _load_version_module():
 
 
 _ci_version = _load_version_module()
-AnchorUnavailable = _ci_version.AnchorUnavailable
 KEEP_RUNS = _ci_version.KEEP_RUNS
 artifact_anchor = _ci_version.artifact_anchor
 check_number = _ci_version.check_number
@@ -1761,13 +1760,41 @@ def ci_version_numbering():
     assert ci_version_numbers([], [art(f"{PROJECT}-{today}.3", 1),
                                    art(f"{PROJECT}-{yesterday}.3.500", 2)], 210, now) \
         == (today, 1, 210, 210)
-    # 8) 运行记录顶到保留上限（5 条）且留下来的全是今天的：首条可能已被挤掉，必须抛。
+    # 8) 顶到保留上限 + 全今天的 + 零产物，过去必须拒绝出包；那判据在从未成功出包的
+    #    工作流上是死循环（selfrounds #44/#45）。现在清理侧钉住首条，照常算。
     capped = [run(number, f"2026-10-27T0{number % 10}:10:00+00:00") for number in (206, 207, 208, 209, 210)]
-    try:
-        ci_version_numbers(capped[:5], [], 210, now)
-        raise AssertionError("顶到保留上限还编出数来")
-    except AnchorUnavailable:
-        pass
+    assert ci_version_numbers(capped[:5], [], 210, now) == (today, 5, 210, 206), \
+        "连挂 5 次后第 6 次必须能出包（当日序号 5），不许再抛异常拒绝"
+    # 8b) 同一场景换成 zero-gap 的连续号：40..44 五条，第 45 次运行 → 当日序号 6。
+    dead = [run(number, "2026-10-27T01:00:00+00:00") for number in (40, 41, 42, 43, 44)]
+    assert ci_version_numbers(dead, [], 45, now)[1] == 6, "死锁反例：第 6 次必须能算出当日序号 6"
+    # 8c) 清理侧必须真的钉住当日首条，否则上面的推断没有依据 —— 直接调它的纯函数验。
+    import importlib.util as _ilu2
+    import os as _os
+    # cleanup.py 在模块顶层就读这几个环境变量并校验，导入前得先备好（用最小可信值）。
+    _env_backup = {k: _os.environ.get(k) for k in ("GH_TOKEN", "REPO", "RUN_ID", "CLEANUP_APPLY")}
+    _os.environ.update({"GH_TOKEN": "probe", "REPO": "probe/probe",
+                        "RUN_ID": "1", "CLEANUP_APPLY": "false"})
+    _spec2 = _ilu2.spec_from_file_location("clean_probe", ROOT / ".github" / "scripts" / "cleanup.py")
+    _cl = _ilu2.module_from_spec(_spec2)
+    _spec2.loader.exec_module(_cl)
+    _rows = [{"id": n, "run_number": n, "event": "push",
+              "run_started_at": f"2026-10-27T0{n % 10}:10:00+00:00"} for n in (206, 207, 208, 209)]
+    assert _cl.pinned_anchor(_rows, now) == 206, \
+        f"清理侧没钉住当日首条：{_cl.pinned_anchor(_rows, now)}（应 206），取号器就没有依据"
+    # ★ 只验证 pinned_anchor() 的返回值是不够的：删运行那段的 `if row["id"] == anchor_id`
+    #   被删掉时，pinned_anchor() 照样返回正确值，自检照样绿 —— 变异测试抓不到就是假测试。
+    #   所以直接检查「删除决策」这一层：钉住的那条必须不出现在待删清单里。
+    assert 'if row["id"] == anchor_id:' in (ROOT / ".github" / "scripts" / "cleanup.py").read_text(
+        encoding="utf-8"), "清理脚本删运行那段跳过了当日首条判据：钉住等于没钉"
+    # 往日运行不参与钉住（钉的是「今天」的首条）。
+    assert _cl.pinned_anchor([{"id": 1, "run_number": 1, "event": "push",
+                              "run_started_at": "2026-10-26T12:00:00+00:00"}], now) is None
+    for _k, _v in _env_backup.items():          # 探针不许污染后面的检查项
+        if _v is None:
+            _os.environ.pop(_k, None)
+        else:
+            _os.environ[_k] = _v
     # 9) 同上但有产物锚点：产物名绝对值可证，照常算（496..500 与 503 同一条序列）。
     late = [run(number, f"2026-10-27T0{number % 10}:10:00+00:00") for number in (496, 497, 498, 499, 500)]
     assert ci_version_numbers(late, [art(f"{PROJECT}-{today}.3.500", 1)], 503, now)[1] == 8
@@ -1798,7 +1825,7 @@ def ci_version_numbering():
     assert artifact_anchor(f"{PROJECT}-{today}.1.320", today, "build-") is None
     assert ci_version_numbers([], [art(f"build-{today}.1.320", 1)], 324, now, "build-") \
         == (today, 5, 324, 320)
-    # 母版那条：5 条当日运行顶到保留上限、但有 `build-` 产物锚点，照常算（不撞 AnchorUnavailable）。
+    # 母版那条：5 条当日运行顶到保留上限、但有 `build-` 产物锚点，照常算。
     capped_build = [run(number, f"2026-10-27T0{number % 10}:10:00+00:00") for number in (320, 321, 322, 323, 324)]
     assert ci_version_numbers(capped_build, [art(f"build-{today}.1.320", 2)], 324, now, "build-")[1] == 5
 
@@ -3237,13 +3264,16 @@ def workflow_format():
                 assert with_["if-no-files-found"] == "error", \
                     f"{path.name}/{job_name}: if-no-files-found 必须是 error"
 
-        # 8a. 冻结要能被检查：自版那条工作流不许挂 push
-        if stem == "selffont":
+        # 8a. 冻结要能被检查：尚未合格的自研字体两条工作流都不许挂 push。
+        # 上一版只查 selffont，selfrounds 出的就是同一个还没合格的字体，却一直挂着 push，
+        # 每次推送都拿四个字的预览图冠上正式产物名上传（主人 2026-11-09 指出）。冻结必须两条一起冻。
+        if stem in ("selffont", "selfrounds"):
             triggers = data.get("on") or data.get(True) or {}
             if isinstance(triggers, str):
                 triggers = {triggers: None}
             assert "push" not in triggers, \
-                "selffont.yml 冻结中，不许挂 push（job 级 if 挡不住，实测 2026-11-06 白跑一次 53 分钟）"
+                (f"{path.name} 冻结中，不许挂 push（字体不合格，出包要有合格命令）。"
+                 "job 级 if 挡不住，实测 2026-11-06 白跑一次 53 分钟）")
 
         # 8. 名字与产物一对一：四类前缀各归各的工作流，工作流名与 job 名必须是自己的产物
         for job_name, job in (data.get("jobs") or {}).items():

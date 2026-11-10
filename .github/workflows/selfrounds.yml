@@ -1,14 +1,9 @@
 # 字体工作流：只出 selfrounds-*（Selfrounds 字体文件本身，不是模块）。不发 Release、不打 tag。
 name: selfrounds
 
+# 冻结：自研字体还没合格（跑的不是五条判据门禁，只拿四个字画预览图），
+# 不许随 push 自动出包。落地方式就是这一行：只留 workflow_dispatch。
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'lsp/**'
-      - 'LICENSE'
-      - '.gitignore'
   workflow_dispatch:
 
 env:
@@ -49,9 +44,10 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: 内建自检
         run: python build.py --check
-      - name: 出预览字体
+      - name: 出预览字体（只有几个样字，不是完整字体）
         run: |
           set -euo pipefail
+          # 这里只画几个样字看图，**不是**合格的完整字体出包。字体合格前只留手动触发。
           python build.py --preview '鬱響鬢Ay?' --preview-out build/preview
           ls -l build/preview
       - name: 取版本号（五段，不带 SHA）

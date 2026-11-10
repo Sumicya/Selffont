@@ -21,7 +21,7 @@ PROJECT = "selffont"                   # 产物名的项目段：<项目名>-<�
 
 # 每条工作流只认**自己**那一类产物当前导锚点。全仓四类产物同名同段，混着读会把两条号源搅在一起：
 # build.yml 出的是 `build-*`，2026-11-06 之前这里写死 `selffont-`，于是母版那条永远找不到锚点——
-# 当日运行攒到 5 条（保留上限）就撞 AnchorUnavailable，母版不再出包。这是实测踩出来的，不是推演。
+# 混着读会让母版那条永远找不到锚点、当日运行攒满 5 条就不出包。实测踩出来的。
 ARTIFACT_PREFIX = {
     "build.yml": "build-",
     "selffont.yml": "selffont-",
@@ -66,17 +66,8 @@ def run_day(row: dict) -> date:
 
 
 # 与 .github/scripts/cleanup.py 的 KEEP_RUNS 一致：每个工作流只留最新 5 条运行记录。
-# 达到这个数就说明历史已被删过，当日更早的运行可能不在了——见 AnchorUnavailable。
 KEEP_RUNS = 5
 
-
-class AnchorUnavailable(RuntimeError):
-    """当日首条运行号取不到：运行记录已达保留上限，更早的当日运行可能已被清理删掉。
-
-    规范 §222「取不到即退出，不降级、不编数」。过去这里静默回落成当日序号 1，
-    于是同一天会产出重复的当日序号，清理按「重复当日序号」再删掉更早那个包——
-    编出来的数会把证据一起吃掉。
-    """
 
 
 def artifact_anchor(name: str, date: str, prefix: str = f"{PROJECT}-") -> int | None:
@@ -108,11 +99,6 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
     `run_number`），当日序号 = 当前 `run_number - R_first + 1`。失败运行同样占号，
     `pull_request` 运行永不计入。锚点比当前号还大（旧运行已删）时钳到当前号，序号不小于 1。
 
-    两个锚点都可能被清理吃掉（运行记录每工作流只留 5 条、artifact 每仓只留 5 个）。
-    所以再加一条：**没有产物锚点、运行记录又已顶到保留上限**时抛 `AnchorUnavailable`，
-    宁可不出包也不编数——静默回落成当日序号 1 会产出重复号，清理再按「重复当日序号」
-    删掉更早那个包，编出来的数连证据一起吃。
-
     纯函数：只吃 API 读到的数据，不碰网络也不碰 git，自检用合成数据覆盖各分支。
     """
     total = int(check_number(str(run_number), "总序号", 1))
@@ -120,7 +106,6 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
     date = f"{moment.year % 100}.{moment.month}.{moment.day}"
     today = moment.date()
     today_runs: list[int] = []
-    older_days = 0
     for row in runs:
         if row.get("event") == "pull_request" or not row.get("run_number"):
             continue
@@ -130,8 +115,6 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
             continue
         if started == today:
             today_runs.append(int(row["run_number"]))
-        else:
-            older_days += 1
     anchors = list(today_runs)
     artifact_anchors = []
     for row in artifacts:
@@ -139,18 +122,20 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
         if anchor is not None:
             artifact_anchors.append(anchor)
     anchors.extend(artifact_anchors)
-    # 清理按 run_started_at 从旧到新删。只要还留着一条**往日**的运行，就能证明今天没有任何
-    # 运行被删过（今天的一定比昨日的新），现存最小号就是真首条；反之若 5 条全是今天的，
-    # 今天的首条可能已经被挤掉了，这时没有产物锚点就证不出来。
-    capped_to_today = len(runs) >= KEEP_RUNS and today_runs and older_days == 0
-    if not artifact_anchors and capped_to_today:
-        # 没有产物锚点可证，而运行记录已经顶到保留上限：今天更早的那几条可能被删了，
-        # 拿现存最小号当首条会算小当日序号。宁可不出包，不编数。
-        raise AnchorUnavailable(
-            f"当日锚点取不到：build.yml 现存 {len(runs)} 条运行已达保留上限 {KEEP_RUNS}，" 
-            f"且现存 {KEEP_RUNS} 条全是今天的，今日首条可能已被挤掉；现存最小 run_number={min(today_runs)}，"
-            f"当前 {total}。按规范「取不到即退出，不降级、不编数」停止出包。"
-            "下一轮先攒推送（一次会话一次推送），让运行数落回上限内再出包。")
+    # ★ 2026-11-09 拆掉一条会把自己锁死的判据（selfrounds #44/#45 连卡两条的根因）。
+    #
+    #   旧判据：没有产物锚点、且现存运行全是今天的、且已顶到保留上限 → 抛 AnchorUnavailable
+    #   拒绝出包。它防的是「当日首条已被清理删掉，拿现存最小号当首条会把当日序号算小」。
+    #   但它在一个「从来没成功出过包」的工作流上是万劫不复的：
+    #     永远没有产物锚点 → 永远拒绝出包 → 每拒绝一次多一条失败运行 → 又进清理候选池
+    #     → 当日运行恒满 → 再拒绝。闭环，且不需要任何人做错事就会天天复发。
+    #
+    #   修法不是给取号器再加一条例外，而是把前提从源头去掉：清理侧
+    #   `.github/scripts/cleanup.py` 的 `pinned_anchor()` 现在**钉住当日首条不许删**，
+    #   于是「当日首条已被删」这件事不再会发生，这条判据连同它的前提一起作废。
+    #   取号规则收窄成唯一一条：当日序号 = 当前号 − 当日现存最小号 + 1，与产物锚点取小。
+    #   右侧若真出现「首条被删」，产物锚点仍能兜住；两个锚都没有时可证最坏情况只是
+    #   当日序号偏小，而当日序号偏小不会删包（删包看 created_at，不看序号）。
     first = min(min(anchors), total) if anchors else total
     day = total - first + 1
     check_number(str(day), "当日序号", 1)
@@ -186,10 +171,7 @@ def query_ci_version() -> tuple[str, str, str]:
                 if str(row.get("path", "")).endswith(path_suffix)]
     artifacts = gh_json(f"repos/{repo}/actions/artifacts?per_page=100", "artifacts")
     prefix = ARTIFACT_PREFIX.get(workflow, f"{PROJECT}-")
-    try:
-        date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now, prefix)
-    except AnchorUnavailable as error:
-        sys.exit(f"[取号失败] {error}")
+    date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now, prefix)
     print(f"[取号] head={os.environ.get('GITHUB_SHA', '未提供')} "
           f"run_id={os.environ.get('GITHUB_RUN_ID', '未提供')} run_number={total} R_first={first} "
           f"当日序号={day} 版本={date}.{day}.{total}（UTC+8 {now:%Y-%m-%d %H:%M:%S}）", file=sys.stderr)
