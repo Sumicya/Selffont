@@ -2039,9 +2039,30 @@ def runtime_scripts():
         assert index == len(original), f"设备原文件被改动：只剩 {index}/{len(original)} 行按序保留"
         blocks = re.split(r"(?=<family[ >])", skia)
         ours = [b for b in blocks if "Any-Name.ttf" in b]
-        # 4 处：新建的默认链 1 处 + sans-serif + zh + ja（其余语言族一概不插）。
-        assert len(ours) == 4, f"应插 4 处（新建默认族 + sans-serif + zh + ja），实际 {len(ours)}"
-        assert any("OPPOSans-Regular.ttf" in b and "Any-Name.ttf" in b for b in ours), "默认链没插到 OPPO Sans 前面"
+        # ★ 2026-11-10 改判据：原来是「插 4 处，且插到 OPPO Sans 前面」——那条断言正是缺陷本身。
+        #   AOSP minikin `calcCoverageScore`：
+        #       if ((vs == 0 || hasVSGlyph) && (mFamilies[0] == fontFamily || family->isCustomFallback()))
+        #           return kFirstFontScore;   // 一票通过，getFamilyForChar 立刻 return
+        #   插到第一个族（匿名默认链 / OPPO Sans 那个位置）＝ mFamilies[0] ＝ 本包字件无条件抢走
+        #   全部命中，设备自带的 Noto/OPPO 永远轮不到。真机表现就是「界面大片没字」。
+        #   现在：只插**带 lang 的中/日/韩族**，并且插在**族尾**（设备字件之后），
+        #   由 hasGlyph 逐字判，缺字正常回退。实测（.evidence/h4_exact.txt）：
+        #     插匿名首族   → 本包画 33,944 / 设备画      0
+        #     插 lang 族首 → 本包画 33,943 / 设备画      1
+        #     插 lang 族尾 → 本包画  2,001 / 设备画 31,943   ← 只补设备没有的那 2,001 个码位
+        assert len(ours) == 2, f"应只插 2 处（zh + ja 两个带 lang 的族），实际 {len(ours)}"
+        assert not any("OPPOSans-Regular.ttf" in b and "Any-Name.ttf" in b for b in ours), \
+            "不许插进 OPPO Sans 那个默认链：那是 mFamilies[0]，minikin 会对它一票通过（大片没字的根因）"
+        # 插的是族尾：本包字件行必须在**该族已有的字件行全部出现之后**。
+        # 上一版写 `lines[-1]` 取整块最后一行，当时块尾是下一个族的 <family> 标签，判据恒真 ——
+        # 变异「插回族首」实测照样通过（本文件 2026-11-10 反例）。改成比行号。
+        for block in ours:
+            body = [ln for ln in block.splitlines() if "<font" in ln]
+            assert body, f"该族没有任何 <font> 行：{block[:80]}"
+            ours_at = [i for i, ln in enumerate(body) if "Any-Name.ttf" in ln]
+            assert len(ours_at) == 1, f"本包字件行应恰好 1 行，实际 {len(ours_at)} 行"
+            assert ours_at[0] == len(body) - 1, \
+                f"本包字件必须插在族尾（设备字件之后），实际第 {ours_at[0] + 1}/{len(body)} 行"
         assert not any("NotoNaskhArabic" in b or "NotoColorEmoji" in b or "NotoSerif" in b
                        for b in ours), "非中日韩语言族 / serif / emoji 不该插"
         for directory in ("system_ext/etc", "product/etc"):
@@ -2049,7 +2070,7 @@ def runtime_scripts():
                 f"{directory} 的 fonts.xml 不该被替换"
         assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
         assert "已替换 4 份字体配置" in result.stdout, "应报告替换数量：" + result.stdout
-        assert "Skia /system/etc/fonts.xml：已插 4 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
+        assert "Skia /system/etc/fonts.xml：已插 2 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
             "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"

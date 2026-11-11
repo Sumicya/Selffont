@@ -27,7 +27,10 @@ import sys
 from pathlib import Path
 
 SRC_SUFFIX = {".py"}
-SKIP_DIRS = {".venv", "work", "__pycache__", ".git", "out", "dist", "build"}
+# `.evidence` / `.review` 是**取证目录**，不是源码：里面放的是复算脚本与检讨稿，
+# 它们的「未使用 import」不是死码，而是为了让人能拷出去单独跑而保留的。
+# 2026-11-10 实测：不排除它们，本轮 4 处死码全部来自取证脚本，扫描器把证据当代码罚。
+SKIP_DIRS = {".venv", "work", "__pycache__", ".git", "out", "dist", "build", ".evidence", ".review"}
 FUTURE_ONLY = {"annotations"}          # from __future__ import annotations
 
 
@@ -233,7 +236,7 @@ def write_only_locals(tree: ast.AST) -> list[tuple[int, str]]:
     return bad
 
 
-SH_SKIP_DIRS = {".venv", "work", "__pycache__", ".git", "out", "dist", "build", "module/system"}
+SH_SKIP_DIRS = {".venv", "work", "__pycache__", ".git", "out", "dist", "build", "module/system", ".evidence", ".review"}
 
 
 def iter_sh(root: Path):

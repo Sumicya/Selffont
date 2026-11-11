@@ -1,13 +1,18 @@
 #!/system/bin/sh
 # Skia 那条路的开关：`/system/etc/fonts.xml`（Flutter / WebView / 部分厂商小组件读它）。
 #
-# 为什么默认 off：Skia 的逐字回退是「有码位就命中」——
-#   skia/src/ports/SkFontMgr_android.cpp · find_family_style_character
-#   only `if (face->unicharToGlyph(character) != 0) return face;`
-# 它不看字形有没有轮廓，也不会因为我们这张字件排在前面就继续往下找设备自带的 Noto/OPPO。
-# Flutter（FlClash 这类）用的是 SkiaFontMgr + 这一份文件；插进去之后，凡是主字体 cmap 里
-# 有的字都由它画，缺的才回退。真机症状：界面大片没字，或大字号被切成一个个方块
-# （usWin 高于行框时 Skia 按行框裁字形框）。off 时 Flutter 用设备自己的链，一定有字。
+# 为什么默认 off，以及 2026-11-10 改了什么（有源码依据，见下）：
+#   机制不在「有码位就命中」，在**位置**。AOSP minikin `FontCollection::calcCoverageScore`：
+#       if ((vs == 0 || hasVSGlyph) && (mFamilies[0] == fontFamily || fontFamily->isCustomFallback()))
+#           return kFirstFontScore;     // ← 无条件最高分，直接 return，不看别的族
+#   旧版这里把我们的族插在 `<familyset>` 之后第一个位置 ⇒ 正好是 mFamilies[0]
+#   ⇒ 本包字件的 cmap 一旦含该码位就必被选中，设备自带的 Noto/OPPO 完全没有机会。
+#   实测（.evidence/h3_before.xml）：本包族序号 = 0 / 共 5 个族。
+#   本包字件 cmap 有 33,944 个码位（汉字 20,977 + 扩展 A 6,582 + 假名 189 + …，谚文 0），
+#   所以「大片没字」的量级完全对得上——不是空字形（空字形只有 13 个，其中 8 个是填空符）。
+# 2026-11-10 的改动：**不再插匿名首族**，只插 sans-serif 与中日韩 lang 族。
+#   这样本包族不再占 0 号位，命中要靠 hasGlyph + 语言分，缺字能正常落到设备的族。
+# 仍未验证：真机上的可视差异。本轮没有设备，只有离线数字（见 .evidence/）。
 #
 # 用法（手机上直接跑，改完重启生效）：
 #   sh skia.sh status     打印当前开关与模块里那份文件在不在
@@ -66,18 +71,22 @@ apply() {
         BEGIN {
             while ((getline row < rowsfile) > 0) rows = rows row "\n"
             close(rowsfile)
+            pending = 0
         }
         {
-            print
-            if (!opened && index($0, "<familyset") > 0) {
-                print "    <family>"
+            # 2026-11-10 三次修正的最终形态（每条都有实测反例，见 .evidence/）：
+            #   ① 不再在 <familyset> 后插匿名族 —— 那是 mFamilies[0]，minikin 一票通过。
+            #   ② 不再插 sans-serif —— 设备上它往往就是 0 号族，等于没改。
+            #   ③ 插在**族尾**（</family> 之前），不是族首：族内 getClosestMatch 同权重先到者
+            #      优先，插族首会把设备自带的 Noto 挤到后面，仍然是我们被选中。
+            # 只对带 lang 的中/日/韩族生效；插的是 <font> 行，必须落在 </family> 之前。
+            if ($0 ~ /<\/family>/ && pending) {
                 printf "%s", rows
-                print "    </family>"
-                opened = 1
-                next
+                pending = 0
             }
+            print
             if ($0 ~ /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/) {
-                if (index($0, "name=\"sans-serif\"") > 0 || cjk($0)) printf "%s", rows
+                pending = cjk($0) ? 1 : 0
             }
         }
         ' "$ROOT/system/etc/fonts.xml" > "$TARGET" 2>/dev/null
@@ -88,7 +97,7 @@ apply() {
     touched=$(grep -c -F "$marker" "$TARGET" 2>/dev/null || true)
     [ -n "$touched" ] || touched=0
     if [ "${touched:-0}" -gt 0 ]; then
-        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（默认链 / sans-serif / 中日韩语言族，OEM 字件原样保留）"
+        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（中日韩语言族族尾；不占 mFamilies[0]，设备字件在前、OEM 原样保留）"
         return 0
     fi
     rm -f "$TARGET"
