@@ -126,13 +126,21 @@ jobs:
           name, mother = os.environ["NAME"], os.environ["MOTHER_NAME"]
           raw = open(f"build/{name}.zip", "rb").read()
           with zipfile.ZipFile(f"build/{name}.zip") as z:
-              packed = z.read(f"system/fonts/{mother}")
+              # 主字体进包时是**改名后的安装副本**（Selffont-…），不沿用母版原名：
+              # 设备 /system/fonts 里可能本来就有同名文件，同名会让「哪份在跑」说不清。
+              # 所以这里按「包里唯一那份带 Maruko 的字件」取，并断言行件名确实是安装名。
+              _hits = [n for n in z.namelist()
+                       if n.startswith("system/fonts/") and "Maruko" in n.rsplit("/", 1)[-1]]
+              assert len(_hits) == 1, f"包里带 Maruko 的字件应该正好一份，实际 {_hits}"
+              assert _hits[0].rsplit("/", 1)[-1].startswith("Selffont-"), \
+                  f"安装副本没改名：{_hits[0]}（与母版原名相同会让设备上的同名文件互相顶掉）"
+              packed = z.read(_hits[0])
               prop = z.read("module.prop").decode()
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
               shell = (z.read("system/fonts/Roboto-Regular.ttf")
                        if "system/fonts/Roboto-Regular.ttf" in fonts else None)
 
-          fixed_bytes = open("work/vpos/" + mother, "rb").read()
+          # fixed_bytes 已无人读（行框归一之后整份字节本来就该不等），删掉免得留下死变量。
           # ★ 2026-11-10：出包时直通件会过 normalize_metrics 把行框对齐设备空壳
           #   （930/-250/0），所以这里**不能**再要求整份字节相等 —— 那条断言等于
           #   禁止行框归一，而直通件正是全包唯一没过归一的那一份。
@@ -234,7 +242,7 @@ jobs:
               f"| 包 sha256 | `{hashlib.sha256(raw).hexdigest()}` |",
               f"| 包大小 | {len(raw):,} B |",
               f"| 版本 | `{fields.get('version')}`（versionCode {fields.get('versionCode')}） |",
-              f"| 汉字字件 | `{mother}` {len(packed):,} B（母版字节 → 只平移过的字节） |",
+              f"| 汉字字件 | `{_hits[0].rsplit('/', 1)[-1]}` {len(packed):,} B（母版 {mother} → 只平移过的字节） |",
               f"| 平移过的字 | {moved:,} 个，逐字 (dx,dy) 处处相等（纯平移） |",
               f"| advance / lsb | 全 1000 / lsb==xMin 0 例外 |",
               f"| 满格字墨心 \\|dcx\\|≤20 | {share(cb):.2f}% → **{share(ca):.2f}%** |",
