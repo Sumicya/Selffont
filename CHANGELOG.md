@@ -1,3 +1,47 @@
+## 2026-11-16 · 建 tools/blindspots.json（§12 盲区清单三格式统一）；产品说明写明「没有真字重」
+
+**做了什么**
+
+1. 新建 `tools/blindspots.json`，三类键 `excluded`／`deferred`／`open_questions`，每条 `path`／`why`／`limit`。
+   内容不是抄来的：本仓扫描器的盲区逐条对着真实漏检写——`.github/workflows` 那条注明 2026-11-16 的
+   真实漏检（改名后验收段仍按旧文件名读字件，CI 红了一次才发现）。
+2. `tools/deadcode.py` 文件头那三条手写盲区改成读 JSON 打印，权威版本只在 JSON 里
+   （§12「不许只在文件头写一句人话」）。
+3. `build.py` 新增检查项 `blindspots`（`--check` 现在 22 项）：三类不许空、路径必须真实存在、
+   `why`／`limit` 缺一栏或写成一个字就挂、清单文件缺失直接挂。
+4. `module/module.prop` 的产品说明加一句「母版是静态字体，只有 400 一档，没有真字重——粗体由系统合成加粗」，
+   并加断言钉住这句，防止下次改描述时被删。
+
+**五处变异全部真红**：三类之一清空 / 某条缺 `limit` / 路径写成不存在的 / `limit` 写成一个字 / 整个清单删掉。
+另加一处：把描述里的「没有真字重」改回「100-900 真字重」→ `repo_constants` 红。
+
+**一个我写错又改掉的地方**：清单第一版把 `.evidence` 与 `.review` 列进 `excluded`，校验立刻红在
+「路径不存在」——这两个是取证目录，干净检出里没有。列它们等于写假路径。删掉后换成 `requirements.txt`。
+这条正好证明这项校验有用：它抓的是我自己刚写的假路径，不是别人的错。
+
+**九份上游读证（提交 SHA 口径，2026-11-16 实取）**
+
+| # | 仓 | 文件 | 提交 SHA | 字节 |
+|---|---|---|---|---|
+| 1 | DietrichGebert/ponytail | skills/ponytail/SKILL.md | `96608e07` | 3,496 |
+| 2 | elder-plinius/CL4R1T4S | ANTHROPIC/CLAUDE-CODE-FABLE-5.2.txt | `93a58476` | 957,315 |
+| 3 | nagi-studio/skills | README.md | `b7bb3ee0` | 5,727 |
+| 4 | morluto/rea | README.md | **`7d502ddb`（已漂移，规范里写的 `d6bcfc10` 是 HEAD~1）** | 33,036 |
+| 5 | storytold/craft-anything | README.md | `090188d7` | 27,859 |
+| 6 | Balanov/uncut | README.md | `481379be` | 12,339 |
+| 7 | Dodaios/ste80-humanizer | SKILL.md | `0d6f7994` | 14,837 |
+| 8 | openai/codex-security | sdk/typescript/docs/cli.md | `c6432d11` | 162,145 |
+| 9 | agentes-chat/agentes-chat | README.md | `8c1065e7` | 11,111 |
+
+八份字节数与 `30ddbc3b` 版规范里记的逐条相同；**`morluto/rea` 的提交 SHA 已漂移**：`d6bcfc10`
+是 2026-11-16T08:46:46Z，其后 `7d502ddb` 于 10:26:02Z 合入（`refactor(cli)!: own builtin refusals and
+retire per-command MCP`）。README.md 字节未变（仍 33,036）。读证只对这一刻有效。
+
+**这张表不证明什么**：只证明我在这一刻取到这九个文件、量到这些字节；首中尾三行已逐份取，
+但正文有没有读完、读懂多少，表里看不出来。
+
+**未做**：现在跑的是改动前的远端提交上的 CI；本轮改动的 CI 结果下轮才看得到。
+
 ## 2026-11-16 · 文渊下掉、主字体交给母版（主人令）；清理脚本进 tools/；静态主字体写进配置
 
 **决定**：主字体＝母版（Maruko Gothic CJKsc Regular，`max32002/maruko-gothic` 提交 `97e9dd4`，

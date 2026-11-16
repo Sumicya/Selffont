@@ -14,14 +14,19 @@
   ④ 只写不读的局部变量（赋值后在该作用域内再未被读）
 
 退出码：发现任一类即 1（接进 build.py --check 与 CI 必须非 0）。
-盲区写在最后，必须列清，不许假装扫全了：
-  · 字符串里的动态引用（getattr / globals()[...]）
-  · 只在 shell 或工作流里被调用的脚本函数（本仓无此用法）
-  · 类型注解里出现一次的名字（rdflib 之类前向引用）
+盲区不写在这里，写进 `tools/blindspots.json`（§12：机器可读落盘，三类键
+`excluded`/`deferred`/`open_questions`，每条 `path`/`why`/`limit`）。
+2026-11-16 之前这三条是手写在文件头的人话，正文吹了牛、代码没兑现，也没人验它还准不准；
+现在运行结束直接读那份清单打印，清单本身由 `build.py --check` 的 blindspots 项校验。
+本工具**不查**的东西（人话摘要，权威版本在 JSON）：
+  · 字符串里的动态引用（`getattr` / `globals()[...]` / 拆开拼的名字）
+  · 只在 shell 或工作流里被调用的函数
+  · 前向引用注解里只出现一次的名字
 """
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 from pathlib import Path
@@ -283,9 +288,24 @@ def shell_write_only(path: Path) -> list[tuple[int, str]]:
     return bad
 
 
+def load_blindspots(root: Path) -> dict:
+    """读 `tools/blindspots.json`。缺文件或缺类，直接让本轮失败——不许「读不到就跳过」。"""
+    path = root / "tools/blindspots.json"
+    if not path.is_file():
+        print("缺 tools/blindspots.json：盲区必须机器可读落盘（§12）")
+        sys.exit(1)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for kind in ("excluded", "deferred", "open_questions"):
+        if not isinstance(data.get(kind), list):
+            print(f"tools/blindspots.json 缺 {kind} 这一类")
+            sys.exit(1)
+    return data
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     counts = repo_mention_counts(root)
+    blindspots = load_blindspots(root)
     total = 0
 
     print(f"死码扫描  根目录 = {root}")
@@ -328,10 +348,11 @@ def main() -> int:
             total += 1
 
     print()
-    print("盲区（这些不算通过，只是本工具不查）：")
-    print("  · 字符串里的动态引用（getattr / globals()[...]）")
-    print("  · 只在 shell / 工作流里被调用的名字")
-    print("  · 前向引用注解里只出现一次的名字")
+    print("盲区（权威清单 tools/blindspots.json，由 build.py --check 校验；这些不算通过）：")
+    for kind, label in (("excluded", "有意排除"), ("deferred", "延期未审"),
+                        ("open_questions", "待答问题")):
+        for row in blindspots.get(kind, []):
+            print(f"  · [{label}] {row['path']} — {row['limit'][:60]}")
     print()
     if total:
         print(f"合计 {total} 处死码 → 失败")

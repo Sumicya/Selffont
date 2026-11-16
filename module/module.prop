@@ -3,4 +3,4 @@ name=Selffont
 version=dev
 versionCode=0
 author=Sumicya
-description=母版（Maruko Gothic CJKsc，静态单档）接管系统字体家族，原生 fonts.xml 挂载；构建时按设备空壳归一行框、水平与竖向定位归位，轮廓不改。火狐走 Gecko 原生配置（firefox.sh）。无平台闸门：装在未测试设备上自担风险。
+description=母版（Maruko Gothic CJKsc，静态单档）接管系统字体家族，原生 fonts.xml 挂载；构建时按设备空壳归一行框、水平与竖向定位归位，轮廓不改。注意：母版是静态字体，只有 400 一档，没有真字重——粗体由系统合成加粗，不是原生的 700/900。火狐走 Gecko 原生配置（firefox.sh）。无平台闸门：装在未测试设备上自担风险。

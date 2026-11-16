@@ -3268,6 +3268,38 @@ def garbage_scanner():
 
 
 @check
+def blindspots():
+    """§12 盲区清单：三类都不许空、路径必须真实存在、每条 why/limit 两栏齐。
+
+    为什么清单本身也要被校验：清单是「我没扫的地方」的唯一记录，它一旦变成空壳
+    （三类留个空数组、或者写成一行「以上均已排除」），扫描器通过就成了假绿——
+    2026-11-16 那次 `.github/workflows` 的漏检就是这么来的：扫描器只认 .py/.sh，
+    改名的影响面落在 YAML 内联脚本上，清单里写着这条盲区却没人验它还准不准。
+    """
+    import json
+    path = ROOT / "tools/blindspots.json"
+    assert path.is_file(), "缺 tools/blindspots.json：盲区必须机器可读落盘，不许只在文件头写一句人话"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    kinds = ("excluded", "deferred", "open_questions")
+    for kind in kinds:
+        assert kind in data, f"盲区清单缺这一类：{kind}"
+        rows = data[kind]
+        assert isinstance(rows, list) and rows, f"盲区清单的 {kind} 是空的：三类都不许空"
+        for row in rows:
+            assert set(row) >= {"path", "why", "limit"}, f"{kind} 里这一条缺字段：{row}"
+            for field in ("why", "limit"):
+                assert len(row[field].strip()) >= 10, \
+                    f"{kind} 的 {row['path']} 那一栏太短，等于没写：{field}"
+            target = ROOT / row["path"]
+            assert target.exists(), f"盲区清单里的路径不存在：{row['path']}"
+    # 清单自己不许撒谎：扫描器文件头那三条人话盲区，必须能在清单里找到对应项，
+    # 否则就是「文件头吹了牛，清单里没兑现」——这正是 §12 说的「只写一句人话不算数」。
+    head = (ROOT / "tools/deadcode.py").read_text(encoding="utf-8")
+    for must in ("getattr", "shell", "前向引用"):
+        assert must in head, f"扫描器文件头的盲区说明被删了：{must}"
+
+
+@check
 def repo_constants():
     """不下载任何东西：默认来源、模块字段、真实 fonts.xml 的前置条件都在位。"""
     assert PRIMARY_URL.endswith("MarukoGothicCJKsc-Regular.ttf") and BASE_URL.endswith(".zip")
@@ -3278,6 +3310,10 @@ def repo_constants():
     prop_head = (ROOT / "module/module.prop").read_text(encoding="utf-8")
     assert "文渊" not in prop_head and RETIRED_FONT not in prop_head, "模块描述里还写着已退役的字体"
     assert not list((ROOT / "module/licenses").glob(f"*{RETIRED_FONT}*")), "退役字体的许可还在仓库里"
+    # 2026-11-16 主人裁决「静态母版判接受」时点名：无真字重必须写进产品说明。
+    # 这条不是文案洁癖——母版只有 400 一档，粗体是系统合成加粗，与原先「100-900 真字重」相反；
+    # 不写清，装的人会以为是字体坏了。断言钉住它，免得下次改描述时顺手删掉。
+    assert "没有真字重" in prop_head, "产品说明里没写「没有真字重」：静态母版只有 400 一档，必须告知"
     # 例外，写清理由：README.md 与 module/hotswap.sh 里那串 `can't create
     # /system/fonts/<退役字体的安装名>: Read-only file system` 是 2026-10 真机
     # 原样报错，属于判死证据（§19 黑历史不删）。改掉它等于篡改证据，所以豁免，但只豁免这两处。
