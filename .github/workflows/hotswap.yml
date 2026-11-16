@@ -145,4 +145,4 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           CLEANUP_SCOPE: actions
           CLEANUP_APPLY: 'true'
-        run: python3 .github/scripts/cleanup.py
+        run: python3 tools/cleanup.py

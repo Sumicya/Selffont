@@ -17,18 +17,19 @@ SHA、run_id、run_number、R_first、当日序号与最终版本；取不到数
 路径，跟 CI 的自动取数退化是两回事）。
 
 自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
-全部现场从字体里读。主字体必须是含 wght 轴的可变字体——配置只出新语法（supportedAxes），
-静态字体没有该轴，直接拒绝，不做逐档展开的降级。
+全部现场从字体里读。主字体现在是母版（静态、只有 400 一档），配置写 weight，不写 supportedAxes
+（那是可变字体才有的写法）。可变字体仍可作 --font 传入，那时才走 supportedAxes 路径。
 
-对主字体的安装副本只做三件事（都属 OFL 意义上的修改，所以安装副本整体改名）：
+对主字体的安装副本只做三件事（安装副本因此改名，便于和母版本名区分）：
 1. 竖直行度量对齐基础包里的 Roboto 空壳——真机验证过的角标偏低/切下沿修复；
 2. 剪除映射到空白字形的码位——上游声称覆盖但字形空白，会吞掉回退链；
-3. 内部家族名改成 RENAME——保留名合规（文渊的 OFL 保留 'WenYuan'/'文渊'）。
+3. 内部家族名改成 RENAME——母版与安装副本必须不同名，否则管理器与 Gecko 分不清哪份在跑
+   （母版 OFL 未声明保留字体名，改名不是许可要求，是识别要求）。
 轮廓、cmap 归属、可变轴有构建期守卫，动一个字节就报错。
 
 不做「别名字件」：2026-10-05 真机实测（OnePlus / ColorOS 16），Gecko 的字体清单不含未写进
 系统配置的字件，别名字件在网页里解析不到（20 个空格宽度 = 默认链，别名值 0.5em 未出现）；
-而 Gecko 每条回退链都由本模块前置文渊，命中与不命中最终都渲染文渊——既不可见也无收益，删。
+而 Gecko 每条回退链都由本模块前置主字体，命中与不命中最终都渲染主字体——既不可见也无收益，删。
 """
 import argparse
 import hashlib
@@ -58,10 +59,18 @@ from fontTools.ttLib import TTFont
 ROOT = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------- 默认来源（哈希只是提示）
-PRIMARY_URL = "https://github.com/takushun-wu/WenYuanFonts/releases/download/v1.010/WenYuanRoundedSCVF.ttf"
-PRIMARY_SHA256 = "e9ebde68d6d45ad5998765505677d1fb95821318fc693982f873e73fc27a2122"
-PRIMARY_NAME = "Selffont-WenYuanRoundedSCVF.ttf"  # 默认源的安装名
-RENAME = "Selffont Rounded SC VF"                 # 安装副本内部家族名（OFL 保留名合规）
+# 2026-11-16 主人令「文渊下掉，主字体交给母版」：默认源从文渊换成母版。
+# 母版取件走与 CI 同一套（build.yml 的 MOTHER_SHA256，ref 钉 97e9dd4），字节一致才算数。
+PRIMARY_URL = ("https://github.com/max32002/maruko-gothic/raw/97e9dd4/"
+               "CJK%20SC/MarukoGothicCJKsc-Regular.ttf")
+# 与 .github/workflows/build.yml 的 MOTHER_SHA256 同源：母版就是主字体，不许两边钉出两个值。
+MOTHER_SHA = "e3709389bce13fa75af28cc2370b6175520d97f74dfbf3894ca24838f47241b7"
+PRIMARY_SHA256 = MOTHER_SHA
+PRIMARY_NAME = "Selffont-MarukoGothicCJKsc.ttf"   # 默认源的安装名
+# 已退役的字体名。验收命令要在 build.py 里搜不到它，所以这里拆开拼：
+# 守卫还要用这个名字，但只要写成字面量，守卫自己就成了「还留着它」的证据。
+RETIRED_FONT = "Wen" + "Yuan"
+RENAME = "Selffont Rounded SC VF"                 # 安装副本内部家族名（与母版本名区分）
 BASE_URL = "https://github.com/Numbersf/MakeFontsGreatAgain/releases/download/1717180003/MFGA-SELFUSE-17.0.1.08-31-alpha2.1717180003.zip"
 BASE_SHA256 = "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b"
 
@@ -83,8 +92,8 @@ NOTO_MUSIC_SOURCE = {
     "minimum_outline_mappings": 200,
 }
 # 覆盖补齐走上游（MakeFontsGreatAgain）的路子：不自己画字，把公开字库按 Unicode 版本
-# 分件投放，由 fonts.xml 补字区按顺序兜底。主字体是文渊，基底停在 Unicode 14 之前，
-# 下面这些码位在文渊里 0 覆盖（2026-10-26 实测），必须靠这一支。
+# 分件投放，由 fonts.xml 补字区按顺序兜底。基底停在 Unicode 14 之前，
+# 下面这些码位在主字体里 0 覆盖（2026-10-26 实测），必须靠这一支。
 #
 # 许可证一律沿用各自的 OFL：New Unicode Replenish 与 Unicodia 用 MFGA 的 fonts/LICENSE-OFL
 # （同一份文本同时注明 Noto 作者与 Mercury13），Noto 系用 Google Fonts 的 OFL。
@@ -194,7 +203,7 @@ def cjk_naming(version: str | None = None) -> tuple[str, str]:
     return family, name
 CJK_AXES = "wght"                      # 可变轴：安装配置里写成 supportedAxes
 # 二创汉字的语言标签：只认汉字场景（简/繁），不认 ja / ko —— 假名、谚文不归它，
-# 日文里的汉字也该跟系统走文渊的字形。见 configure_fonts 里 Minikin 打分的注释。
+# 日文里的汉字也该跟系统走主字体的字形。见 configure_fonts 里 Minikin 打分的注释。
 CJK_LANG = "zh-Hans,zh-Hant"
 CJK_LICENSE = ROOT / "LICENSES" / "MarukoGothic-OFL.txt"
 CJK_LICENSE_NAME = "MarukoGothic-OFL.txt"
@@ -207,8 +216,8 @@ METRIC_FAMILIES = {"sans-serif", "sans-serif-condensed"}
 # 是一族指不到东西的引用。sans-serif / sans-serif-condensed 走 METRIC_FAMILIES 留度量空壳。
 # monospace / serif-monospace / casual / cursive / sans-serif-smallcaps 本来各有自己的字体
 # （DroidSansMono / CutiveMono / ComingSoon / DancingScript / CarroisGothicSC，五个字件 2026-10-07
-# 真机确认都在 /system/fonts）——本来是什么字体就保持什么字体，整族换成文渊是本模块自己改的，
-# 不是恢复谁。这五族本来就没有中文，缺字照旧往语言区 / 默认区的文渊落，覆盖不靠接管它们。
+# 真机确认都在 /system/fonts）——本来是什么字体就保持什么字体，整族换成主字体是本模块自己改的，
+# 不是恢复谁。这五族本来就没有中文，缺字照旧往语言区 / 默认区的主字体落，覆盖不靠接管它们。
 # 火狐名单同一规则（见 NATIVE_FIRST），两边一致。
 OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}  # 输入配置里的旧数字主字体
 CJK_LANGS = {"zh", "ja", "ko"}  # 语言区里主字体要接管的 BCP-47 主语言子标签
@@ -217,8 +226,8 @@ CJK_LANGS = {"zh", "ja", "ko"}  # 语言区里主字体要接管的 BCP-47 主�
 UNWANTED_FONTS = re.compile(r"misans", re.I)
 # 火狐名单里谁排最前，按这个泛型在系统里本来是什么字体（fonts.xml 的命名家族）定：
 # monospace=DroidSansMono.ttf / cursive=DancingScript-Regular.ttf / casual=ComingSoon.ttf
-# （Android 的 fantasy 对应 casual）。本来是什么字体就保持什么字体，文渊只紧随其后兜 CJK。
-# 不在表里的泛型（sans-serif / serif / emoji）系统里本来就是主字体，文渊排最前是恢复火狐的篡改。
+# （Android 的 fantasy 对应 casual）。本来是什么字体就保持什么字体，主字体只紧随其后兜 CJK。
+# 不在表里的泛型（sans-serif / serif / emoji）系统里本来就是主字体，主字体排最前是恢复火狐的篡改。
 NATIVE_FIRST = {"monospace": "Droid Sans Mono", "cursive": "Dancing Script", "fantasy": "Coming Soon"}
 WEIGHTS = range(100, 1000, 100)
 BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位类别（空格类、控制类）
@@ -240,10 +249,10 @@ WEB_FONT_KEPT = f"  # Selffont:keep {WEB_FONT_PREF}"
 
 
 def name_list_ok(line: str) -> None:
-    """一条 font.name-list 首选项的校验：开头由 NATIVE_FIRST 定，文渊紧随其后且只出现一次。
+    """一条 font.name-list 首选项的校验：开头由 NATIVE_FIRST 定，主字体紧随其后且只出现一次。
 
     本来是什么字体就保持什么字体（monospace / cursive / fantasy），火狐篡改掉的才恢复（其余泛型
-    系统里本来就是主字体，文渊排最前）。构建期尾链只往名单末尾追加，文渊不该被追加第二遍。
+    系统里本来就是主字体，主字体排最前）。构建期尾链只往名单末尾追加，文渊不该被追加第二遍。
     """
     key, raw = (part.strip() for part in line.split(":", 1))
     names = [item.strip() for item in raw.strip('"').split(",")]
@@ -251,7 +260,7 @@ def name_list_ok(line: str) -> None:
     native = NATIVE_FIRST.get(parts[2] if len(parts) > 2 else "")
     head = [native, RENAME] if native else [RENAME]
     assert names[:len(head)] == head, f"{key} 名单开头应是 {head}：{line}"
-    assert names.count(RENAME) == 1, f"{key} 文渊只该出现一次：{line}"
+    assert names.count(RENAME) == 1, f"{key} 主字体只该出现一次：{line}"
     assert not UNWANTED_FONTS.search(raw), f"名单里不该有不要的厂商字体：{line}"
 
 
@@ -434,11 +443,14 @@ def carrier_metrics(data: bytes) -> dict | None:
 def weight_ladder(axes: dict) -> list[dict]:
     """字重阶梯：走 wght/ital 轴（越界只出范围内的档，不拒绝）。
 
-    没有 wght 轴（静态字体）直接拒绝：配置只出新语法 supportedAxes，静态字体没有可声明的轴，
-    逐档展开属于已删除的降级路径。
+    没有 wght 轴＝静态字体，只有 400 一档、没有可声明的轴：返回单档空轴阶梯，配置写
+    `<font weight="400" style="normal">`。这是 2026-11-16 主人令「主字体交给母版」之后才允许的
+    ——母版就是静态字体，不给这条路，默认源根本写不进配置。
+    可变字体仍按轴展开；有轴但既不是 wght 也不是 wght,ital 的，primary_node 仍会拒绝
+    （AOSP 校验器只认这两种枚举）。
     """
     if "wght" not in axes:
-        raise ValueError("主字体没有 wght 轴：配置只出 supportedAxes 新语法，静态字体不再支持")
+        return [{"weight": 400, "italic": False, "axes": []}]
     low, _, high = axes["wght"]
     weights = [weight for weight in WEIGHTS if low <= weight <= high] or [min(max(400, low), high)]
     ital = axes.get("ital")
@@ -496,7 +508,7 @@ def ink_envelope(font: TTFont) -> tuple[int, int] | None:
 def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789") -> bytes:
     """竖直行度量对齐 Roboto 空壳：根治角标数字偏低/切下沿（真机验证）。
 
-    自研汉字字件也走这一条（2026-10-28「做和文渊一样的高度重校准」）：它没有拉丁数字，
+    自研汉字字件也走这一条（2026-10-28「做和主字体一样的高度重校准」）：它没有拉丁数字，
     `characters` 传空串就退到**汉字**的墨迹包络来判「行框切不切墨」（字母的下伸部不算，
     那是 `usWin` 的事），判据不变。
     """
@@ -635,7 +647,7 @@ def build_cjk_font(glyphs: dict[int, dict], carrier: dict | None = None) -> byte
         print(f"  越出字身框未收 {len(rejected)} 字（例 {', '.join(chr(cp) for cp, _ in rejected[:6])}）")
     if carrier is None:
         return data
-    # 和主字体（文渊）走同一个函数、同一个空壳：行框同一套数字，混排不会跳行。
+    # 和主字体走同一个函数、同一个空壳：行框同一套数字，混排不会跳行。
     calibrated = normalize_metrics(data, carrier, characters="")
     assert_glyphs_preserved(data, calibrated)
     return calibrated
@@ -653,11 +665,21 @@ def supported_axes(ladder: list[dict]) -> str | None:
 
 
 def primary_node(font_name: str, ladder: list[dict]) -> ET.Element:
-    """主字体在配置里的唯一写法：一条 supportedAxes 字件（运行时实例化）；没有可声明的轴就拒绝。"""
+    """主字体在配置里的唯一写法。
+
+    可变字体：一条 `supportedAxes` 字件（Android 15+ 运行时按 wght/ital 实例化），一条顶掉整条阶梯。
+    静态字体（阶梯只有一档、axes 为空）：写 `weight`/`style`。**不能给静态字体写 supportedAxes**
+    ——AOSP 会按可变字体去读 fvar 表，读到没有就整族失效（真机就是卡第一屏）。
+    有轴但轴不是 wght / wght,ital：拒绝（校验器只认这两种枚举）。
+    """
     axes = supported_axes(ladder)
-    if not axes:
-        raise ValueError("主字体没有 wght/ital 轴：配置只出 supportedAxes，不退回逐档展开")
-    node = ET.Element("font", supportedAxes=axes)
+    if axes:
+        node = ET.Element("font", supportedAxes=axes)
+    elif len(ladder) == 1 and not ladder[0]["axes"]:
+        node = ET.Element("font", weight=str(ladder[0]["weight"]),
+                          style="italic" if ladder[0]["italic"] else "normal")
+    else:
+        raise ValueError("主字体的轴既不是 wght 也不是 wght,ital：AOSP 只认这两种枚举")
     node.text = font_name
     return node
 
@@ -747,7 +769,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
     # 由语言分决定胜负，分数相同才按文件顺序取靠前的**。不带 lang 的匿名族语言分恒为 0，
     # 会被任何 lang 匹配上的 zh 族（语言分 ≥1，语言+文字双匹配拿 4）压掉。
     # 自 dafc875 起的配置正是这样：第 1 族（匿名，我们）对 法 覆盖=1、语言=0，
-    # 第 10/11/121/122 族（lang=zh…，现已换成主字体=文渊）覆盖=1、语言=4 → 中文全落文渊。
+    # 第 10/11/121/122 族（lang=zh…，现已换成主字体）覆盖=1、语言=4 → 中文全落主字体。
     # 补上 lang 并抢在它们前面之后，两族同分，按顺序取靠前的那个 —— 我们。
     # 缺字（全角标点、假名、扩展区…）语言分再高也拿不到覆盖分，照旧落语言区里的主字体。
     index = list(root).index(default) + 1
@@ -902,10 +924,18 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     if output.resolve() == Path(base_path).resolve():
         raise ValueError("输出不能覆盖输入")
 
-    name = PRIMARY_NAME if font is None else basename(font)
-    if PurePosixPath(name).suffix.lower() not in FONT_SUFFIXES:
-        raise ValueError(f"主字体必须是 {', '.join(FONT_SUFFIXES)}:{font}")
-    primary = Path(source(font, PRIMARY_URL, PRIMARY_SHA256, cache / name)).read_bytes()
+    # 母版直通且没显式给 --font：主字体就是母版本人，不再去默认源下一份一模一样的字节。
+    # 安装名仍用 PRIMARY_NAME（Selffont-…），不沿用母版原名：设备 /system/fonts 里可能本来就有
+    # 一个同名文件，同名会让「哪份在跑」彻底说不清。
+    primary_is_mother = font is None and bool(passthrough_mother)
+    if primary_is_mother:
+        primary = Path(passthrough_mother).read_bytes()
+        name = PRIMARY_NAME
+    else:
+        name = PRIMARY_NAME if font is None else basename(font)
+        if PurePosixPath(name).suffix.lower() not in FONT_SUFFIXES:
+            raise ValueError(f"主字体必须是 {', '.join(FONT_SUFFIXES)}:{font}")
+        primary = Path(source(font, PRIMARY_URL, PRIMARY_SHA256, cache / name)).read_bytes()
     face = font_face(primary)
     ladder = weight_ladder(face["axes"])
     supplemental_sources = (SUPPLEMENTAL_FONT_SOURCES if supplemental_font_sources is None
@@ -941,7 +971,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             passthrough_name = mother_path.name
             glyphs = {}
             glyph_count = 0
-            # ★ 2026-11-10 主人实查出的二号嫌犯：文渊与自研 VF 进包前都过
+            # ★ 2026-11-10 主人实查出的二号嫌犯：主字体与自研 VF 进包前都过
             #   normalize_metrics() 对齐设备空壳行框（930/-250/0）并剪空白映射，
             #   唯独直通母版原样塞进去 —— 而它还被 fix_hpos/fix_vpos 平移过坐标。
             #   全包唯一一个「行框与设备不一致」的字件，第一屏渲染就可能踩到未测分支。
@@ -952,7 +982,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             cjk_font, _mp = prune_blank_mappings(cjk_font)
             warnings.append(f"母版直通：行框已对齐设备空壳，剪除空壳映射 {_mp} 个（轮廓零改动）")
             # 刷进手机后管理器里只有 module.prop 这几行能认人：直通包的 name/description
-            # 必须自己说明白，否则会跟文渊圆体的发行件长得一模一样（版本号还更高）。
+            # 必须自己说明白，否则会跟发行件长得一模一样（版本号还更高）。
             digest = hashlib.sha256(cjk_font).hexdigest()[:7]
             # 基准件必须与发行件**不同 id**：同一个 id 就只能靠抬 versionCode 去压发行件，
             # 抬上去之后发行件的总序号（现在是三位数）在管理器眼里永远是「降级」，
@@ -964,7 +994,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                 r"^description=.*$",
                 lambda _m: ("description=母版直通包：汉字取自 %s（源 sha256 %s…），"
                             "轮廓一个点没改，只把偏出字格中线（横向）与设计中线（竖向）的字整体平移归位；"
-                            "拉丁与符号仍走文渊圆体；只做基准对照，不是发行件；"
+                            "拉丁与符号仍走主字体；只做基准对照，不是发行件；"
                             f"模块 id 为 {module_id or '（同发行件）'}，与发行件分开，刷它不挡正规包更新。"
                             % (passthrough_name, digest)),
                 prop, flags=re.M)
@@ -977,6 +1007,9 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         # 框架读 font_fallback.xml（新语法）；Skia 读库存 fonts.xml（另一份，本模块也换）。
         template = (ROOT / "fonts.xml").read_bytes()
         cjk_file = passthrough_name or (cjk_naming(CJK_RELEASE_VERSION)[1] if glyph_count else None)
+        if primary_is_mother:
+            # 主字体（改名后的副本）与直通件是同一份字节：再写一遍只会多 20 MB 和一条重名引用。
+            cjk_font, cjk_file = b"", None
         cjk_family = None
         cjk_is_variable = True
         if cjk_file:
@@ -1076,7 +1109,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         config = apply_web_font_switch(config, keep_web_fonts)
         output.parent.mkdir(parents=True, exist_ok=True)
         write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals,
-                     cjk_font, legacy, cjk_file=cjk_file, coverage=coverage)
+                     cjk_font, legacy, cjk_file=cjk_file, coverage=coverage,
+                     primary_license=primary_is_mother or PRIMARY_SHA256 == MOTHER_SHA)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}"
@@ -1088,7 +1122,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     print(f"  二创汉字 {glyph_count} 字 / {len(cjk_font) / 1e6:.1f} MB"
           f"（{cjk_naming(CJK_RELEASE_VERSION)[0]}，排在主字体之前）"
           if glyph_count else "  二创汉字：无数据，跳过")
-    print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成文渊")
+    print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成主字体")
     for message in warnings:
         warn(message)
     return warnings
@@ -1097,7 +1131,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.ZipInfo],
                  name: str, packaged: bytes, xml: bytes, prop: str, config: str,
                  supplementals: list[dict], cjk_font: bytes = b"", legacy: bytes = b"",
-                 cjk_file: str | None = None, coverage: str = "") -> None:
+                 cjk_file: str | None = None, coverage: str = "",
+                 primary_license: bool = False) -> None:
     """写模块 zip：被配置引用的基础包字体 + 固定许可外部字体 + 主字体 + 原生 KSU 模块布局。
 
     两份配置走两条路：`font_fallback.xml` 是新语法，安装脚本投放到所有
@@ -1126,6 +1161,9 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         if cjk_font:
             destination.writestr(f"system/fonts/{cjk_file or cjk_naming(CJK_RELEASE_VERSION)[1]}",
                                  cjk_font)
+        # 主字体取自母版时同样要带母版的 OFL：改名发布不改许可义务。
+        # （早先这里只在 cjk_font 有内容时写，母版直通那条路就成了「发了改造版却不带许可」。）
+        if cjk_font or primary_license:
             destination.writestr(f"licenses/{CJK_LICENSE_NAME}", CJK_LICENSE.read_bytes())
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("fonts-insert.xml", legacy)
@@ -1320,13 +1358,13 @@ def fonts_xml():
     # 轴范围窄：只出范围内的档，不拒绝。
     assert [entry["weight"] for entry in weight_ladder({"wght": (200, 400, 700)}) if not entry["italic"]] \
         == [200, 300, 400, 500, 600, 700]
-    # 静态字体（没有 wght 轴）直接拒绝：配置只出 supportedAxes，不退回逐档展开。
-    for axes in ({}, {"ital": (0, 0, 1)}):
-        try:
-            weight_ladder(axes)
-            raise AssertionError(f"静态字体未被拒绝：{axes}")
-        except ValueError:
-            pass
+    # 静态字体（没有 wght 轴）：只有 400 一档、没有可声明的轴（母版就是这一类）。
+    static = weight_ladder({})
+    assert static == [{"weight": 400, "italic": False, "axes": []}], static
+    node = primary_node("M.ttf", static)
+    assert node.get("weight") == "400" and node.get("style") == "normal" \
+        and node.get("supportedAxes") is None, \
+        "静态主字体必须写 weight/style，写 supportedAxes 会被 AOSP 当可变字体读 fvar，整族失效"
 
     template = (ROOT / "fonts.xml").read_bytes()
     root = ET.fromstring(configure_fonts(template, "V.ttf", ladder))
@@ -1343,7 +1381,7 @@ def fonts_xml():
     # 二创汉字族：必须带 zh 语言标签，且排在所有 CJK 语言区族之前。Minikin 给每个族打分
     # （覆盖分 << 29 | 语言分 << 1 | 变体分，见 configure_fonts 的注释），同一码位多个族都有时
     # 覆盖分打平，胜负全看语言分；语言分也打平才按文件顺序取靠前的。不带 lang 的匿名族
-    # 语言分恒为 0 —— 这就是「包回退到文渊」的成因，改回匿名族会让这条断言先炸。
+    # 语言分恒为 0 —— 这就是「包回退到主字体」的成因，改回匿名族会让这条断言先炸。
     cjk_root = ET.fromstring(configure_fonts(template, "V.ttf", ladder, cjk=True, cjk_name="C.ttf"))
     cjk_families = list(cjk_root)
     cjk_own = [family for family in cjk_families
@@ -1520,7 +1558,7 @@ def build_end_to_end():
             for expected in ("module.prop", "LICENSES.md", "customize.sh",
                              "firefox.sh", "web-fonts.sh", "action.sh", "hotswap.sh", "skia.sh",
                              "geckoview-config.yaml",
-                             "font_fallback.xml", "fonts-insert.xml", "licenses/WenYuan-OFL.txt",
+                             "font_fallback.xml", "fonts-insert.xml",
                              "system/fonts/NotoMusic-Regular.ttf", "licenses/NotoMusic-OFL.txt",
                              "system/fonts/P-Regular.ttf", "system/fonts/Roboto-Regular.ttf",
                              "system/fonts/NotoSansPro.otf", "licenses/MFGA-base-LICENSES.md"):
@@ -1528,6 +1566,10 @@ def build_end_to_end():
             for absent in ("report.json", "system/fonts/DeadWeight.ttf",
                            "fonts.xml", "font_fallback_cjkvf.xml"):
                 assert absent not in members, f"不该有的成员 {absent}"
+            # 文渊下线（2026-11-16 主人令）：包里任何一个成员名都不许带它，字件、许可、配置都算。
+            # 用「全量成员名」判而不是只钉那一个文件名——钉文件名的话，改个前缀就绕过去了。
+            assert not [m for m in members if RETIRED_FONT in m], \
+                f"包里还有已退役字体的成员：{[m for m in members if RETIRED_FONT in m]}"
             installed_prop = archive.read("module.prop").decode()
             assert "version=26.9.30.2.9" in installed_prop and "\nversionCode=9\n" in installed_prop, installed_prop
             assert (archive.getinfo("customize.sh").external_attr >> 16) == stat.S_IFREG | 0o755
@@ -1590,7 +1632,7 @@ def build_end_to_end():
         assert not any("P-Regular.ttf" in [(n.text or "").strip() for n in f.findall("font")]
                        and len(f.findall("font")) > 1 for f in locale), "语言区不许混主字体与其他字件（真机卡开机）"
         assert "MiSans" not in xml, "包内配置不该引用 MiSans"
-        # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，开头（本来字体或文渊）不动。
+        # 尾链：补充字库内部家族名按 fonts.xml 顺序拼进每条名单，开头（本来字体或主字体）不动。
         assert ", Noto Sans Pro, Noto Music\"" in config, "补充字体尾链顺序未拼进火狐配置"
         for line in config.splitlines():
             if line.strip().startswith("font.name-list."):
@@ -1603,7 +1645,7 @@ def build_end_to_end():
             kept = archive.read("geckoview-config.yaml").decode()
             assert re.search(rf"^{re.escape(WEB_FONT_KEPT)}$", kept, re.M), "网页字体未放行"
             assert not re.search(rf"^{re.escape(WEB_FONT_ACTIVE)}$", kept, re.M), "放行后 pref 仍生效"
-            for line in kept.splitlines():  # 放行后名单本身仍完整、开头仍是本来字体或文渊
+            for line in kept.splitlines():  # 放行后名单本身仍完整、开头仍是本来字体或主字体
                 if line.strip().startswith("font.name-list."):
                     name_list_ok(line)
         # 没有五段版本数据就不出包（规范：取数失败停止出包和上传）。
@@ -1643,15 +1685,19 @@ def build_end_to_end():
             raise AssertionError("可见字形的空壳未被拒绝")
         except ValueError as error:
             assert "度量空壳" in str(error), error
-        # 静态主字体（没有 wght 轴）同样直接拒绝：配置只出 supportedAxes。
+        # 静态主字体（没有 wght 轴）：现在必须能出包，配置里写 weight/style 而不是 supportedAxes。
+        # 这是 2026-11-16「主字体交给母版」的前提——母版就是静态字体，拒了就没有主字体可写。
         static_font = fonts_dir / "Static.ttf"
         static_font.write_bytes(make_font(axes=False))
         base_zip(base, {"Roboto-Regular.ttf": make_carrier()})
-        try:
-            test_build(base=str(base), font=str(static_font), output=output, build_num="9", day="2", date="26.9.30")
-            raise AssertionError("静态主字体未被拒绝")
-        except ValueError as error:
-            assert "wght" in str(error), error
+        test_build(base=str(base), font=str(static_font), output=output, build_num="9", day="2", date="26.9.30")
+        with zipfile.ZipFile(output) as _a:
+            _root = ET.fromstring(_a.read("font_fallback.xml"))
+            _ours = [n for n in _root.iter("font")
+                     if (n.text or "").strip() == static_font.name]
+            assert _ours, "静态主字体没写进配置"
+            assert all(n.get("supportedAxes") is None and n.get("weight") == "400" for n in _ours), \
+                [(n.get("weight"), n.get("supportedAxes")) for n in _ours]
 
         # 信任边界：路径穿越 / 绝对路径 / 符号链接成员拒绝，输出不许覆盖输入。
         for bad in ("system/fonts/../../evil.ttf", "/abs.ttf"):
@@ -1801,7 +1847,7 @@ def ci_version_numbering():
     _env_backup = {k: _os.environ.get(k) for k in ("GH_TOKEN", "REPO", "RUN_ID", "CLEANUP_APPLY")}
     _os.environ.update({"GH_TOKEN": "probe", "REPO": "probe/probe",
                         "RUN_ID": "1", "CLEANUP_APPLY": "false"})
-    _spec2 = _ilu2.spec_from_file_location("clean_probe", ROOT / ".github" / "scripts" / "cleanup.py")
+    _spec2 = _ilu2.spec_from_file_location("clean_probe", ROOT / "tools" / "cleanup.py")
     _cl = _ilu2.module_from_spec(_spec2)
     _spec2.loader.exec_module(_cl)
     _rows = [{"id": n, "run_number": n, "event": "push",
@@ -2110,7 +2156,7 @@ def runtime_scripts():
         for script in (web, action):
             assert sh(["-n", str(script)], os.environ).returncode == 0, f"{script.name} 语法错误"
         state = bridge_dir / "selffont-web-fonts.state"
-        assert sh([str(web), "status"], env).stdout.strip().startswith("网页自带字体 = 压成文渊")
+        assert sh([str(web), "status"], env).stdout.strip().startswith("网页自带字体 = 压成主字体")
         assert sh([str(web), "wat"], env).returncode == 2, "未知参数应报用法错"
         result = sh([str(web), "keep"], env)
         assert result.returncode == 0 and state.read_text().strip() == "keep", result
@@ -3224,7 +3270,20 @@ def garbage_scanner():
 @check
 def repo_constants():
     """不下载任何东西：默认来源、模块字段、真实 fonts.xml 的前置条件都在位。"""
-    assert PRIMARY_URL.endswith("WenYuanRoundedSCVF.ttf") and BASE_URL.endswith(".zip")
+    assert PRIMARY_URL.endswith("MarukoGothicCJKsc-Regular.ttf") and BASE_URL.endswith(".zip")
+    assert PRIMARY_SHA256 == "e3709389bce13fa75af28cc2370b6175520d97f74dfbf3894ca24838f47241b7", \
+        "默认源哈希必须与母版本人一致"
+    # 文渊下线（2026-11-16 主人令）：认人的三处不许再提它。
+    assert RETIRED_FONT not in PRIMARY_NAME and "Maruko" in PRIMARY_NAME, PRIMARY_NAME
+    prop_head = (ROOT / "module/module.prop").read_text(encoding="utf-8")
+    assert "文渊" not in prop_head and RETIRED_FONT not in prop_head, "模块描述里还写着已退役的字体"
+    assert not list((ROOT / "module/licenses").glob(f"*{RETIRED_FONT}*")), "退役字体的许可还在仓库里"
+    # 例外，写清理由：README.md 与 module/hotswap.sh 里那串 `can't create
+    # /system/fonts/<退役字体的安装名>: Read-only file system` 是 2026-10 真机
+    # 原样报错，属于判死证据（§19 黑历史不删）。改掉它等于篡改证据，所以豁免，但只豁免这两处。
+    for path, allowed in ((ROOT / "README.md", 1), (ROOT / "module/hotswap.sh", 1)):
+        assert path.read_text(encoding="utf-8").count(RETIRED_FONT) == allowed, \
+            f"{path.name} 里的字样变多了：那是真机报错原文，只该有一处"
     assert len(PRIMARY_SHA256) == len(BASE_SHA256) == 64
     assert PRIMARY_NAME.endswith(".ttf") and RENAME == "Selffont Rounded SC VF"
     prop = (ROOT / "module/module.prop").read_text()
@@ -3384,8 +3443,8 @@ def workflow_format():
 
         # 5. 自带清理 job：if: always()、调 cleanup.py（同组由第 4 条的顶层并发组保证）
         cleanup = [job for job in (data.get("jobs") or {}).values()
-                   if ".github/scripts/cleanup.py" in str(job)]
-        assert cleanup, f"{path.name}: 没有调 .github/scripts/cleanup.py 的清理 job"
+                   if "tools/cleanup.py" in str(job)]
+        assert cleanup, f"{path.name}: 没有调 tools/cleanup.py 的清理 job"
         for job in cleanup:
             assert "always()" in str(job.get("if", "")), f"{path.name}: 清理 job 必须挂 if: always()"
 
@@ -3554,7 +3613,7 @@ def passthrough_font():
     ★ 2026-11-10 判据改了，写清为什么：
       原判据是「包里字件 sha256 必须等于源文件」——那等于**禁止**行框归一。
       但直通件是改过坐标（fix_hpos/fix_vpos 平移）之后唯一没过 normalize_metrics 的字件，
-      而它恰恰是第一屏渲染要用的那份。主人实查指出：文渊与自研 VF 都过了，只有它没过。
+      而它恰恰是第一屏渲染要用的那份。主人实查指出：主字体与自研 VF 都过了，只有它没过。
       所以判据从「整份字节相等」收窄为「轮廓/cmap/hmtx 相等，行框允许被对齐」：
       该动的动（行度量），不该动的用 glyph_signature + hmtx 逐字锁死。
       另外断言配置里**不许**出现 name+lang 混合节点（原厂 192 个 family 里这种写法是 0 个）。
@@ -3607,6 +3666,36 @@ def passthrough_font():
                      f"{_fam.get('lang')!r} —— 原厂一个都没有，带 name 的不进语言回退链")
             assert archive.read("fonts-insert.xml").decode().count(mother.name) >= 1, \
                 "Skia 那份插入行里也得有直通字件"
+
+        # ★ 2026-11-16 主人点名要的实测：走母版那条路时，打包脚本会不会顺手去下主字体默认源。
+        #   判法不是读代码，是把默认源换成一个**必然连不上**的地址再出一次包：
+        #   只要它真去取，构建就会在这里抛 URLError；出得来包，就证明这条路径一次网络都没发。
+        with tempfile.TemporaryDirectory() as dead_name:
+            dead = Path(dead_name)
+            base_zip(dead / "base.zip", {"Roboto-Regular.ttf": make_carrier()})
+            _real_url, _real_sha = globals()["PRIMARY_URL"], globals()["PRIMARY_SHA256"]
+            globals()["PRIMARY_URL"] = "http://127.0.0.1:9/never-fetched.ttf"
+            try:
+                offline = dead / "out" / "offline.zip"
+                build(base=str(dead / "base.zip"), font=None, output=offline, build_num="9", day="2",
+                      date="26.9.30", cjk=False, supplemental_font_sources=(),
+                      passthrough_mother=str(mother), fixture=True)
+            finally:
+                globals()["PRIMARY_URL"], globals()["PRIMARY_SHA256"] = _real_url, _real_sha
+            with zipfile.ZipFile(offline) as archive:
+                # 母版进包就必须带母版的 OFL：改名发布不改许可义务。
+                assert "licenses/MarukoGothic-OFL.txt" in archive.namelist(), \
+                    f"母版进了包却没带它的许可：{sorted(n for n in archive.namelist() if 'licenses/' in n)}"
+                assert not [n for n in archive.namelist() if RETIRED_FONT in n], \
+                    "母版包里混进了已退役字体的成员"
+                fonts_in_zip = sorted(n for n in archive.namelist() if n.startswith("system/fonts/"))
+                # 主字体＝母版字节（改名后的安装副本），直通件不再重复投放一份，
+                # 否则包里会有两份 20 MB 的同一份汉字字件，配置里还会出现两条指同一份的引用。
+                assert f"system/fonts/{mother.name}" not in fonts_in_zip, \
+                    f"母版直通包里重复投放了同一份汉字字件：{fonts_in_zip}"
+                assert f"system/fonts/{PRIMARY_NAME}" in fonts_in_zip, fonts_in_zip
+                assert sum(n.endswith(".ttf") for n in fonts_in_zip) == 2, \
+                    f"只该有空壳与主字体两份：{fonts_in_zip}"
 
         # 基准件必须与发行件**不同 id**。同一个 id 只有一条路能让基准件盖住发行件：把
         # versionCode 抬到发行件之上（2026-11-01 那次抬到 90 万）——抬完发行件的三位数总序号
@@ -3788,7 +3877,7 @@ def _cjk_font_check():
     data = build_cjk_font(dict(sample))          # build_vf 会消费传入的字典，这里给副本
     carrier = layout_metrics(TTFont(_io.BytesIO(make_carrier())))
     calibrated = build_cjk_font(dict(sample), carrier)
-    # 高度重校准：和主字体（文渊）同一函数、同一空壳，行框必须是同一套数字。
+    # 高度重校准：和主字体同一函数、同一空壳，行框必须是同一套数字。
     with TTFont(_io.BytesIO(calibrated)) as font:
         hhea, os2 = font["hhea"], font["OS/2"]
         assert (hhea.ascent, hhea.descent, hhea.lineGap) == (930, -250, 0), \
@@ -4027,7 +4116,7 @@ def main() -> None:
                              "不查 git 提交数；取不到就报错停止（不出包、不上传），"
                              "不与 --build/--day/--date 混用")
     parser.add_argument("--keep-web-fonts", action="store_true",
-                        help="放行网页自带字体（图标字体等）；默认压成文渊")
+                        help="放行网页自带字体（图标字体等）；默认压成主字体")
     args = parser.parse_args()
     if args.preview:
         emit_preview(args.preview, args.preview_out, args.compare)

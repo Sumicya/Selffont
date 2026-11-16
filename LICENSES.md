@@ -45,9 +45,9 @@ Unless otherwise specified, all fonts are licensed under OFL-1.1 by default.
 Primary font usage is unrelated to the MFGA module.
 ## Selffont 新增资源
 
-- 主字体（默认源）：[文渊圆体 v1.010 可变字体](https://github.com/takushun-wu/WenYuanFonts/releases/tag/v1.010)(takushun-wu),OFL-1.1，保留字体名 'WenYuan'/'文渊'，完整声明随包（`licenses/WenYuan-OFL.txt`）。换任意字体请自行确认其许可，声明随源自带。
+- 主字体（默认源）：[Maruko Gothic CJKsc Regular](https://github.com/max32002/maruko-gothic)（`max32002/maruko-gothic` 固定提交 `97e9dd4`），SIL OFL 1.1，未声明保留字体名；许可证全文随包（`licenses/MarukoGothic-OFL.txt`）。换任意字体请自行确认其许可，声明随源自带。
 - Noto Music（补回 U+1D100..U+1D1FF 中约 200 个缺失音符字形）：固定于 Google Fonts 提交 `e7db6ca603fd4862010383ff17ffd6cc4ffac1c0`，SIL OFL 1.1；只在构建时下载，不提交字体二进制，许可证随包。
-- 主字体是外部构建输入，不提交大二进制；安装副本归一行度量、剪除空壳映射、内部名改为 'Selffont Rounded SC VF'（归一与剪除均属 OFL 意义上的修改，不以保留名 'WenYuan'/'文渊' 发布改造字体）。
+- 主字体是外部构建输入，不提交大二进制；安装副本归一行度量、剪除空壳映射、内部名改为 'Selffont Rounded SC VF'（归一与剪除属 OFL 意义上的修改，故不用母版本名发布）。2026-11-16 起默认源由文渊换回母版，文渊的许可声明与退出包同时删除。
 - 二创汉字字库（`SelfroundsCJK-VF.ttf`）：母版 Maruko Gothic（`max32002/maruko-gothic` 固定提交 `97e9dd4` 的 `MarukoGothicCJKsc-Regular.ttf`），SIL OFL 1.1。仓库里存的是**笔画中线与逐笔半宽数据**（`tools/design_cjk.bin`，26 MB），字体二进制在构建时按固定拓扑描边（中线等参数采样 + 沿法向偏移 ±半宽 + 固定段数半圆）后现编，不入库。发布名为 'Selfrounds CJK'，不用母版保留名；许可证全文随包（`licenses/MarukoGothic-OFL.txt`）。
 - 曾试过的寒蝉全圆体/半圆体自 v2.7.0 起不在产线：其 OFL 声明也随之删除，不再随包。构建含空壳映射剪除防线。
 - 基础包只提供补充字体资源；各资源遵循其自己的许可，基础包归属说明随包保留。`build.py` 里的默认源哈希只是提示，自选来源的许可由你确认。

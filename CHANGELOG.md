@@ -1,3 +1,45 @@
+## 2026-11-16 · 文渊下掉、主字体交给母版（主人令）；清理脚本进 tools/；静态主字体写进配置
+
+**决定**：主字体＝母版（Maruko Gothic CJKsc Regular，`max32002/maruko-gothic` 提交 `97e9dd4`，
+20,084,736 B，sha256 `e3709389…41b7`）。默认构建不再下载、不再打进、不再引用文渊。
+
+**改了哪六处**
+
+| 处 | 改前 | 改后 |
+|---|---|---|
+| 下载地址 | `WenYuanFonts/…/WenYuanRoundedSCVF.ttf` | `maruko-gothic/raw/97e9dd4/CJK SC/MarukoGothicCJKsc-Regular.ttf` |
+| 安装名 | `Selffont-WenYuanRoundedSCVF.ttf` | `Selffont-MarukoGothicCJKsc.ttf` |
+| 硬断言 | `PRIMARY_URL.endswith("WenYuanRoundedSCVF.ttf")` | `…endswith("MarukoGothicCJKsc-Regular.ttf")` 且 `PRIMARY_SHA256 == MOTHER_SHA` |
+| 模块描述 | 「文渊圆体（可变字体，100-900 真字重）」 | 「母版（Maruko Gothic CJKsc，静态单档）」 |
+| 许可清单 | 断言包内存在 `licenses/WenYuan-OFL.txt` | 改为「包内任何成员名都不得含退役字体名」；母版进包必带 `licenses/MarukoGothic-OFL.txt` |
+| 字体配置那行 | 主字体节点写 `supportedAxes="wght,ital"` | 母版是静态字体，写 `weight="400" style="normal"` |
+
+**为什么必须动配置层**：母版没有 `fvar` 表。原 `weight_ladder({})` 对静态字体直接抛错，
+`primary_node` 只会写 `supportedAxes`——等于「主字体交给母版」这件事根本写不进配置。现在静态字体
+走单档 `weight`，可变字体仍走 `supportedAxes`。
+
+**走母版路径会不会去下文渊：实测不会**。判法不是读代码，是把 `PRIMARY_URL` 换成
+`http://127.0.0.1:9/never-fetched.ttf` 再出一次包：连得上就说明它真去取。结果出包成功，
+抛错为零——这条路径一次网络都没发。该断言已钉进 `--check passthrough_font`，变异（把
+`primary_is_mother` 置假）会让它红在 `<urlopen error [Errno 111] Connection refused>`。
+
+**代价（如实交付，不是「已下掉」就算修好）**：按轮廓哈希比对（`.evidence/wenyuan_removal.txt`），
+文渊与母版 33,029 个同码位里只有 **11 个轮廓完全相同**，**31,623 个会变样**（含 ASCII 94 个），
+另有 **1,395 个只有文渊有**（下掉即缺字，其中汉字 1,096／非汉字 299，判据为 `han()`）。
+即：这不是「抹掉一个补丁字体」，是**整套字形换人**。视觉验收须有真机图，本轮没有设备。
+
+**顺带两件（同一次提交）**
+
+1. 清理脚本 `.github/scripts/cleanup.py` → `tools/cleanup.py`（规范 §11 脚本只进 `tools/`），
+   四个工作流（build / hotswap / selffont / selfrounds）引用同步改；`build.py` 与 `tools/ci_version.py`
+   里指旧路径的三处一并改。
+2. `--check` 从 21 项不变，但七处变异全部由「假绿」修成「真红」：静态字体退回拒绝、静态字体写成
+   `supportedAxes`、描述写回退役字体、默认源退回旧地址、包里塞退役许可、母版直通去下默认源、
+   直通件重复投放。另加第八处：母版包不带母版 OFL。
+
+**未做／不知道**：真机没刷过这一版；`docs/evidence/` 里没有新渲染图；§4 要求的七份上游本轮只取了
+`selfs/GLOBAL.md`（`03569d3d`，8,128 B，五节 25 条）。
+
 ## 2026-11-11 · 更正 2026-10-27「删掉 module/licenses/WenYuan-OFL.txt（文渊下线）」——该删除从未发生
 
 **更正对象**：`## 2026-10-27 · 自绘字体下线：CJK 主字体直接换成 Maruko SC 两档` 里「删掉的东西」一条，

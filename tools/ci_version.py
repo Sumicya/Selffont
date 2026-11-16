@@ -65,7 +65,7 @@ def run_day(row: dict) -> date:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(CLOCK).date()
 
 
-# 与 .github/scripts/cleanup.py 的 KEEP_RUNS 一致：每个工作流只留最新 5 条运行记录。
+# 与 tools/cleanup.py 的 KEEP_RUNS 一致：每个工作流只留最新 5 条运行记录。
 KEEP_RUNS = 5
 
 
@@ -131,7 +131,7 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
     #     → 当日运行恒满 → 再拒绝。闭环，且不需要任何人做错事就会天天复发。
     #
     #   修法不是给取号器再加一条例外，而是把前提从源头去掉：清理侧
-    #   `.github/scripts/cleanup.py` 的 `pinned_anchor()` 现在**钉住当日首条不许删**，
+    #   `tools/cleanup.py` 的 `pinned_anchor()` 现在**钉住当日首条不许删**，
     #   于是「当日首条已被删」这件事不再会发生，这条判据连同它的前提一起作废。
     #   取号规则收窄成唯一一条：当日序号 = 当前号 − 当日现存最小号 + 1，与产物锚点取小。
     #   右侧若真出现「首条被删」，产物锚点仍能兜住；两个锚都没有时可证最坏情况只是

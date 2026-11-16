@@ -143,4 +143,4 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           CLEANUP_SCOPE: actions
-        run: python3 .github/scripts/cleanup.py
+        run: python3 tools/cleanup.py
