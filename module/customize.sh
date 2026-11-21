@@ -8,78 +8,11 @@ command -v abort >/dev/null 2>&1 || abort() { echo "!!! $1" >&2; exit 1; }
 [ -n "$(ls -A "$MODPATH/system/fonts" 2>/dev/null)" ] ||
     abort "Selffont: 模块里没有字体文件。请用 build.py 打包，不要直接压缩仓库。"
 
-# 覆盖 font_fallback.xml 之前的体检。分两档，因为「缺字件」有两种后果：
-#   硬档（abort）：默认族 sans-serif 的字件必须解析得到。这一族 system_server 开机就用，
-#                  它缺了才是真砖（2026-11-01 进安全模式那条路）。
-#   软档（只警告）：其余被引用的名字，设备没有也不会崩——Android 的字体解析器找不到文件就跳过，
-#                  只是那些字符落到回退链。上一版把它写成硬档，结果每个真机都装不上，
-#                  等于把「可能崩」换成了「必然装不上」，矫枉过正。
-ROOT_DIR=${SELFFONT_SYSTEM_ROOT:-}
-exists() {
-    [ -f "$MODPATH/system/fonts/$1" ] && return 0
-    [ -f "$ROOT_DIR/system/fonts/$1" ] && return 0
-    return 1
-}
-boot_missing=""
-for name in $(awk '/<family name="sans-serif"[ >]/{f=1} f&&/<\/family>/{f=0} f' "$MODPATH/font_fallback.xml" |
-              tr '>' '\n' |
-              sed -n 's/^[[:space:]]*\([A-Za-z0-9_.+-]*\.\(ttf\|otf\|ttc\)\).*/\1/p' | sort -u); do
-    [ -n "$name" ] || continue
-    exists "$name" || boot_missing="$boot_missing $name"
-done
-if [ -n "$boot_missing" ]; then
-    abort "Selffont: 默认族 sans-serif 缺字件：$boot_missing
-这一族是 system_server 开机就要用的，缺了会卡开机（2026-11-01 事故）。拒绝安装。"
-fi
-
-missing=""; checked=0
-# 取「所有 <font> 的文本」不能按行 grep：带 <axis> 子节点的条目在同一行里后面跟的是 '<'，
-# 旧写法 `grep -o '<font[^>]*>[^<[:space:]]*'` 会漏掉它们（实测 140 vs 243，漏掉 103 个）。
-# 按 '>' 切行再取文件名，与构建期 ElementTree 的口径一致（两边都是 243）。
-for name in $(tr '>' '\n' < "$MODPATH/font_fallback.xml" |
-              sed -n 's/^[[:space:]]*\([A-Za-z0-9_.+-]*\.\(ttf\|otf\|ttc\)\).*/\1/p' | sort -u); do
-    [ -n "$name" ] || continue
-    checked=$((checked + 1))
-    exists "$name" || missing="$missing $name"
-done
-if [ -n "$missing" ]; then
-    ui_print "Selffont: 本机缺 $(echo $missing | wc -w) 个被引用的字件（不影响开机，那些字符走回退链）"
-    ui_print "  缺：$(echo $missing | tr ' ' '\n' | head -8 | tr '\n' ' ')..."
-fi
-ui_print "Selffont: 字件体检通过（引用 $checked 个，默认族齐全）"
-
-# 同名配置的旧模块必须让路。上一版的 id 是 MFGA，与基础包同源；这一版改成 selffont-mother。
-# 两个模块同时挂 /system/etc/font_fallback.xml 会互相覆盖，字体可能整个起不来。
-# 发现旧 id 就给它打 disable 标记（KernelSU / Magisk 的官方机制，可逆），不是删它。
-# ★ 2026-11-10 主人指出：仓库历史上用过三个模块 id（MFGA / selffont-mother /
-#   selffont-bench），这里却只写死 MFGA 一个，另两个不管。真机上若同时留着两份未停用的
-#   同源模块，它们会同时挂 fonts_base.xml / fonts_ule.xml，回退链互相覆盖 —— 卡第一屏的
-#   典型成因。改成遍历同一个来源清单，凡存在且不是自己的目录，一律打 disable。
-#   清单只写这一次，守卫脚本那边读同一份（见 post-fs-data.sh 的 SIBLING_IDS）。
-SIBLING_IDS="MFGA selffont-mother selffont-bench selffont"
-SELF_DIR="${MODPATH%/system}"
-SELF_DIR="${SELF_DIR%/}"
-for _id in $SIBLING_IDS; do
-    _old="/data/adb/modules/$_id"
-    [ -d "$_old" ] || continue
-    [ "$_old" = "$SELF_DIR" ] && continue
-    [ -f "$_old/disable" ] && continue
-    [ -f "$_old/remove" ] && continue
-    if touch "$_old/disable" 2>/dev/null; then
-        ui_print "Selffont: 已停用同源旧模块 $_id（同名配置，两份同时挂会冲突）；重启后生效"
-    else
-        ui_print "Selffont: 发现同源旧模块 $_id 但写不进 disable，请手动停用（否则可能卡开机）"
-    fi
-done
-
-# 读配置的程序有两类，各读各的，两份都得换：
-#   font_fallback.xml / fonts_base.xml / fonts_ule.xml   新语法，Android 框架（SystemFonts）读
-#   fonts.xml                                            库存旧语法，Skia 读，路径写死在
-#                                                        Skia 的 SkFontMgr_android_parser.cpp
-#                                                        （LMP_SYSTEM_FONTS_FILE）
-# Flutter（FlClash 这类）、WebView、部分厂商小组件走 Skia：只换前者，它们一个字都不变。
-# 2026-10-28 真机：/system/etc/fonts.xml 里 Selffont 出现 0 次，另外三份各 16 次。
-# fonts_customization.xml 不碰（它只管别名，不装字件）。
+# 设备读哪份字体配置按厂商而定，都用包里同一份新语法配置（supportedAxes）填充：
+#   font_fallback.xml   AOSP 15+：SystemFonts 源码 FONTS_XML = font_fallback.xml
+#   fonts_base.xml      ColorOS 基础层（日志：Loading font config from /system_ext/etc/fonts_base.xml）
+#   fonts_ule.xml       ColorOS 界面实际使用的那层
+# 不碰库存 fonts.xml（AOSP 16 头注已标 DEPRECATED）与 fonts_customization.xml。
 # 模块内统一放 $MODPATH/system/<分区>/…：KernelSU 的 vendor / product / system_ext 就是
 # 指向 system/ 下同名的符号链接，直接建顶层分区目录会顶掉符号链接（已知会卡开机）。
 ROOT=${SELFFONT_SYSTEM_ROOT:-}
@@ -100,30 +33,8 @@ for partition in system system_ext product; do
     done
 done
 
-# Skia 那份（/system/etc/fonts.xml）默认**不动**，开关在 skia.sh。
-# 理由与真机症状写在 skia.sh 头注：Skia 的逐字回退「有码位即命中」，插到默认链最前面会让
-# Flutter（FlClash 这类）界面大片没字；默认 off 时它用设备自己的链，一定有字。
-# 要试插：sh /data/adb/modules/MFGA/skia.sh on（重启生效），撤：... skia.sh off。
-insert="$MODPATH/fonts-insert.xml"
-skia=$(sh "$MODPATH/skia.sh" apply 2>&1)
-echo "$skia" | grep -q '未插' || ui_print "$skia"
-
-# 安装结果落盘：安装日志在管理器里一闪而过，真机上没人抢得到这几行。
-# 落到 /data/adb（不在模块里，卸载模块也还在），重启后 `cat` 就能回答「到底换了没、换了几处」。
-SELFTEST=/data/adb/selffont-selftest.log
-{
-    echo "时刻 $(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知)"
-    echo "框架配置 $count 份：$replaced"
-    echo "Skia /system/etc/fonts.xml：$skia"
-    echo "插入行 $(grep -c '<font ' "$insert" 2>/dev/null || echo 0) 条（字重逐档，来自 fonts-insert.xml）"
-    echo "模块内字件 $(ls -1 "$MODPATH/system/fonts" 2>/dev/null | wc -l) 个"
-    echo "覆盖清单：见模块目录 coverage.txt（打包了哪些、哪些靠设备自带）"
-} > "$SELFTEST" 2>/dev/null &&
-    ui_print "Selffont: 自查已写 $SELFTEST（重启后 cat 可查换了哪些配置）"
-
 if [ "$count" -gt 0 ]; then
     ui_print "Selffont: 已替换 $count 份字体配置：$replaced"
-    ui_print "Selffont: Skia 配置 /system/etc/fonts.xml：$skia"
     ui_print "Selffont: 重启后生效（字体文件挂在 /system/fonts）。"
 else
     abort "Selffont: 设备上没有可替换的字体配置（font_fallback.xml / fonts_base.xml / fonts_ule.xml 都没有）。本模块只支持带其中至少一份的设备。"

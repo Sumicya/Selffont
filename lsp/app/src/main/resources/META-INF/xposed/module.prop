@@ -1,9 +1,0 @@
-id=selfprobe
-name=SelfFontProbe
-version=dev-1
-versionCode=1
-minApiVersion=101
-targetApiVersion=102
-staticScope=false
-exceptionMode=protective
-scope=com.android.settings
