@@ -162,8 +162,6 @@ def main() -> int:
         if gname in is_latin_any and target:
             xs = [p[0] for c in paths for seg in c for p in
                   ([seg[1]] if seg[0] in ("move", "line") else list(seg[1]) + [seg[2]])]
-            ys = [p[1] for c in paths for seg in c for p in
-                  ([seg[1]] if seg[0] in ("move", "line") else list(seg[1]) + [seg[2]])]
             if xs:
                 xmin, xmax = min(xs), max(xs)
                 old_aw, old_lsb = hmtx[gname]

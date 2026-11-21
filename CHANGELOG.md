@@ -38,7 +38,7 @@ A 与 T 都是斜边三角，盒子交叠但墨迹根本不碰：`ATA` 的真实
 
 - 共线判据改永假 → 删点数 226→185，**真红**。
 - 墨距判据改永假 → **假绿**：压到每侧 30 之后本来就没有对需要推 kern（重写 0 条），变异看不见。
-  这条留作盲区，写进 `tools/blindspots.json`。
+  这条已写进 `tools/blindspots.json` 的 `open_questions`（见下条）。
 
 **⑤ 这张图不证明什么**：`docs/evidence/2026-11-21-latin-spacing.png` 是按 `advance + kern`
 手动排版渲染的（PIL 的 `raqm` 为 False，不读 GPOS，直接 `ImageDraw.text` 画的间距是假的）。
