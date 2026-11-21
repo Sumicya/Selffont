@@ -4,8 +4,8 @@
 # 支持从 /data/local/tmp/<包名>-geckoview-config.yaml 读启动首选项，前提是该应用是
 # Android「调试应用」——不需要 LSPosed、不改 APK，一个文件加一个系统开关。
 #
-# 用法：su -c 'sh /data/adb/modules/MFGA/firefox.sh'          # 接入（默认）
-#       su -c 'sh /data/adb/modules/MFGA/firefox.sh remove'   # 退出
+# 用法：su -c 'sh /data/adb/modules/selffont-mother/firefox.sh'          # 接入（默认）
+#       su -c 'sh /data/adb/modules/selffont-mother/firefox.sh remove'   # 退出
 set -u
 PKG=${FIREFOX_PACKAGE:-org.mozilla.firefox}
 CONFIG=${FIREFOX_DATA_DIR:-/data/local/tmp}/$PKG-geckoview-config.yaml

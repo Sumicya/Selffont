@@ -1,0 +1,427 @@
+#!/system/bin/sh
+# Selffont 开机守卫（post-fs-data 阶段，每次开机最早能跑起来的模块脚本）。
+#
+# 为什么要有这个文件（2026-11-08 真机事故）：
+#   装了模块之后手机卡在第一屏不动，主人只能长按电源键强制重启，反复几次之后
+#   系统进安全模式。查了两天查不出一条证据，原因不是「没崩干净」，是**根本没崩**：
+#     · /sys/fs/pstore 三个文件全空       → 内核没 panic
+#     · /data/system/dropbox 无 system_server_crash → 用户态没抛异常
+#     · /data/tombstones 里 31 个全指向 com.android.launcher 的 libuleflutter.so
+#       → 那是 OPPO 桌面插件自己的递归 bug，keyProcess: 0，不触发安全模式
+#     · getprop ro.boot.bootreason = 2sec_reboot
+#       → AOSP bootstat.cpp: *2sec_reboot*) var="cold,rtc,2sec"；这是**电源键强制重启**
+#   结论：进程是**阻塞**，不是崩溃。阻塞不写 pstore、不写 tombstone，证据只在
+#   logcat 的环形缓冲区里，而强制重启会把内存缓冲一起抹掉。
+#
+# 所以本脚本干两件事：
+#   ① 开机计数：连续 MAX 次开机没走到 boot-completed 就自动打 disable 标记，
+#      下次开机系统直接跳过本模块——主人不必再手动进安全模式。
+#      计数由 service.sh 里的守夜子进程在 sys.boot_completed=1 之后清零。
+#   ② 日志落盘：开机就在后台把 logcat 写进 /data/adb/selffont/boot.log。
+#      卡住的那一次，缓冲区进不了磁盘，但**已经开始写到磁盘的那部分留下来了**。
+#
+# 两个开关（都做成默认值，不改默认行为）：
+#   SELFFONT_MAX_BOOT_FAIL  连续失败几次自动停用，默认 2
+#   SELFFONT_NO_LOGCAT=1    不抓开机日志
+
+# ★ 2026-11-08 真机第五次输出暴露的事故：post-fs-data.d/sf-guard.sh 时间戳 17:12、
+#   /data/adb/selffont 目录时间戳也是 17:12（mkdir 成功），但里面**一个账都没有**，
+#   连 guard.log 都没被创建——脚本被执行了，在写第一行之前就死了。
+#   根因：`MODDIR=${0%/*}`。被 init 以 source 加载时 $0 是**父进程**的路径（/system/bin/sh），
+#   MODDIR 变成 /system/bin，后面 `: > "$MODDIR/disable"` 在只读分区写不进去；
+#   而所有日志都是 `>> ... 2>/dev/null`，报错被吞——脚本把自己的证据销掉了。
+MODDIR=${MODDIR:-}
+# $MODULES 只给沙箱夹具换根用；真机上是 /data/adb/modules。
+MODULES=${SELFFONT_MODULES:-/data/adb/modules}
+if [ -z "$MODDIR" ] || [ ! -d "$MODDIR" ]; then
+    for d in "$MODULES"/selffont-*; do
+        [ -d "$d" ] || continue
+        MODDIR=$d; break
+    done
+fi
+DATA=${SELFFONT_DATA:-/data/adb/selffont}
+COUNT="$DATA/boot-count"
+GUARD_LOG="$DATA/guard.log"
+BOOT_LOG="$DATA/boot.log"
+# ★ 2026-11-09 真机：卡住时是「开机 → 约 81 秒自己重启」的自循环，不是等主人长按。
+#   三次实测间隔 82 / 81 秒，守夜每次都停在 50 秒那条（第 60 秒永远不到）。
+#   阈值 2 意味着要白挨 3 轮、约 4 分钟；改成 1，卡一次下一轮就停。
+MAX=${SELFFONT_MAX_BOOT_FAIL:-1}
+# ★ 2026-11-09 自查：这些环境变量是**裸取**的。给一个非数字，
+#   `[ "$n" -gt "$MAX" ]` 会报 Illegal number 并返回 2，if 判假 ——
+#   于是「连续 3 次没走到底自动停用」**永远不触发**，而日志里一个字都不提。
+#   真机上没人会去设它，但我不能靠「没人会这么干」把守卫写脆。
+case "$MAX" in ''|*[!0-9]*) MAX=1 ;; esac
+_limit_s=${SELFFONT_BOOT_LOG_SECONDS:-180}
+case "$_limit_s" in ''|*[!0-9]*) _limit_s=180 ;; esac
+
+mkdir -p "$DATA" 2>/dev/null
+# 无条件先留一行：只要这行在，就证明「这个脚本真的被执行了」。
+# 没这行的话，「没跑」和「跑了但路径写不进去」就分不开——2026-11-08 那次就是靠猜。
+printf '%s 守卫进来了 pid=%s 脚本=%s MODDIR=%s\n' \
+    "$(date +%H:%M:%S 2>/dev/null)" "$$" "$0" "$MODDIR" >> "$DATA/guard.log" 2>/dev/null
+# 认不出模块目录就明说，不许静默：空 MODDIR 下 `: > "$MODDIR/disable"` 等于往 / 写。
+if [ -z "$MODDIR" ] || [ ! -d "$MODDIR" ]; then
+    echo "$(date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻) MODDIR 认不出来（$MODULES 下没有 selffont-*），本次跳过自动停用，日志照写" >> "$DATA/guard.log" 2>/dev/null
+    MODDIR=''
+fi
+
+# 时间戳用 +0800（本机主人所在时区）；date 不可用时给个占位，不许因此中断。
+now() { date +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || echo 未知时刻; }
+
+# ---- ⓪ 同一次开机只算一次 ----
+# 本脚本有**两条**触发路径：① 打包进模块时由 KernelSU 自己 source；
+# ② 手工放在 /data/adb/post-fs-data.d/ 时由 init 直接执行。两条同时在，
+# 每开一次机计数会涨 2 —— 阈值是 2，于是**每次开机都正常**也会在第 2 次自己打 disable。
+# 判据用 /proc/stat 的 btime（本次开机的时间戳，每次开机唯一）。
+# **不能用 uptime**：两次开机都可能在第 3 秒跑到 post-fs-data，uptime 一样，
+# 第二次就会被误判成「同一次开机」而不计数——恰恰在反复卡机的场景下把守卫废掉。
+# 判不出来（没有 btime）时一律**照常计数**：宁可重复算，也不许去重把守卫吞掉。
+# $SELFFONT_BOOT_ID 只给夹具用，用来在同一台机器上模拟不同的开机。
+STAMP="$DATA/pfd-seen"
+boot_id=${SELFFONT_BOOT_ID:-$(awk '/^btime/{print $2; exit}' /proc/stat 2>/dev/null)}
+case "$boot_id" in ''|*[!0-9]*) boot_id='' ;; esac
+if [ -n "$boot_id" ]; then
+    last=$(cat "$STAMP" 2>/dev/null)
+    if [ "$last" = "$boot_id" ]; then
+        printf '%s 本次开机已计过数（boot_id=%s），跳过——模块内与 post-fs-data.d 两份同时在\n' \
+            "$(now)" "$boot_id" >> "$GUARD_LOG" 2>/dev/null
+        exit 0
+    fi
+fi
+
+# ---- ① 开机计数 ----
+# ★ 阈值降到 1 之后有个新风险：**意外重启**（断电、电量耗尽、系统更新）也会被算成
+#   「没走到底」，一次就把模块关掉。真机上卡住的特征是「开机后 81 秒就重启」，
+#   正常用了一阵再重启完全不是一回事。所以只有**上次开机存活不到 WINDOW 秒**才算失败。
+#
+# ★★ 2026-11-09 主人打回的致命 bug（此前的写法是死的）：
+#   旧写法读 `/proc/uptime` 当「上次开机活了多久」。可 post-fs-data 在开机第 2~5 秒跑，
+#   `/proc/uptime` 是**本次**开机的秒数，永远 ~3 秒 < 300 → `FAST` 永远为 1 →
+#   「活过窗口期就清零」这个分支在真机上 **100% 走不到**（死分支）。
+#   后果叠加 service.sh 的前台循环被 init 杀掉（计数清不掉）：
+#   正常用一天、重启一次，n=2 > MAX=1，模块就把自己 disable 了。
+#   正确判据：`boot_id - last`，两个 btime 相减就是**上次开机存活了多久**，
+#   不需要 /proc/uptime，也不受本次开机几秒的影响。
+WINDOW=${SELFFONT_FAST_REBOOT_WINDOW:-300}
+case "$WINDOW" in ''|*[!0-9]*) WINDOW=300 ;; esac
+_last=${last:-}
+case "$_last" in ''|*[!0-9]*) _last='' ;; esac
+if [ -n "$boot_id" ] && [ -n "$_last" ] && [ "$_last" -lt "$boot_id" ]; then
+    _lived=$(( boot_id - _last ))
+    if [ "$_lived" -ge "$WINDOW" ]; then
+        # 上次开机活过了窗口期：主人正常用了一阵再重启，不是卡住，计数清零重来。
+        if [ -s "$COUNT" ]; then
+            echo "$(now) 上次开机存活 ${_lived} 秒（≥ 窗口 ${WINDOW} 秒），不算卡住，计数清零" >> "$GUARD_LOG" 2>/dev/null
+        fi
+        : > "$COUNT"
+    fi
+    # 活不到窗口期：不动计数，交给下面的 n+1 累加。
+else
+    # 没有上次的 btime（首次开机 / 文件被清）：按「算失败」累加，宁可误关也不许永远不关。
+    :
+fi
+# 现在才覆盖 STAMP：上面要用它算「上次活了多久」，先写就把判据毁了。
+[ -n "$boot_id" ] && echo "$boot_id" > "$STAMP" 2>/dev/null
+# 先写计数再干别的：万一本脚本自己后面卡住，这次开机也已经算进去了。
+n=$(cat "$COUNT" 2>/dev/null)
+case "$n" in ''|*[!0-9]*) n=0 ;; esac
+n=$((n + 1))
+echo "$n" > "$COUNT" 2>/dev/null
+
+echo "$(now) 第 $n 次开机开始（阈值 $MAX）" >> "$GUARD_LOG" 2>/dev/null
+
+# ---- ② 卡住那次的日志落盘 ----
+# 体积上限。**这是两份加起来的上限**，磁盘占用最多约 2×MAX_BYTES（滚动的瞬间两份都在）。
+# 2026-11-09 真机：2 MiB 只够装开机头 2.8 秒，ActivityManager 那时还没起来。
+# 第三轮（17:45）实测：写入速率 219 KB/s，要覆盖到 81 秒自重启需要约 17.3 MiB。
+# 取 24 MiB（两份最多 48 MiB，占 /data 极小），按实测速率可覆盖约 112 秒 > 81 秒。
+MAX_BYTES=${SELFFONT_BOOT_LOG_BYTES:-25165824}
+case "$MAX_BYTES" in ''|*[!0-9]*) MAX_BYTES=25165824 ;; esac
+# ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
+#   两个原因叠在一起：①旧版只在本次开机给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1
+#   之后**再没人管它**；②这段清理原本写在 NO_LOGCAT 提前退出的后面，
+#   关掉抓日志时根本走不到。现在挪到前面，并且 .1 超上限就整份丢掉。
+if [ -f "$BOOT_LOG.prev" ]; then
+    _old1=$(wc -c < "$BOOT_LOG.prev" 2>/dev/null)
+    case "$_old1" in ''|*[!0-9]*) _old1=0 ;; esac
+    if [ "$_old1" -gt "$MAX_BYTES" ]; then
+        echo "$(now) boot.log.prev 有 ${_old1} 字节，超过上限 ${MAX_BYTES}，整份丢弃" >> "$GUARD_LOG" 2>/dev/null
+        rm -f "$BOOT_LOG.prev" 2>/dev/null
+    fi
+fi
+# ★ 2026-11-09 教训：上一轮的现场不是「分析完」才没的，是被清账命令 `rm` 掉的。
+#   那次 guard.log 停在「logcat 自己结束」，而 54→57 秒「谁发起重启」的证据
+#   就在 boot.log 里，清账时一起没了。不能指望主人每轮都记得先跑扫描命令：
+#   开机第一件事自己扫一遍，结论写进 guard.log，原文留成 boot.log.prev。
+#   旧版滚动的 boot.log.1 不再使用，见到就并进 prev（否则同一份现场两处都是）。
+if [ -f "$BOOT_LOG.1" ]; then
+    if [ -f "$BOOT_LOG.prev" ]; then
+        rm -f "$BOOT_LOG.1" 2>/dev/null
+    else
+        mv -f "$BOOT_LOG.1" "$BOOT_LOG.prev" 2>/dev/null
+    fi
+fi
+# 扫描逻辑写成一个函数：开机自动扫 + 手动 sf-scan.sh 用**同一份判据**，
+# 不许两套模式各写一遍（分叉了就会「自动扫说命中 0，手动扫说命中 3」）。
+# 用法：scan_boot_log <文件> <输出后缀行，例如「  扫描」>
+scan_boot_log() {
+    _f=$1
+    _tag=${2:-  扫描}
+    [ -f "$_f" ] && [ -s "$_f" ] || return 0
+    _pl=$(wc -l < "$_f" 2>/dev/null)
+    _pb=$(wc -c < "$_f" 2>/dev/null)
+    case "$_pl" in ''|*[!0-9]*) _pl='?' ;; esac
+    case "$_pb" in ''|*[!0-9]*) _pb='?' ;; esac
+    printf '%s%s：%s 行 / %s 字节\n' "$(now) " "$_tag" "$_pl" "$_pb" >> "$GUARD_LOG" 2>/dev/null
+    # 模式必须覆盖真机原句：vold/statsd 是「receiving signal 15」，ccci 是「signal number=15」，
+    # 内核是「Signal 15 received」。只写 received 会漏掉真机那两行（我自己漏过一次）。
+    # ★ 2026-11-10 主人指出两处：①原来第一条只搜 ShutdownThread / PowerManagerService，
+    #   那是进桌面后 Java 层的关机路径；卡第一屏时发起者只能是 init / Zygote / libc / art
+    #   或厂商开机看门狗。②「F DEBUG」在 threadtime 下是带空格的，写成 F/DEBUG 是 brief 格式。
+    for _pat in 'sys.shutdown.requested|sys\.powerctl|Reboot start' \
+                'init: .*(SIGTERM|Service .* exited|reboot)' \
+                'signal 15|signal number=15|Signal 15|Sending SIGTERM' \
+                'Watchdog|WATCHDOG|phoenix|theia|orms|OplusBoot' \
+                'FATAL EXCEPTION|ANR in |F DEBUG|Fatal signal' \
+                'Blocked in|blocked in' \
+                'minikin|FontManager|Typeface|FontListParser|SystemFonts|UpdatableFontDir|OplusFont' \
+                'boot_progress|am_proc_died' \
+                'Shutting down|Rebooting|reboot'; do
+        _c=$(grep -c -E "$_pat" "$_f" 2>/dev/null)
+        case "$_c" in ''|*[!0-9]*) _c='?' ;; esac
+        printf '%s%s：%-46s 命中 %s\n' "$(now) " "$_tag" "$_pat" "$_c" >> "$GUARD_LOG" 2>/dev/null
+    done
+    # ★ 2026-11-10 因果窗口：全机收 Signal 15 那一片是**结果**，起因一定在第一条关机/重启
+    #   信号**之前**几十到上百行。旧版只取匹配行最后 8 行，等于只读事故报告的伤亡名单。
+    #   这里定位第一条信号的行号 L，摘 [L-80, L+10] 整段原文。
+    #   找不到信号就显式写「未找到」，不许静默跳过（否则又变成「看着完整其实缺块」）。
+    # ★ 模式必须与上面统计那几条**同源**：漏掉 sys.shutdown.requested 就会出现
+    #   「统计说命中 1、窗口说未找到」的自相矛盾（端到端实测抓到过）。
+    _L=$(grep -n -m 1 -E 'sys\.shutdown\.requested|Sending SIGTERM|sys\.powerctl|Reboot start|receiving signal 15|signal number=15|Signal 15|vold.*shutdown|Shutting down|Rebooting' "$_f" 2>/dev/null | cut -d: -f1)
+    case "$_L" in ''|*[!0-9]*)
+        printf '%s%s：因果窗口——未找到任何关机/重启信号（这份日志里没有第一现场）\n' "$(now) " "$_tag" >> "$GUARD_LOG" 2>/dev/null
+        ;;
+    *)
+        _from=$(( _L - 80 )); [ "$_from" -lt 1 ] && _from=1
+        _to=$(( _L + 10 ))
+        printf '%s%s：因果窗口 第 %s 行前 80 行 → 后 10 行（原样摘录，见下）\n' "$(now) " "$_tag" "$_L" >> "$GUARD_LOG" 2>/dev/null
+        sed -n "${_from},${_to}p" "$_f" 2>/dev/null | while IFS= read -r _ln; do
+            printf '%s  窗口：%s\n' "$(now)" "$_ln" >> "$GUARD_LOG" 2>/dev/null
+        done
+        ;;
+    esac
+}
+# ★ 调用必须排两处之后：①函数定义之后（sh 是顺序执行，函数没定义时调用会静默 127 /
+#   什么都不做 —— 我第一次把调用挪到前面，扫描当场静默失效，夹具立刻打回）；
+#   ②会 exit 的处置之前（否则自动停用那次开机永远走不到这里，就是第 0 号 bug）。
+if [ -f "$BOOT_LOG" ] && [ -s "$BOOT_LOG" ]; then
+    echo "$(now) —— 上一轮日志扫描（原文留成 $BOOT_LOG.prev；命中 0 也是信息）" >> "$GUARD_LOG" 2>/dev/null
+    scan_boot_log "$BOOT_LOG" '  扫描'
+    mv -f "$BOOT_LOG" "$BOOT_LOG.prev" 2>/dev/null
+fi
+# ★ 2026-11-10 第 0 号 bug 的修法：**处置排在观测之后**。
+#   处置会 exit，所以它必须是这条路径上的最后一步。原版把这段写在扫描之前，
+#   于是「n > MAX」那次开机（唯一需要扫描的那次）直接 exit 0，扫描永远走不到。
+# ★ 2026-11-10 主人逐行核出的第 0 号 bug：这段扫描原先写在 `if n > MAX` 的 `exit 0` 之后。
+#   而「n > MAX」恰恰只在**卡住过一次之后的那次开机**成立 —— 也就是唯一需要这份扫描的开机
+#   走不到扫描，直接 exit 0。功能只在故障路径上有意义，却被故障路径跳过，等于没写。
+#   处置（打 disable、退出）必须是最后一步；观测一律排在它前面。
+if [ "$n" -gt "$MAX" ]; then
+    # ★ 2026-11-09：判据**必须**是 -gt，不许改成 -ge。
+    #   守卫在开机时数第 n 次，但「这次会不会走到底」此刻还不知道——
+    #   要等下一次开机数出更大的 n 才能判定上一次失败。
+    #   -gt 的语义：n > MAX，即「前 MAX 次都没走到底」。
+    #     MAX=1 → 第 2 次开机停用（卡 1 次就停，正是主人要的）
+    #     MAX=2 → 第 3 次开机停用（真机实测过）
+    #   改成 -ge 就变成「第 1 次开机就停用」——**好机器正常开机一次也被关掉**。
+    #   我自己改错过一次，夹具当场打回：count=1 且 disable=有。
+    # 停用是 KernelSU 的官方机制（模块目录下一个叫 disable 的空文件），可逆：
+    # 主人把那个文件删掉、重启，模块就回来。
+    [ -n "$MODDIR" ] && : > "$MODDIR/disable" 2>/dev/null
+    if [ -n "$MODDIR" ]; then
+        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），已自动停用：$MODDIR/disable" >> "$GUARD_LOG" 2>/dev/null
+    else
+        echo "$(now) 连续第 $n 次开机没走到 boot-completed（阈值 $MAX），但 MODDIR 不明，**没能自动停用**" >> "$GUARD_LOG" 2>/dev/null
+    fi
+    # 停用之后不再抓日志：模块既然不生效，日志也没有意义。
+    exit 0
+fi
+
+
+# 新一轮从空文件开始，避免新旧两轮混在一份里（混了就说不清哪行属于哪次开机）。
+: > "$BOOT_LOG" 2>/dev/null
+
+[ "${SELFFONT_NO_LOGCAT:-0}" = "1" ] && exit 0
+
+
+# 后台抓日志。
+#
+# ★ 2026-11-08 真机打回来的两个漏洞，都在这段：
+#   ① 原来用 `-s 白名单` 只抓 8 个 tag。真机上桌面每 5 秒重载一次字体，
+#      「Typeface: Preloading Roboto-Regular.ttf」把 180 秒窗口**填满了**，
+#      ActivityManager / Watchdog / minikin 的报错一条都挤不进来 ——
+#      日志有 1707 行、看着挺充实，该有的全没有。
+#   ② 更糟的是，卡住那几分钟一行都不剩，等于又回到「没有证据」。
+#
+# 现在的抓法：**抓全量，再排除刷屏的**（`-s` 是白名单，会丢主干；这里用 grep -v 黑名单）。
+# 黑名单只放「确认与本模块无关且会刷屏」的：桌面字体预加载、冻结/解冻的例行广播。
+# 其余一律落盘，宁可文件大一点也不许再把主干挤掉。
+#
+# 体积仍由 SELFFONT_BOOT_LOG_BYTES（默认 2 MiB）封顶；超了滚一份 .1。
+# 一次抓取。参数：$1=秒数上限。
+# ★ 2026-11-08 真机：日志写「180 秒到，停止」，实际从 22:33:15 跑到 23:04:44，
+#   31 分 29 秒。原因是那句「180 秒到」是**写死的字符串**，从来没算过真实时长 ——
+#   又一个「看着说了，其实没查」。现在前后各取一次时间戳，差多少就报多少。
+grab() {
+    _limit=${1:-180}
+    # 夹具里把 logcat 换成假命令（无限吐行），才验得到「边抓边封顶」到底停没停。
+    _lc=${SELFFONT_LOGCTL:-logcat}
+    # ★ 2026-11-10 主人指出：原来只抓 main,system,crash，漏了 kernel 与 events ——
+    #   「谁按下关机键」（init 判定 zygote/surfaceflinger 崩太多、收到 sys.powerctl、
+    #   开始 Sending SIGTERM）记在 kernel；「卡在开机哪一步」（boot_progress_*、
+    #   am_proc_died、watchdog）记在 events。两个黑匣子一起关掉，剩下的全是果没有因。
+    #   两级：先试 -b all（一条命令覆盖全部），设备不认就退回逐项列举。
+    #   $2 是 stderr，用一个临时文件判成败，避免把两级都写进 logcat.err。
+    _bargs="-b all"
+    _probe="${_lc%% *}"
+    if command -v "$_probe" >/dev/null 2>&1; then
+        "$_probe" -b all -d -t 1 >/dev/null 2>&1 || _bargs="-b main,system,events,crash,kernel"
+    fi
+    echo "$(now) 抓日志：缓冲区 $_bargs（漏 events/kernel 就查不出是谁发起关机）" >> "$GUARD_LOG" 2>/dev/null
+    # ★ 2026-11-09 真机第四轮（18:01:59）：预算 24 MiB 只用了 8.07 MiB、上限 180 秒只跑了
+    #   56.8 秒就停。日志只写「实际跑了 56.8 秒」，**说不清为什么停**——这和当年写死
+    #   「180 秒到」是同一类错：报了个数字，但那个数字不解释发生的事。
+    #   所以把 logcat 自己的退出码和 stderr 都落盘：
+    #     124 = timeout 到点（正常的时长上限）
+    #     141 = 管道被关（撞体积上限，awk 先退出）
+    #     143 = 被 SIGTERM（进程被系统清理）
+    #     0   = logcat 自己结束 —— 这种情况最常见的原因是 **logd 断开，系统开始关机**
+    {
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "$_limit" "$_lc" $_bargs -v threadtime
+        else
+            "$_lc" $_bargs -v threadtime
+        fi 2>> "$DATA/logcat.err"
+        echo "$?" > "$DATA/.lc-rc"
+    } | grep -v -E 'Typeface: Preloading|reportOneUidFrozenStateChanged|skip deliver sticky broadcast|Async freezing|Cancel freezing|ProcessObserver broadcast disabled'
+}
+
+(
+    # 等 logd 起来（最多 15 秒）。post-fs-data 阶段 logd 通常已经在跑，但不保证。
+    # 等不到**记一行**再退出：静默退出等于这次开机白抓，说不清是没 logd 还是没跑。
+    # ★ 2026-11-09：夹具要能跑这段，才验得到「上限到底生效没有」。真机路径不许变，
+    #   只有 SELFFONT_LOGCTL 给了值时才用它（夹具传一个假 logcat，真机不设=走原路）。
+    _sock=${SELFFONT_LOGD_SOCKET:-/dev/socket/logdw}
+    if [ ! -e "$_sock" ]; then
+        # 不再 sleep 轮询（§8）。logd 没起来就是抓不到，直接记账退出；
+        # 真机上 post-fs-data 阶段 logd 通常已在跑，这一行是异常提示不是常态。
+        echo "$(now) 抓日志：$_sock 不存在，本次没抓到（不是没跑，是 logd 没起来）" >> "$GUARD_LOG" 2>/dev/null
+        exit 0
+    fi
+    # 体积封顶用**边抓边看**：每 2000 行检查一次，超了就停。
+    # 原来只在「下次开机」检查，跑的过程中不设防——真机一次就写了 100,453 行、22 MB。
+    # ★ 2026-11-09 真机第二轮（17:30:35）：守卫自己报「上限 2097152 字节」，
+    #   实际只跑 2.8 秒 / 10485 行就断——因为**控制抓多少的是这一行**，不是上面的 MAX_BYTES。
+    #   我上一轮只改了 MAX_BYTES 的默认值，这里漏了，于是 8 MiB 根本没生效，
+    #   七个关键词（ActivityManager/Watchdog/minikin/FontManager）依旧全 0。
+    #   两处默认值必须一致，这条现在由 build.py 钉死，不许再分叉。
+    _cap=${SELFFONT_BOOT_LOG_BYTES:-25165824}
+    case "$_cap" in ''|*[!0-9]*) _cap=25165824 ;; esac
+    # ★ 2026-11-09 真机第三轮（17:45:42）：8 MiB 那轮报了「41943 行 / 5,017,814 字节」，
+    #   22.4 秒就断。两个数放在一起就说明断的不是字节而是**行数**：
+    #   41943 = 8388608 ÷ 200（我按每行 200 字节估的），而实测每行只有 119.6 字节，
+    #   8 MiB 预算只用了 60%。行数封顶和字节封顶对不上，等于自己砍掉 40%。
+    #   现在两层都用**实际字节数**数，行数只当保险丝（100 万行，正常永远用不到）。
+    # 行数保险丝：只在极短行（<50 字节）时才可能先撞上；正常行 119 字节，字节封顶先到。
+    # ★ 不许再给它加「最小行数」下限——上一版的下限让「行数封顶」和字节预算脱钩，
+    #   真机上 8 MiB 只写出 4.79 MiB 就断了（41943 = 8388608 ÷ 200）。
+    _lines=$(( _cap / 50 ))
+    # 心跳粒度 1 MiB（不是按时间：时间心跳要 sleep，§8 禁）。
+    _HB_BYTES=${SELFFONT_HEARTBEAT_BYTES:-1048576}
+    case "$_HB_BYTES" in ''|*[!0-9]*) _HB_BYTES=1048576 ;; esac
+    # 秒级 date 分辨不出亚秒差：夹具里跑 0.2 秒会印成「实际跑了 0 秒」，也是假话。
+    # 有 /proc/uptime 就用它（带两位小数）；没有就退回秒级并标明「精度 1 秒」。
+    _t0=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+    [ -n "$_t0" ] || _t0=$(date +%s 2>/dev/null || echo 0)
+    # 每次开机重写：跨开机追加会越滚越大，而每次开机只关心这一轮为什么停。
+    : > "$DATA/logcat.err" 2>/dev/null
+    : > "$DATA/.lc-rc" 2>/dev/null
+    echo "$(now) 抓日志：开始（全量，排除刷屏标签），上限 $_limit_s 秒 / $_cap 字节" >> "$GUARD_LOG" 2>/dev/null
+    # 心跳与封顶都放进**同一个 awk**（§8 禁 sleep；Balanov/uncut：禁静默截断）。
+    #   · 每满 1 MiB 写一行心跳：字节 / 行数 / 这条日志自己的时间戳 —— 有日志就有心跳，
+    #     不需要另起子进程，也不需要 sleep。断在第几秒、断时最后一条是什么，一目了然。
+    #   · 撞 cap 或 maxl 时**显式**写 TRUNCATED 到 boot.log 末行和 guard.log，并以 exit 3 结束，
+    #     不留「看着完整其实被截了」的假象。
+    # 字节封顶：按**实际累计字节**算，不再按行数折算。行数只做保险丝。
+    # ★★ 2026-11-09 CI 连续 10 条红（build #362–#366 / selfrounds #39–#43）的根因：
+    #   `length($0)` 在不同 awk 下含义不同 —— POSIX 说它数**字符**，只有 C locale 下才数**字节**。
+    #   沙箱是 mawk 单字节实现，碰巧按字节算，本地假绿；GitHub Actions 的 gawk 在
+    #   LANG=C.UTF-8 下数字符（实测同一行 148 字节 / 88 字符 = 1.68 倍），
+    #   于是「上限 2 MiB」写出了 168% 的字节，夹具里的字节断言当场炸。
+    #   Android 真机同样是 UTF-8 环境，不修就是真机上封顶失效、/data 被写满。
+    #   修法：显式 LC_ALL=C，让任何 awk 都按字节数。
+    grab "$_limit_s" | LC_ALL=C awk -v cap="$_cap" -v maxl="$_lines" \
+                         -v hb="$_HB_BYTES" -v glog="$GUARD_LOG" -v blog="$BOOT_LOG" \
+                         -v ts="$(now)" '
+        {
+            n += length($0) + 1
+            if (n > cap || NR > maxl) {
+                why = (n > cap) ? "bytes" : "lines"
+                code = 3
+                # ★ 必须走 stdout（= boot.log），不能用 `>> blog`：
+                #   awk 的 print 是块缓冲，而重定向写文件是立刻落盘，两者顺序会错乱 ——
+                #   实测标记落在第 17158 行，后面两千多行缓冲日志被写到了它后面。
+                printf "TRUNCATED: bytes=%d lines=%d cap=%d reason=%s\n", n, NR, cap, why
+                printf "%s 抓日志：TRUNCATED bytes=%d lines=%d cap=%d reason=%s（不是跑满时长，是撞上限）\n", ts, n, NR, cap, why >> glog
+                exit code
+            }
+            if (n >= hbnext) {
+                printf "%s 抓日志心跳：%d 字节 / %d 行，最后一条 %s\n", ts, n, NR, substr($0, 1, 18) >> glog
+                hbnext += hb
+            }
+            print
+        }
+    ' >> "$BOOT_LOG"
+    _awk_rc=$?
+    # ★ 兜底：断言只能锁住「代码里写了 LC_ALL=C」，锁不住真机上 awk 到底按什么算。
+    #   抓完用 wc -c 复核真实字节；超了 105% 就是封顶失效，显式截断并记账，不许静默超限。
+    _real=$(wc -c < "$BOOT_LOG" 2>/dev/null)
+    case "$_real" in ''|*[!0-9]*) _real=0 ;; esac
+    _ceil=$(( _cap * 105 / 100 ))
+    if [ "$_real" -gt "$_ceil" ]; then
+        echo "$(now) 抓日志：封顶失效——实测 ${_real} 字节，超过上限 ${_cap} 的 105%，已硬截断（awk 把 length 按字符算了？）" >> "$GUARD_LOG" 2>/dev/null
+        tail -c "$_cap" "$BOOT_LOG" > "$BOOT_LOG.trim" 2>/dev/null && mv -f "$BOOT_LOG.trim" "$BOOT_LOG" 2>/dev/null
+        printf "TRUNCATED: bytes=%d cap=%d reason=hardcut\n" "$_real" "$_cap" >> "$BOOT_LOG" 2>/dev/null
+    fi
+    _t1=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+    [ -n "$_t1" ] || _t1=$(date +%s 2>/dev/null || echo 0)
+    _el=$(awk -v a="$_t0" -v b="$_t1" 'BEGIN{ if (a+0 == 0 && b+0 == 0) { print "?"; exit }
+        d = b - a; if (d < 0) d = 0; printf "%.1f", d }')
+    # 停止原因必须写清楚：只写「跑了 N 秒」等于没说。
+    # ★ awk 的退出码优先于 .lc-rc：awk exit 3 就是它自己判定的「撞上限」，
+    #   这是同步的、一定拿得到。.lc-rc 是管道左端子壳写的，awk 退出时 logcat 若没有新日志
+    #   把 grep 缓冲刷满，左端还没收到 SIGPIPE，.lc-rc 会是空的 —— 那就误报「读不到」。
+    _lrc=$(cat "$DATA/.lc-rc" 2>/dev/null)
+    case "$_lrc" in ''|*[!0-9]*) _lrc='读不到' ;; esac
+    if [ "$_awk_rc" = "3" ]; then
+        _lrc=3
+        _why='撞体积/行数上限（awk exit 3，这是它自己判的，不是管道猜的）'
+    else
+        case "$_lrc" in
+            124) _why='到时间上限（正常）' ;;
+            141) _why='撞体积上限（awk 先退出）' ;;
+            143) _why='被 SIGTERM（进程被系统清理）' ;;
+            0)   _why='logcat 自己结束——多半是 logd 断开/系统开始关机' ;;
+            *)   _why='未知退出码' ;;
+        esac
+    fi
+    # 最后一条日志的时间戳：卡住的时刻就在这附近，比「跑了 N 秒」有用得多。
+    _lastts=$(tail -n 1 "$BOOT_LOG" 2>/dev/null | cut -c1-18)
+    echo "$(now) 抓日志：停止。实际跑了 ${_el} 秒（上限 $_limit_s 秒），boot.log 现在 $(wc -l < "$BOOT_LOG" 2>/dev/null || echo ?) 行 / $(wc -c < "$BOOT_LOG" 2>/dev/null || echo ?) 字节；最后一条日志时间 ${_lastts:-（空）}；logcat 退出码 ${_lrc} = ${_why}" >> "$GUARD_LOG" 2>/dev/null
+    _e1=$(wc -c < "$DATA/logcat.err" 2>/dev/null)
+    case "$_e1" in ''|*[!0-9]*) _e1=0 ;; esac
+    [ "$_e1" -gt 0 ] && echo "$(now) 抓日志：logcat 的 stderr 有 ${_e1} 字节，见 $DATA/logcat.err" >> "$GUARD_LOG" 2>/dev/null
+) &
+
+exit 0
