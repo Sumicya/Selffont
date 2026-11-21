@@ -156,7 +156,16 @@ def main() -> int:
                 paths = cleaned
         pts_after += sum(len(c) for c in paths)
 
-        # 拉丁：把左右空压到 target（只平移字形，改 advance 与 lsb）
+        # 拉丁：**只压富余，不补留白**。两侧各设一个上限 target，超过才收到 target；
+        #   不足的原样保留；负值（j 的左出、Q 的尾）一律不碰。
+        #
+        # ★ 2026-11-21 修正。上一版写的是 `new_aw = xmax-xmin+2*target`、`lsb = target`，
+        #   即「两侧都强行拉到 target」。后果实测：A 原本左 27 右 21，被撑到 30/30，
+        #   advance 653 → 665（+12）；ATA 总宽 1904 → 1913，**越压越宽**。
+        #   根因是斜边字母（A V W Y）与圆形（Q）的墨迹本身让出了视觉空白，
+        #   留白本来就该小；把全局一个常数当目标，等于把该小的撑大、把该大的压扁。
+        #   判据改成「只减不增」：new = min(old, target) if old > 0 else old。
+        #   这样任意字形的 advance 恒 <= 原值，可用断言硬保证。
         offset = 0
         new_aw = None
         if gname in is_latin_any and target:
@@ -165,11 +174,19 @@ def main() -> int:
             if xs:
                 xmin, xmax = min(xs), max(xs)
                 old_aw, old_lsb = hmtx[gname]
+                old_rsb = old_aw - xmax
                 gaps_before.append(old_lsb)
-                offset = target - xmin
-                new_aw = int(xmax - xmin + 2 * target)
-                gaps_after.append(target)
-                n_regap += 1
+                # 只在富余过大时收；负值和本来就窄的保持原样
+                new_lsb = min(old_lsb, target) if old_lsb > target else old_lsb
+                new_rsb = min(old_rsb, target) if old_rsb > target else old_rsb
+                offset = new_lsb - xmin
+                cand = int(round(new_lsb + (xmax - xmin) + new_rsb))
+                new_aw = min(cand, old_aw)          # 硬保证：绝不加宽
+                gaps_after.append(new_lsb)
+                if new_aw != old_aw or offset:
+                    n_regap += 1
+                else:
+                    new_aw = None
         # ★ 只重建「真的改了」的字形。2026-11-21 实测教训：无条件重建会把全字库点数
         #   从 6,844,184 涨到 6,844,485（+301）——TTGlyphPen 重画会补入隐含的 on-curve 点，
         #   而且复合字形被展平成简单字形。删掉的 226 个点还不够补回去的。
@@ -177,7 +194,8 @@ def main() -> int:
         if removed_here or offset:
             glyf[gname] = to_glyph(paths, offset)
         if new_aw is not None:
-            hmtx[gname] = (new_aw, target)
+            # lsb 必须等于「新原点下的 xMin」，不是 target
+            hmtx[gname] = (new_aw, int(round(xmin + offset)))
 
     print(f"点数 {pts_before} → {pts_after}（删 {pts_before - pts_after}，"
           f"{(pts_before - pts_after) / max(pts_before,1) * 100:.2f}%），涉及 {n_dedup} 个字形")
