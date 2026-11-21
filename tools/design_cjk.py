@@ -386,6 +386,13 @@ CAP_SQUASH = float(os.environ.get("SELFFONT_CAP_SQUASH", "1.0"))
 # 尖头系数：0 = 关（走正半圆）。>0 时端头正前方按这个倍数缩，1.0 = 不缩。
 # 母版的撇捺收笔是尖的、横竖是圆的，这个参数只控制「尖多少」，分类留给调用方。
 CAP_SHARP = float(os.environ.get("SELFFONT_CAP_SHARP", "0"))
+# 接点找「邻近笔」的横向容差（字体单位）：到该笔中线的距离小于 h + 这个数就算相邻。
+# 取 2 是「正好碰上」的量级，再大就会把隔着一个字腔的笔画也算成相邻。
+JOIN_REACH = 2.0
+
+# 接点半径取法：`min` = 邻近最细笔的半宽（新），`own` = 该接点自己的 hw（旧行为）。
+# 留开关是为了能同一样本上 A/B，不用 checkout 旧代码。
+JOIN_MODE = os.environ.get("SELFFONT_JOIN_MODE", "min")
                         # 圆端头半圆取几个点（半径 28 时弦高 0.55 单位，6 点时是 1.9）。
                         # 9 点在半径 31 上弦长 10.8、矢高 0.47：端头本身就是 9 边形。改成 16 点后
                         # 弦长 6.1、矢高 0.15，配合 LINE_TOL 0.12 整圈都是曲线，6× 下看不出折角。
@@ -818,6 +825,32 @@ def _covered(point, glyph, weight, own) -> bool:
     return False
 
 
+def _joint_half(center, glyph, weight, own, fallback):
+    """接点圆盘半径：取邻近非零长度笔里最细的半宽，取不到才退回自己的 hw。
+
+    「最细」而不是「平均」：接点盖住的是几条笔画的交汇区，用最细的那条正好填满
+    交汇而不外溢；用平均或最大值都会把交叉口鼓成一个包。
+    """
+    px, py = center
+    best = None
+    for other in glyph.get("strokes", []):
+        if other is own or _zero_length(other):
+            continue
+        h = stroke_half(other, glyph, weight)
+        if best is not None and h >= best:
+            continue
+        for a, b in zip(_centerline_points(other), _centerline_points(other)[1:]):
+            ax, ay = a
+            bx, by = b
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            t = 0.0 if L2 < 1e-9 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+            if (ax + t * dx - px) ** 2 + (ay + t * dy - py) ** 2 <= (h + JOIN_REACH) ** 2:
+                best = h
+                break
+    return float(best) if best is not None else fallback
+
+
 def _dot_contour(center, half):
     """零长度笔按字点画：固定 2×ARC_STEPS 个点的正多边形，三档只变半径。"""
     import math
@@ -850,6 +883,13 @@ def stroke_contours(stroke, weight, glyph=None):
         center = stroke["segs"][0][0]
         if _covered(center, glyph, 400, stroke):
             return []
+        # 接点的 hw 是骨架在交叉口量出来的，比它连着的直笔大一圈（`長` 实测
+        # 32.4/32.0/40.3/31.0/33.5 vs 直笔 27–28，最大大 44%）。圆盘按这个 hw 画，
+        # 交叉口就被撑鼓——「直线不明原因加粗」和「左上角墨块」都是这一个机制。
+        # 半径改成**邻近直笔里最细的那条**的半宽：接点只是把已经存在的笔画接住，
+        # 它不该比被接的笔画更粗。
+        if JOIN_MODE == "min":
+            half = _joint_half(center, glyph, weight, stroke, half)
         return [_dot_contour(center, half)]
     # 中线按弦高误差密采样（三档共用同一套点），再沿弧长短程低通：
     # 栅格骨架带来的 1–2 单位起伏不抹掉，放大就是边上的「凹凸」。
