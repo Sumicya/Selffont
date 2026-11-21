@@ -20,8 +20,6 @@ TARGETS = {
     0x8BBA: (109, -39, 161, 16),    # 论
 }
 
-if len(sys.argv) != 3:
-    sys.exit("用法: drop_stray.py <母版.ttf> <输出.ttf>")
 src, dst = sys.argv[1], sys.argv[2]
 font = TTFont(src)
 gs = font.getGlyphSet()
