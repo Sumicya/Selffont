@@ -376,6 +376,16 @@ def glyph(codepoint: int) -> dict | None:
 
 SAMPLE_PER_SEG = 6      # 数据里每段贝塞尔存几个剖面值（SFCJ5；与描边采样无关）
 ARC_STEPS = int(os.environ.get("SELFFONT_ARC_STEPS", 16))
+# 端头沿笔画方向的压扁系数（见 `_round_cap`）。1.0 = 正半圆，即改动前的行为。
+# 默认 1.0 = 正半圆，即改动前的行为。**刻意保持 1.0**：0.85 在 10 字样本上
+# p10 从 0.853 抬到 0.881、最低从 0.784 抬到 0.879，但换到另一个种子的 40 字
+# 样本上全部反向——中位 0.917→0.907、p10 0.898→0.869、最低 0.843→0.827、
+# IoU≥0.93 的字从 12/40 掉到 2/40。10 字样本的改善是过拟合，不采纳。
+# 参数留着是为了下次有了足够大的样本（≥200 字）再扫，不是给现在用的。
+CAP_SQUASH = float(os.environ.get("SELFFONT_CAP_SQUASH", "1.0"))
+# 尖头系数：0 = 关（走正半圆）。>0 时端头正前方按这个倍数缩，1.0 = 不缩。
+# 母版的撇捺收笔是尖的、横竖是圆的，这个参数只控制「尖多少」，分类留给调用方。
+CAP_SHARP = float(os.environ.get("SELFFONT_CAP_SHARP", "0"))
                         # 圆端头半圆取几个点（半径 28 时弦高 0.55 单位，6 点时是 1.9）。
                         # 9 点在半径 31 上弦长 10.8、矢高 0.47：端头本身就是 9 边形。改成 16 点后
                         # 弦长 6.1、矢高 0.15，配合 LINE_TOL 0.12 整圈都是曲线，6× 下看不出折角。
@@ -684,10 +694,29 @@ def _round_cap(center, angle_from, half, steps):
 
     方向不能反：端头必须朝笔画的「前方」凸出去。写反的话半圆绕到笔画背后，
     收笔处就凹成一个 V 形缺口（自测图里一眼可见）。
+
+    压扁：母版的端头不是正半圆，沿笔画方向的凸出比半宽**短**——横的收笔是一个
+    略扁的圆头，撇捺更扁。正半圆让每个字的端头都比母版胖出 2–4 单位，
+    全字边缘因此厚一圈（`長` 缺 4,178 / 多 4,680 px 就是这么攒的）。
+    `CAP_SQUASH` 把端头沿笔画方向压到半宽的这个倍数。点数不变（仍是 steps-1 个），
+    所以可变字体「三档点数逐一相同」的硬约束不受影响——只改点的位置，不改个数。
     """
     import math
-    return [(center[0] + half * math.cos(angle_from - math.pi * k / steps),
-             center[1] + half * math.sin(angle_from - math.pi * k / steps)) for k in range(1, steps)]
+    a = CAP_SQUASH
+    if CAP_SHARP <= 0:
+        return [(center[0] + a * half * math.cos(angle_from - math.pi * k / steps),
+                 center[1] + a * half * math.sin(angle_from - math.pi * k / steps)) for k in range(1, steps)]
+    # 尖头端帽：把半圆上的点朝「笔画正前方」拉近，端点被拽成一个尖。
+    # 每个点按「它离中轴的角度」给权重——越靠近正前方拉得越狠，靠近两侧不动，
+    # 所以端头和两侧边界的接缝不破。点**个数不变**，三档点数逐一相同照旧成立。
+    out = []
+    for k in range(1, steps):
+        th = angle_from - math.pi * k / steps
+        d = math.cos(th - angle_from)            # 1 = 正前方, -1 = 正后方
+        f = 1.0 + (CAP_SHARP - 1.0) * max(d, 0.0) ** 2   # 正前方按 CAP_SHARP 缩放半径
+        out.append((center[0] + a * half * f * math.cos(th),
+                    center[1] + a * half * f * math.sin(th)))
+    return out
 
 
 def _area(ring):
