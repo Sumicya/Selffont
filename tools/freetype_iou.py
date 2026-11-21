@@ -70,7 +70,14 @@ def _shift(mask, dx, dy):
     return out
 
 
-def align(a, b, radius=1):
+# 默认搜索半径。原值 1 太窄：200 字抽样里 8.5% 的字因 4–6 px 的整字位移被误判成
+# 低分（`雬` 0.563→0.916、`羽` 0.618→0.914、`曼` 0.640→0.909），最低值 0.563→0.852。
+# 位移不是形状差，把它压在 ±1 里量出来的是「没对齐」不是「不像」。取 6：汉字笔画
+# 半个笔宽约 5–8 px@200，再大就会把「真错位」也吃成对齐。
+DEFAULT_RADIUS = 6
+
+
+def align(a, b, radius=DEFAULT_RADIUS):
     """在 ±radius 像素内找让 IoU 最大的整格平移，返回（IoU, dx, dy）。"""
     best = (iou(a, b), 0, 0)
     for dx in range(-radius, radius + 1):
@@ -84,7 +91,7 @@ def align(a, b, radius=1):
 
 
 def compare(path_a, path_b, char, size=300, shift=True):
-    """两字体同一字符的 IoU（默认允许 ±1 px 对齐）。"""
+    """两字体同一字符的 IoU（默认允许 ±DEFAULT_RADIUS px 对齐）。"""
     a, b = render(path_a, char, size), render(path_b, char, size)
     return align(a, b)[0] if shift else iou(a, b)
 
