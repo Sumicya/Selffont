@@ -952,10 +952,57 @@ def outline_points(glyph, weight):
     rings = []
     for stroke in glyph["strokes"]:
         rings.extend(stroke_contours(stroke, weight, glyph))
-    return [c for c in rings if len(c) >= 3]
+    rings = [c for c in rings if len(c) >= 3]
+    if not UNION_STROKES:
+        return rings
+    return _union_rings(rings)
+
+
+def _union_rings(rings):
+    """一笔一环 → 整字并集轮廓（pathops，保留二次贝塞尔曲线）。
+
+    与上游 Zen Maru `build.py` 的 `removeOverlaps=True, overlapsBackend="pathops"`
+    同一机制，也是 `docs/design-principles.md` 第 13 条：合并笔画要用保留曲线的
+    布尔运算，不要重新采样。
+
+    默认**关闭**（`SELFFONT_UNION_STROKES=0`）。关的理由是量出来的：
+    三档笔画粗细不同（0.60/1.00/1.45 倍），并集拓扑随粗细变——
+    U+4FEB 500 档并成 3 环、300/400 档 4 环；U+002B 400 档 1 环、300/500 档 2 环。
+    可变字体硬要求三档点数逐一相同（`cjk_vf.build_vf` 直接抛 ValueError），
+    「只在 400 档求并集」同样不匹配。要用它必须先放弃 VF、改出三份静态实例。
+    """
+    import pathops
+
+    path = pathops.Path()
+    path.fillType = pathops.FillType.WINDING
+    pen = path.getPen()
+    for ring in rings:
+        pen.moveTo(ring[0])
+        for pt in ring[1:]:
+            pen.lineTo(pt)
+        pen.closePath()
+    result = pathops.Path()
+    pathops.union([path], result.getPen())
+    out = []
+    for contour in list(result.contours):
+        pts = []
+        for seg in contour.segments:
+            # pathops 段结构是 (动词, (点, …))，点全包在第二个位置的那一个 tuple 里。
+            args = seg[1]
+            if not args:
+                continue
+            for q in args:
+                if q is not None:
+                    pts.append((float(q[0]), float(q[1])))
+        if len(pts) >= 3:
+            out.append(pts)
+    return out
 
 
 # ---------------------------------------------------------------- 共线点合并
+
+# 每笔一环 → pathops 整字并集。默认关，理由见 `_union_rings` 的注释（三档拓扑不一致）。
+UNION_STROKES = os.environ.get("SELFFONT_UNION_STROKES", "0") not in ("0", "", "no", "false")
 
 SIMPLIFY_TOL = 6.0      # 字身单位：只是「曲线从哪起笔」的粗锚点；真拐角离弦几十单位，削不掉
 
