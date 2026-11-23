@@ -62,32 +62,37 @@ def flatten(glyphset, gname: str) -> np.ndarray:
     return np.array(segs, dtype=np.float64).reshape(-1, 4)
 
 
-def ink_gap(a: np.ndarray, b: np.ndarray) -> float:
-    """两组线段之间的最小距离（负值表示真重叠）。"""
-    a0 = a[:, 0:2][:, None, :]; a1 = a[:, 2:4][:, None, :]
-    b0 = b[:, 0:2][None, :, :]; b1 = b[:, 2:4][None, :, :]
+BAND = 10          # 逐带量水平间距的带宽（upm 千分比 10 = 1% em）
 
-    def pt_seg(p, s0, s1):
-        d = s1 - s0
-        L = (d * d).sum(-1)
-        L = np.where(L == 0, 1, L)
-        t = np.clip(((p - s0) * d).sum(-1) / L, 0, 1)
-        return np.sqrt(((p - (s0 + t[..., None] * d)) ** 2).sum(-1))
 
-    # 端点投影不足以判「线段相交」：额外用一次分离轴判定
-    cross = (a1[..., 0] - a0[..., 0]) * (b0[..., 1] - a0[..., 1]) - \
-            (a1[..., 1] - a0[..., 1]) * (b0[..., 0] - a0[..., 0])
-    cross2 = (a1[..., 0] - a0[..., 0]) * (b1[..., 1] - a0[..., 1]) - \
-             (a1[..., 1] - a0[..., 1]) * (b1[..., 0] - a0[..., 0])
-    cross3 = (b1[..., 0] - b0[..., 0]) * (a0[..., 1] - b0[..., 1]) - \
-             (b1[..., 1] - b0[..., 1]) * (a0[..., 0] - b0[..., 0])
-    cross4 = (b1[..., 0] - b0[..., 0]) * (a1[..., 1] - b0[..., 1]) - \
-             (b1[..., 1] - b0[..., 1]) * (a1[..., 0] - b0[..., 0])
-    hit = (cross * cross2 < 0) & (cross3 * cross4 < 0)
-    if hit.any():
-        return -1.0
-    return float(min(pt_seg(a0, b0, b1).min(), pt_seg(a1, b0, b1).min(),
-                     pt_seg(b0, a0, a1).min(), pt_seg(b1, a0, a1).min()))
+def bands(a: np.ndarray) -> dict:
+    """逐 BAND 单位水平带的 (xMin, xMax)。按带比按点更接近「看起来挤不挤」：
+    斜边的笔尖只有一点接触，但整条斜边在水平上可以大面积叠住。"""
+    x, y = a[:, [0, 2]], a[:, 1]
+    lo, hi = int(y.min()), int(y.max())
+    out = {}
+    for y0 in range(lo - (lo % BAND), hi + 1, BAND):
+        m = (y >= y0) & (y < y0 + BAND)
+        if m.any():
+            out[y0] = (float(x[m].min()), float(x[m].max()))
+    return out
+
+
+def band_gap(pa: dict, pb: dict, adv: float):
+    """后字平移后，两字在同一带上的水平净距：返回 (最小, 平均, 重叠带数, 共同带数)。
+
+    重叠带（净距 < 0）说明两条墨边在水平方向互相穿插——这才是「挤」的定义。
+    只取共同有墨的带：A 的右上角与 V 的左下角本来就不共处一个高度，不该参与比较。
+    """
+    gaps = []
+    for y, (al, ar) in pa.items():
+        if y in pb:
+            bl = pb[y][0] + adv
+            gaps.append(bl - ar)
+    if not gaps:
+        return None
+    g = np.array(gaps)
+    return float(g.min()), float(g.mean()), int((g < 0).sum()), len(g)
 
 
 def read_kern(font: TTFont) -> dict:
@@ -117,48 +122,63 @@ def read_kern(font: TTFont) -> dict:
 
 
 def write_kern(font: TTFont, deltas: dict) -> int:
-    """只改现有 PairPos 里已有的对；Format 2 的类对展开成 Format 1 才能逐对改。
+    """把三个 kern lookup 摊平成**一个**，再逐对写绝对值。
 
-    `deltas`: {(g1, g2): 该加多少}。返回改了多少条。
+    母版把 kern 拆成 3 个 PairPos lookup（0 / 4 / 5），都挂在同一个 `kern` feature 上，
+    OpenType 会依次累加。上一版分别给每个 lookup 加差值，等于同一对加了两三遍。
+    摊平之后只剩一个 lookup，`deltas` 里的值就是最终值，不会重复。
     """
-    changed = 0
-    for lk in font["GPOS"].table.LookupList.Lookup:
+    gpos = font["GPOS"].table
+
+    pairs: dict = {}
+    kern_idx = []
+    for i, lk in enumerate(gpos.LookupList.Lookup):
         if lk.LookupType != 2:
             continue
-        for si, s in enumerate(list(lk.SubTable)):
-            if s.Format == 2:
-                # 类对 → 逐对：ClassDef 里出现的所有组合都要摊开
-                pairs = {}
-                c1, c2 = s.ClassDef1.classDefs, s.ClassDef2.classDefs
-                for g1 in s.Coverage.glyphs:
-                    r1 = s.Class1Record[c1.get(g1, 0)]
-                    for g2, cls in c2.items():
-                        if cls < len(r1.Class2Record):
-                            v = getattr(r1.Class2Record[cls].Value1, "XAdvance", 0) or 0
-                            d = deltas.get((g1, g2))
-                            pairs[(g1, g2)] = v if d is None else d
-                            if d is not None:
-                                changed += 1
-                lk.SubTable[si] = _to_format1(pairs, font)
-            elif s.Format == 1:
-                hit = 0
-                # 先把整张表摊成字典，改完再编回去（新增条目要重排 Coverage）
-                pairs = {}
-                pairs_by_first = {}
-                for g1, ps in zip(s.Coverage.glyphs, s.PairSet):
-                    pairs_by_first[g1] = set()
+        kern_idx.append(i)
+        for s in lk.SubTable:
+            sub = s.ExtSubTable if hasattr(s, "ExtSubTable") else s
+            if not isinstance(sub, ot.PairPos):
+                continue
+            if sub.Format == 1:
+                for g1, ps in zip(sub.Coverage.glyphs, sub.PairSet):
                     for r in ps.PairValueRecord:
                         pairs[(g1, r.SecondGlyph)] = getattr(r.Value1, "XAdvance", 0) or 0
-                for (g1, g2), v in deltas.items():
-                    if g1 not in pairs_by_first and g1 not in s.Coverage.glyphs:
-                        pairs_by_first.setdefault(g1, set())
-                    if (g1, g2) in pairs or g1 in pairs_by_first:
-                        if pairs.get((g1, g2)) != v:
-                            pairs[(g1, g2)] = v
-                            hit += 1
-                if hit:
-                    lk.SubTable[si] = _to_format1(pairs, font)
-                changed += hit
+            elif sub.Format == 2:
+                c1, c2 = sub.ClassDef1.classDefs, sub.ClassDef2.classDefs
+                for g1 in sub.Coverage.glyphs:
+                    r1 = sub.Class1Record[c1.get(g1, 0)]
+                    for g2, cls in c2.items():
+                        if cls < len(r1.Class2Record):
+                            pairs[(g1, g2)] = getattr(r1.Class2Record[cls].Value1, "XAdvance", 0) or 0
+
+    changed = 0
+    for key, v in deltas.items():
+        if pairs.get(key) != v:
+            changed += 1
+        pairs[key] = v
+
+    # 只留第一个 kern lookup，其余从 LookupList 与 feature 里摘掉
+    keep = kern_idx[0]
+    gpos.LookupList.Lookup[keep].SubTable = [_to_format1(pairs, font)]
+    gpos.LookupList.Lookup[keep].SubTableCount = 1
+    drop = set(kern_idx[1:])
+    # LookupList 重排：删掉多余 lookup，并把 feature 里的索引改到新位置
+    remap, newl = {}, []
+    for i, lk in enumerate(gpos.LookupList.Lookup):
+        if i in drop:
+            continue
+        remap[i] = len(newl)
+        newl.append(lk)
+    gpos.LookupList.Lookup = newl
+    gpos.LookupList.LookupCount = len(newl)
+    for fr in gpos.FeatureList.FeatureRecord:
+        if fr.FeatureTag == "kern":
+            fr.Feature.LookupListIndex = sorted({remap[i] for i in fr.Feature.LookupListIndex if i in remap})
+            fr.Feature.LookupCount = len(fr.Feature.LookupListIndex)
+        else:
+            fr.Feature.LookupListIndex = [remap[i] for i in fr.Feature.LookupListIndex if i in remap]
+            fr.Feature.LookupCount = len(fr.Feature.LookupListIndex)
     return changed
 
 
@@ -201,14 +221,11 @@ def main() -> int:
     ap.add_argument("-o", "--output", type=Path, required=True)
     ap.add_argument("--min-ink", type=float, default=40,
                     help="任何一对的真实最小墨距不小于这个值（upm 千分比，默认 40）")
-    ap.add_argument("--max-ink", type=float, default=200,
-                    help="超过这个值的不收（母版本来就松的对保持原样，默认 200）")
     args = ap.parse_args()
 
     font = TTFont(args.source)
     upm = font["head"].unitsPerEm
     floor = args.min_ink * upm / 1000
-    ceil = args.max_ink * upm / 1000
     gs = font.getGlyphSet()
     cmap, hmtx = font.getBestCmap(), font["hmtx"]
     old = read_kern(font)
@@ -219,36 +236,36 @@ def main() -> int:
         g = cmap[ord(c)]
         if g not in flat:
             flat[g] = flatten(gs, g)
-    XMIN = {g: float(a[:, [0, 2]].min()) for g, a in flat.items() if len(a)}
-    XMAX = {g: float(a[:, [0, 2]].max()) for g, a in flat.items() if len(a)}
 
-    deltas, tight, loose, missing = {}, [], [], []
+    band_of = {g: bands(a) for g, a in flat.items() if len(a)}
+    deltas, tight, missing = {}, [], []
     for a in letters:
         for b in letters:
             ga, gb = cmap[ord(a)], cmap[ord(b)]
             if ga not in flat or gb not in flat:
                 continue
-            adv = hmtx[ga][0] + old.get((ga, gb), 0)
-            moved = flat[gb].copy()
-            moved[:, [0, 2]] += adv
-            gap = ink_gap(flat[ga], moved)
-            if gap < floor:
-                # kern_new 只取决于两侧留白：rsb + lsb + kern = floor
-                base_bearing = (hmtx[ga][0] - XMAX[ga]) + XMIN[gb]
-                deltas[(ga, gb)] = floor - base_bearing
-                tight.append((a + b, gap))
+            cur = old.get((ga, gb), 0)
+            r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cur)
+            if r is None:
+                continue
+            mn, mean, overlap, n = r
+            if overlap > 0 or mn < floor:
+                # 每多重叠 1 单位，kern 涨 1 单位；同时保底 floor
+                need = max(floor - mn, -mn + floor if mn < 0 else 0)
+                deltas[(ga, gb)] = cur + need
+                tight.append((a + b, mn, mean, overlap))
                 if (ga, gb) not in old:
-                    missing.append((a + b, gap))
-            elif gap > ceil and (ga, gb) in old:
-                deltas[(ga, gb)] = old[(ga, gb)] - (gap - ceil)
-                loose.append((a + b, gap))
+                    missing.append((a + b, mn, overlap))
+            # 只往紧的方向修。母版里本来就松的对（HH、oo）保持原样——
+            # 上一版加过「过松就压」的分支，把 FO/RO/SC/CO 的 kern 压到 −299，
+            # 直接把这三个词弄成穿插，已删。
 
-    print(f"压紧 {len(tight)} 对（低于 {floor:.0f}），放松 {len(loose)} 对（高于 {ceil:.0f}），"
+    print(f"压紧 {len(tight)} 对（带最小低于 {floor:.0f} 或有水平重叠），"
           f"母版无条目 {len(missing)} 对")
-    for p, g in sorted(tight, key=lambda r: r[1])[:8]:
-        print(f"    {p}  原墨距 {g:.1f}")
-    for p, g in sorted(missing, key=lambda r: r[1])[:8]:
-        print(f"    [缺条目] {p}  墨距 {g:.1f}")
+    for p, mn, mean, ov in sorted(tight, key=lambda r: r[1])[:10]:
+        print(f"    {p}  带最小 {mn:7.1f}  带平均 {mean:7.1f}  重叠带 {ov}")
+    for p, mn, ov in sorted(missing, key=lambda r: r[1])[:8]:
+        print(f"    [缺条目] {p}  带最小 {mn:7.1f}  重叠带 {ov}")
 
     changed = write_kern(font, deltas)
     print(f"改写 {changed} 条 kern（只动已有的对，mark/mkmk 与 GSUB 未碰）")

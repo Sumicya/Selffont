@@ -279,7 +279,7 @@ def outline_edges(glyph):
     from fontTools.pens.recordingPen import RecordingPen
 
     pen = RecordingPen()
-    glyph.draw(pen, None)
+    glyph.draw(pen)
     return row_profile(rings_from_pen(pen.value))
 
 
