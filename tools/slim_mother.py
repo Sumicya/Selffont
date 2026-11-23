@@ -113,6 +113,9 @@ def main() -> int:
     ap.add_argument("-o", "--output", type=Path, required=True)
     ap.add_argument("--latin-gap", type=int, default=30,
                     help="拉丁每侧留白（upm 千分比，默认 30；0 = 只删点不动间距）")
+    ap.add_argument("--scale", type=float, default=0.0,
+                    help="按比例收侧距（0.72 = 每侧留白乘 0.72），保留字形之间的相对差异；"
+                         "给了这个就不看 --latin-gap")
     ap.add_argument("--min-ink", type=int, default=40,
                     help="kern 重写的目标：任意两字母**真实墨距**不小于这个值（upm 千分比，默认 40）")
     ap.add_argument("--no-kern", action="store_true", help="只压间距，不动 kern")
@@ -168,7 +171,7 @@ def main() -> int:
         #   这样任意字形的 advance 恒 <= 原值，可用断言硬保证。
         offset = 0
         new_aw = None
-        if gname in is_latin_any and target:
+        if gname in is_latin_any and (target or args.scale):
             xs = [p[0] for c in paths for seg in c for p in
                   ([seg[1]] if seg[0] in ("move", "line") else list(seg[1]) + [seg[2]])]
             if xs:
@@ -177,8 +180,13 @@ def main() -> int:
                 old_rsb = old_aw - xmax
                 gaps_before.append(old_lsb)
                 # 只在富余过大时收；负值和本来就窄的保持原样
-                new_lsb = min(old_lsb, target) if old_lsb > target else old_lsb
-                new_rsb = min(old_rsb, target) if old_rsb > target else old_rsb
+                if args.scale > 0:
+                    # 按比例收：圆体/平体/斜体的光学留白本来就不同，一刀切到同一个数会抹掉这层差异。
+                    new_lsb = max(0, int(round(old_lsb * args.scale))) if old_lsb > 0 else old_lsb
+                    new_rsb = max(0, int(round(old_rsb * args.scale))) if old_rsb > 0 else old_rsb
+                else:
+                    new_lsb = min(old_lsb, target) if old_lsb > target else old_lsb
+                    new_rsb = min(old_rsb, target) if old_rsb > target else old_rsb
                 offset = new_lsb - xmin
                 cand = int(round(new_lsb + (xmax - xmin) + new_rsb))
                 new_aw = min(cand, old_aw)          # 硬保证：绝不加宽
@@ -268,7 +276,7 @@ def main() -> int:
         return best
 
     rewrote = 0
-    if target and not args.no_kern:
+    if (target or args.scale) and not args.no_kern:
         mg = args.min_ink
         font.save(args.output)
         font = TTFont(args.output)
