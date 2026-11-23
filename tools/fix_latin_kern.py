@@ -220,7 +220,9 @@ def main() -> int:
     ap.add_argument("source", type=Path)
     ap.add_argument("-o", "--output", type=Path, required=True)
     ap.add_argument("--min-ink", type=float, default=40,
-                    help="任何一对的真实最小墨距不小于这个值（upm 千分比，默认 40）")
+                    help="任何一对的带最小间距不小于这个值（upm 千分比，默认 40）")
+    ap.add_argument("--tighten-ratio", type=float, default=0.0,
+                    help="把宽于「同首字母中位 × 该系数」的对收回来（0 = 不收，试 1.6）")
     args = ap.parse_args()
 
     font = TTFont(args.source)
@@ -238,6 +240,8 @@ def main() -> int:
             flat[g] = flatten(gs, g)
 
     band_of = {g: bands(a) for g, a in flat.items() if len(a)}
+    XMIN = {g: float(a[:, [0, 2]].min()) for g, a in flat.items() if len(a)}
+    XMAX = {g: float(a[:, [0, 2]].max()) for g, a in flat.items() if len(a)}
     deltas, tight, missing = {}, [], []
     for a in letters:
         for b in letters:
@@ -259,6 +263,47 @@ def main() -> int:
             # 只往紧的方向修。母版里本来就松的对（HH、oo）保持原样——
             # 上一版加过「过松就压」的分支，把 FO/RO/SC/CO 的 kern 压到 −299，
             # 直接把这三个词弄成穿插，已删。
+
+    # 第二轮：同首字母里明显偏宽的对收回。
+    # 为什么需要：A 的右斜腿与圆体（C/G/O/Q）之间天然空一块，`AC` 182 而同字母
+    # 中位才 69；这一层不是「碰撞」，是比例不匀，得靠相对量判断，不能用绝对阈值。
+    if args.tighten_ratio > 0:
+        by_first = {}
+        for a in letters:
+            for b in letters:
+                ga, gb = cmap[ord(a)], cmap[ord(b)]
+                if ga not in band_of or gb not in band_of:
+                    continue
+                cur = deltas.get((ga, gb), old.get((ga, gb), 0))
+                r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cur)
+                if r is not None:
+                    by_first.setdefault(a, []).append((ga, gb, r[0], cur))
+        n_loose = 0
+        for a, items in by_first.items():
+            med = sorted(x[2] for x in items)[len(items) // 2]
+            cap = med * args.tighten_ratio
+            for ga, gb, mn, cur in items:
+                if mn <= cap:
+                    continue
+                # 只收母版已经有 kern 条目的对。没有条目的宽对是字形结构决定的
+                # （F 的右上悬空、L 的右下空档、j 的左出），硬塞负 kern 会把两个
+                # 字形推到一起——1.9 档试过，Fu/Fy/Lj 直接叠住。
+                if (ga, gb) not in old:
+                    continue
+                # 硬底线：kern 后的 advance 不能小于前字自身墨宽 + 后字左空，
+                # 否则后字会画进前字的怀里（1.9 档试过，Fu 的 advance 掉到 175，
+                # 而 F 自己就宽 540，u 直接被 F 盖住）。
+                # 底线只看「后字左缘不能压进前字墨迹」这一条，不用「整字宽 + floor」：
+                # 斜边字（A/V/W）墨宽本来就撑满 advance，用整字宽当底线会让所有
+                # A 系修正被挡掉（实测 AC 收不动）。真正要防的是后字画进前字怀里。
+                cand = cur - (mn - cap)
+                if hmtx[ga][0] + cand < XMAX[ga] - XMIN[ga]:
+                    cand = (XMAX[ga] - XMIN[ga]) - hmtx[ga][0]
+                if cand >= cur:
+                    continue
+                deltas[(ga, gb)] = cand
+                n_loose += 1
+        print(f"按同首字母中位 ×{args.tighten_ratio} 收回 {n_loose} 对")
 
     print(f"压紧 {len(tight)} 对（带最小低于 {floor:.0f} 或有水平重叠），"
           f"母版无条目 {len(missing)} 对")
