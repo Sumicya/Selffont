@@ -53,10 +53,6 @@ def _contours(glyf, glyph):
     return out
 
 
-def _area(box) -> float:
-    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
-
-
 
 def face_box(glyf, glyph, codepoint=None):
     """字面框：去掉点名残块后，全部轮廓的并集。"""

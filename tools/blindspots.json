@@ -3,11 +3,6 @@
   "_scanned_by": "tools/deadcode.py（只扫 .py 的 AST 与 .sh 的只写变量）",
   "excluded": [
     {
-      "path": "tools/design_cjk.bin",
-      "why": "二进制笔划数据（26 MB 以上），不是文本，AST 与正则都不适用。",
-      "limit": "数据本身的完整性只靠构建期读取时抛错，没有独立的位级校验；损坏但可解析时会静默出错字。"
-    },
-    {
       "path": "docs",
       "why": "渲染取证图与说明，不被任何代码 import。",
       "limit": "图与正文的一致性无人自动核对，只能靠人看。"
@@ -16,6 +11,11 @@
       "path": "requirements.txt",
       "why": "依赖清单是数据不是代码，扫描器不读；它只被 CI 的 pip install 消费。",
       "limit": "依赖装了但没被 import 的情况（装多用少）扫不出来，只能靠人工过一遍 import 与清单的差集。"
+    },
+    {
+      "path": "tools/cjk_vf.py",
+      "why": "只服务自研汉字的 VF 编编译（gvar/GPOS 组装），汉字已下线，现在只为 side_target/kern_value 两张拉丁表保留读取函数。",
+      "limit": "删除这段 VF 逻辑后，拉丁的侧距与字偶距读取不受影响；未做拆分，靠 build.py 自检守着这两条路径。"
     }
   ],
   "deferred": [

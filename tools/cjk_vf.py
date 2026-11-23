@@ -1,14 +1,11 @@
-"""自研汉字字库 → 一份 **可变字体**（wght 300–500，glyf + gvar）。
+"""侧距与字偶距度量库（文件名沿用旧名，自研汉字 VF 已于 2026-11-22 下线）。
 
-为什么用 glyf 而不是 CFF2：轮廓是「每笔一环、点数与粗细无关」的折线（见
-`design_cjk.stroke_contours`），三档点数一一对应，正好可以用 `gvar` 存三个主节点的
-坐标增量。CFF2 也能做，但 charstring 的插值要自己拼 blend 操作符，出错难查；
-glyf 的 gvar 是 fontTools 直接支持的格式，肉眼可核。
+现在只服务拉丁区：`side_target()` 读 `side_targets.bin`（非字母逐字侧距），
+`BAND_Y`／`rings_from_pen`／`row_profile` 是量字偶距时展开字形的公共底座，
+`tools/kern_measure.py`／`side_measure.py`／`master_box.py` 都从这里取。
 
-可变字体对形状的要求（2026-10-28 定）：
-  · 三档点数必须完全相同 → 由 `contours_at()` 保证，构建期逐字断言；
-  · 端点用二次曲线圆头 → 这里用折线近似后仍保持每环点数一致；
-  · 只开放一个轴：wght 300–500，默认 400。
+度量单位：upm 1000；字形用「每笔一环」展开后按横带网格取最左/最右 x，
+网格上下界 `BAND_Y = (-260, 960)`。
 """
 from __future__ import annotations
 
@@ -489,35 +486,6 @@ def kern_features(profiles: dict) -> str:
             "feature kern {\n" + "\n".join(rules) + "\n} kern;\n")
 
 
-def kern_value(font, a: int, b: int) -> int:
-    """从 GPOS 里读一对字的字偶距（给自己加的自检用，不进构建路径）。"""
-    from fontTools.ttLib.tables import otTables as ot
-    if "GPOS" not in font:
-        return 0
-    name_a = font.getBestCmap().get(a)
-    name_b = font.getBestCmap().get(b)
-    if name_a is None or name_b is None:
-        return 0
-    total = 0
-    for lookup in font["GPOS"].table.LookupList.Lookup:
-        subs = []
-        for sub in lookup.SubTable:
-            subs.extend(sub.ExtSubTable if isinstance(sub, ot.ExtensionSubst) else [sub])
-        for sub in subs:
-            if not isinstance(sub, ot.PairPos) or name_a not in sub.Coverage.glyphs:
-                continue
-            i = sub.Coverage.glyphs.index(name_a)
-            if sub.Format == 1:
-                for record in sub.PairSet[i].PairValueRecord:
-                    if record.SecondGlyph == name_b and record.Value1:
-                        total += getattr(record.Value1, "XAdvance", 0) or 0
-            else:
-                klass1 = sub.ClassDef1.classDefs.get(name_a, 0)
-                klass2 = sub.ClassDef2.classDefs.get(name_b, 0)
-                value = sub.Class1Record[klass1].Class2Record[klass2].Value1
-                if value:
-                    total += getattr(value, "XAdvance", 0) or 0
-    return total
 
 
 def is_han(codepoint: int) -> bool:
@@ -634,10 +602,6 @@ def _outside_frame(rings) -> str:
     return ""
 
 
-def _glyph_rings_all(glyph: dict, codepoint: int | None = None):
-    """三档轮廓（真二次曲线），三档点数与 on/off 标志逐一对应。"""
-    import design_cjk
-    return design_cjk.outline_curves(glyph, codepoint=codepoint)
 
 
 def _glyph_from_rings(rings, flags):

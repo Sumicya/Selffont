@@ -295,9 +295,9 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 
 | 项 | 值 |
 | --- | --- |
-| 数据 | `tools/design_cjk.bin` 33,931 码位（汉字 30,519、非汉字 3,412） |
-| 可变字件 | `SelfroundsCJK-VF.ttf` 70,071,540 B、33,932 字形、零拒 |
-| 静态实例 | 300 / 400 / 500 = 30,424,648 / 30,516,792 / 30,552,556 B |
+| 母版 | `MarukoGothicCJKsc-Regular.ttf`（`max32002/maruko-gothic` 提交 `97e9dd4`），构建时下载，不入库 |
+| 基准件 | `--passthrough-mother <TTF>` 原样进包，只做度量对照，不是发行件 |
+| 自研汉字 | 2026-11-22 全部下线：数据、描边器、`--cjk-font`/`--preview` 与 `cjk` 参数均已删除 |
 | 行框 | `hhea` 与 typo 930 / −250 / 0；`usWin` 1307 / 529，盖住墨迹 −529…1307 |
 | 字宽 | `一` 1000、`a` 541（母版 535）、`A` 667（653）、`e` 521（524）、`o` 563（539）、`1` 383（383）、空格 250（母版 280） |
 | 字偶距 | GPOS **5,682 对**、23,186 B；目标表 `tools/kern_targets.bin` 18,054 B（95×95） |
@@ -402,7 +402,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 
 按目录分工，两条许可各自只覆盖自己的部分：
 
-- **字体与字形源文件**（`tools/design_cjk.bin`、构建出的 `SelfroundsCJK-VF.ttf` 与三个静态实例、模块内随包的字体）——SIL OFL 1.1，全文见 [`OFL.txt`](OFL.txt)。二创字库的笔画中线由 Maruko Gothic（SIL OFL 1.1）量出，属 OFL 意义上的修改作品，改名 `Selfrounds CJK`、不使用保留名。
+- **字体与字形源文件**（模块内随包的字体、母版基准件）——SIL OFL 1.1，全文见 [`OFL.txt`](OFL.txt)。母版 Maruko Gothic 出自 OFL，改名发布属 OFL 意义上的修改作品，不使用保留名。
 - **构建脚本与生成器**（`build.py`、`tools/*.py`、`module/*.sh`、`.github/`）——GPL-3.0，全文见 [`LICENSE`](LICENSE)。
 - 模块里随包的**第三方补充字库**沿用各自原许可，逐项来源与保留名处理见 [`LICENSES.md`](LICENSES.md)。
 

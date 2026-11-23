@@ -181,32 +181,6 @@ SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE, NEW_UNICODE_18, NEW_UNICODE_17,
                              NOTO_SANS_PRO_SOURCE, UNICODIA_FUNKY_SOURCE,
                              NOTO_EMOJI_SOURCE, NOTO_COLR_EMOJI_SOURCE)
 
-# 二创汉字字库：数据在 tools/design_cjk.bin（Maruko 骨架量出来的中线，SIL OFL 1.1），
-# 构建时描边成轮廓、编成一份独立的 OTF，作为**单独的 family** 排在主字体之前。
-# 单独成族是硬要求：configure_fonts 的注释里记着真机结论——同一个 family 里混
-# supportedAxes 可变字体与静态字体会让 ColorOS 16 开机卡第一屏。
-CJK_DATA = ROOT / "tools" / "design_cjk.bin"
-CJK_FONT_NAME = "SelfroundsCJK-VF.ttf"   # 可变字体（wght 300–500），一份顶三档；正式发布带版本
-CJK_FAMILY = "Selfrounds CJK"
-
-# 命名跟版本号同一套规矩（主人 2026-10-30）：迭代快，**展示名不带日期**；
-# 正式发布带 yy.m.d.当日序号.总序号。两处一致——文件名与家族名要么同时带、要么同时不带，
-# 否则「装的是哪一版」看名字说不清。
-CJK_RELEASE_VERSION: str | None = None
-
-
-def cjk_naming(version: str | None = None) -> tuple[str, str]:
-    """（家族名, 字体文件名）。version 为空 = 迭代版，只留稳定的名字。"""
-    tag = version if version and version != DEV_VERSION else None
-    family = CJK_FAMILY if tag is None else f"{CJK_FAMILY} {tag}"
-    name = CJK_FONT_NAME if tag is None else f"SelfroundsCJK-VF-{tag}.ttf"
-    return family, name
-CJK_AXES = "wght"                      # 可变轴：安装配置里写成 supportedAxes
-# 二创汉字的语言标签：只认汉字场景（简/繁），不认 ja / ko —— 假名、谚文不归它，
-# 日文里的汉字也该跟系统走主字体的字形。见 configure_fonts 里 Minikin 打分的注释。
-CJK_LANG = "zh-Hans,zh-Hant"
-CJK_LICENSE = ROOT / "LICENSES" / "MarukoGothic-OFL.txt"
-CJK_LICENSE_NAME = "MarukoGothic-OFL.txt"
 
 # ---------------------------------------------------------------- 配置数据
 CARRIER = "Roboto-Regular.ttf"  # 输入 fonts.xml 的默认家族必须保留的度量空壳
@@ -220,6 +194,13 @@ METRIC_FAMILIES = {"sans-serif", "sans-serif-condensed"}
 # 不是恢复谁。这五族本来就没有中文，缺字照旧往语言区 / 默认区的主字体落，覆盖不靠接管它们。
 # 火狐名单同一规则（见 NATIVE_FIRST），两边一致。
 OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}  # 输入配置里的旧数字主字体
+# 母版直通件进包时挂的语言区：母版是汉字字体，只认汉字场景（简/繁），
+# 不认 ja / ko —— 假名、谚文不归它，日文里的汉字也该跟系统走主字体的字形。
+PASSTHROUGH_LANG = "zh-Hans,zh-Hant"
+# 母版来自 Maruko Gothic，改名发布不改许可义务：直通件进包就得带这份 OFL。
+CJK_LICENSE = ROOT / "LICENSES" / "MarukoGothic-OFL.txt"
+CJK_LICENSE_NAME = "MarukoGothic-OFL.txt"
+CJK_AXES = "wght"                      # 直通母版是可变字体时写进 supportedAxes 的轴
 CJK_LANGS = {"zh", "ja", "ko"}  # 语言区里主字体要接管的 BCP-47 主语言子标签
 # 主人 2026-10-06 明确：不喜欢 MiSans。配置里连引用一起清掉，中文缺字不再落到它上面；
 # 那些字继续往默认区的补充字库（天珩 / Unicode 新平面等）落，覆盖不靠厂商字体。
@@ -617,42 +598,6 @@ def rename_font(data: bytes, family: str) -> bytes:
 
 # ---------------------------------------------------------------- fonts.xml 生成
 
-def cjk_glyphs() -> dict[int, dict]:
-    """读二创汉字数据（码位 → 半宽 + 笔画中线）；文件不在就返回空，构建退回纯宿主。"""
-    if not CJK_DATA.exists():
-        return {}
-    import sys as _sys
-    _sys.path.insert(0, str(ROOT / "tools"))
-    import design_cjk
-    return design_cjk.load()
-
-
-def build_cjk_font(glyphs: dict[int, dict], carrier: dict | None = None) -> bytes:
-    """中线 → 轮廓 → 一份**可变**字体（glyf + gvar，wght 300–500，默认 400）。
-
-    为什么是可变而不是三份静态：主人 2026-10-28 定「可变」。可变唯一的硬前提是
-    **同一字形在三档下轮廓点数逐一相同**，所以描边不能让 pathops 按粗细重新求并集
-    （它的点数会随粗细变，实测 88~90、116~117），必须走固定拓扑构造
-    （`design_cjk.stroke_contours`：中线等参数采样 + 法向偏移 + 固定段数半圆）。
-    `tools/cjk_vf.py` 里逐字断言点数一致，不一致直接抛错，不许「差不多」混过去。
-    """
-    import sys as _sys
-
-    _sys.path.insert(0, str(ROOT / "tools"))
-    import cjk_vf
-    data = cjk_vf.build_vf(glyphs, family=cjk_naming(CJK_RELEASE_VERSION)[0], style="Regular",
-                           ps_name="SelfroundsCJK-VF", version=CJK_RELEASE_VERSION)
-    rejected = list(cjk_vf.REJECTS)
-    if rejected:
-        print(f"  越出字身框未收 {len(rejected)} 字（例 {', '.join(chr(cp) for cp, _ in rejected[:6])}）")
-    if carrier is None:
-        return data
-    # 和主字体走同一个函数、同一个空壳：行框同一套数字，混排不会跳行。
-    calibrated = normalize_metrics(data, carrier, characters="")
-    assert_glyphs_preserved(data, calibrated)
-    return calibrated
-
-
 def supported_axes(ladder: list[dict]) -> str | None:
     """可变字体的 supportedAxes 值（Android 15+ 只认 wght / wght,ital）；静态字体返回 None。
 
@@ -758,7 +703,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
             swap_fonts(family, font_name, ladder)  # CJK 语言区：清空的族换主字体单字件，混有其他字件的族不动
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
             replace_fonts(family, font_name, ladder)  # 语言区只换字件，lang/variant 属性原样保留
-    # 二创汉字族：单独一个 family，**带 zh 语言标签**，排在所有 CJK 语言区族之前。
+    # 母版直通族：单独一个 family，**带 zh 语言标签**，排在所有 CJK 语言区族之前。
     # 它是可变字体，字件节点必须带 supportedAxes；混写静态字件会让 ColorOS 卡第一屏，
     # 所以它只放自己一个字件（纯族，形状与 swap_fonts 产出的主字体族一致）。
     #
@@ -779,7 +724,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
         if cjk_locale_at:
             index = min([index, *cjk_locale_at])  # 抢在第一个 CJK 语言区族之前：同分时顺序取胜
         own = ET.Element("family")
-        own.set("lang", CJK_LANG)
+        own.set("lang", PASSTHROUGH_LANG)
         # ★★ 2026-11-10 主人实查出的头号嫌犯：这里原来无条件写 own.set("name", cjk_family)，
         #   造出 `<family lang="zh-Hans,zh-Hant" name="Maruko Gothic CJKsc">` 这种混合节点。
         #   原厂 fonts.xml 全部 192 个 <family> 里，同时含 name 与 lang 的是 **0 个**：
@@ -796,7 +741,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
         else:
             # 静态母版：写 weight，不能写 supportedAxes（那是可变字体才有的）
             node = ET.SubElement(own, "font", style="normal", weight="400")
-        node.text = cjk_name or cjk_naming(CJK_RELEASE_VERSION)[1]
+        node.text = cjk_name
         root.insert(index, own)
         index += 1
     fallback = ET.Element("family")
@@ -899,7 +844,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
           build_num: str | None = None, day: str | None = None, date: str | None = None,
           query: bool = False, keep_web_fonts: bool = False,
           supplemental_font_sources: tuple[dict, ...] | None = None,
-          cjk: bool = True, passthrough_mother: str | None = None,
+          passthrough_mother: str | None = None,
           module_id: str | None = None, fixture: bool = False) -> list[str]:
     """base/font 是本地路径或 URL（None 用默认源）；返回警告列表。
 
@@ -916,9 +861,6 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         date, day, build_num = query_ci_version()  # 取数失败直接抛：不编数、不出非发行包；day 恒为数字串
     prop = stamp_version((ROOT / "module/module.prop").read_text(encoding="utf-8"),
                          build_num, day=day, date=date)
-    # 命名跟版本号同一套：正式发布带 yy.m.d.当日序号.总序号，迭代版只留稳定名字。
-    global CJK_RELEASE_VERSION
-    CJK_RELEASE_VERSION = re.search(r"^version=(.*)$", prop, flags=re.M).group(1).strip()
     output = Path(output) if output else default_output(prop)
     base_path = source(base, BASE_URL, BASE_SHA256, cache / "base.zip")
     if output.resolve() == Path(base_path).resolve():
@@ -957,7 +899,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         if pruned:
             warnings.append(f"剪除空壳映射 {pruned} 个（上游声称覆盖但字形空白），这些字落到回退链。")
 
-        # 二创汉字字库：数据 → 轮廓 → 一份独立 OTF，作为单独 family 排在主字体之前。
+        # 母版直通：一份独立 family 排在主字体之前（自研汉字管线 2026-11-22 已下线）。
         # build_vf 会逐字 pop 掉传进来的字典（三万字全按 Python 对象摊开要 500 MB 以上），
         # 所以字数要先记下来。
         # 母版直通：不改任何轮廓，把母版字节原样放进包里，只做挂载与配置。
@@ -969,8 +911,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                 raise ValueError(f"母版直通要给一个本地文件：{passthrough_mother}")
             cjk_font = mother_path.read_bytes()
             passthrough_name = mother_path.name
-            glyphs = {}
-            glyph_count = 0
+            with TTFont(io.BytesIO(cjk_font), lazy=True) as _m:
+                glyph_count = len(_m.getGlyphOrder())
             # ★ 2026-11-10 主人实查出的二号嫌犯：主字体与自研 VF 进包前都过
             #   normalize_metrics() 对齐设备空壳行框（930/-250/0）并剪空白映射，
             #   唯独直通母版原样塞进去 —— 而它还被 fix_hpos/fix_vpos 平移过坐标。
@@ -1001,12 +943,12 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             warnings.append(f"母版直通：{passthrough_name} 进包（轮廓不改、只整体平移归位），"
                             "只用于基准测量，不是发行件。")
         else:
-            glyphs = cjk_glyphs() if cjk else {}
-            glyph_count = len(glyphs)
-            cjk_font = build_cjk_font(glyphs, carrier) if glyphs else b""
+            # 自研汉字管线已于 2026-11-22 下线：不直通就只有主字体进包。
+            glyph_count = 0
+            cjk_font = b""
         # 框架读 font_fallback.xml（新语法）；Skia 读库存 fonts.xml（另一份，本模块也换）。
         template = (ROOT / "fonts.xml").read_bytes()
-        cjk_file = passthrough_name or (cjk_naming(CJK_RELEASE_VERSION)[1] if glyph_count else None)
+        cjk_file = passthrough_name
         if primary_is_mother:
             # 主字体（改名后的副本）与直通件是同一份字节：再写一遍只会多 20 MB 和一条重名引用。
             cjk_font, cjk_file = b"", None
@@ -1024,7 +966,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                               cjk_is_variable=cjk_is_variable)
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
-        # 二创汉字只开放 wght 300–500（tools/cjk_vf.py），超出这条阶梯的请求本来就落到主字体。
+        # 直通母版开放 wght 300–500（tools/cjk_vf.py），超出这条阶梯的请求本来就落到主字体。
         cjk_ladder = weight_ladder({"wght": (300, 400, 500)})
         faces = ([(cjk_file, cjk_ladder)] if cjk_file else []) + [(name, ladder)]
         legacy = legacy_rows(faces)
@@ -1119,9 +1061,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     print(f"  补充字库 {len(bundled)} 个基础字体 + {len(supplementals)} 个固定许可外部字体；"
           f"配置共引用 {len(device_supplied) + len(packaged_names)} 个名字，"
           f"其中 {len(device_supplied)} 个由设备自带（明细见包内 coverage.txt）")
-    print(f"  二创汉字 {glyph_count} 字 / {len(cjk_font) / 1e6:.1f} MB"
-          f"（{cjk_naming(CJK_RELEASE_VERSION)[0]}，排在主字体之前）"
-          if glyph_count else "  二创汉字：无数据，跳过")
+    if cjk_font:
+        print(f"  母版直通 {glyph_count} 字 / {len(cjk_font) / 1e6:.1f} MB（基准件，不进发行件）")
     print("  网页自带字体：放行（--keep-web-fonts）" if keep_web_fonts else "  网页自带字体：压成主字体")
     for message in warnings:
         warn(message)
@@ -1159,8 +1100,7 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
             destination.writestr(f"licenses/{license_name}", supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
         if cjk_font:
-            destination.writestr(f"system/fonts/{cjk_file or cjk_naming(CJK_RELEASE_VERSION)[1]}",
-                                 cjk_font)
+            destination.writestr(f"system/fonts/{cjk_file}", cjk_font)
         # 主字体取自母版时同样要带母版的 OFL：改名发布不改许可义务。
         # （早先这里只在 cjk_font 有内容时写，母版直通那条路就成了「发了改造版却不带许可」。）
         if cjk_font or primary_license:
@@ -1328,7 +1268,7 @@ def legacy_rows(faces: list[tuple[str, list[dict]]]) -> bytes:
 
     一条字重一行，是因为 Skia 按 `weight`/`style` 逐条匹配：只写 400 一条时，App 里
     500/700 的粗体全部落回设备的 Roboto，看起来就是「只有正文是我们、标题不是」。
-    主字体带 ital 轴，斜体单独成条；二创汉字只有 wght 轴，调用方传入的阶梯里不含斜体。
+    主字体带 ital 轴，斜体单独成条；直通母版只有 wght 轴，调用方传入的阶梯里不含斜体。
     """
     rows = []
     for name, ladder in faces:
@@ -1378,7 +1318,7 @@ def fonts_xml():
     assert [(n.text.strip(), n.get("supportedAxes")) for n in fallback.findall("font")] == \
         [("V.ttf", "wght,ital")], "匿名字形回退应是单条新语法字件"
 
-    # 二创汉字族：必须带 zh 语言标签，且排在所有 CJK 语言区族之前。Minikin 给每个族打分
+    # 母版直通族：必须带 zh 语言标签，且排在所有 CJK 语言区族之前。Minikin 给每个族打分
     # （覆盖分 << 29 | 语言分 << 1 | 变体分，见 configure_fonts 的注释），同一码位多个族都有时
     # 覆盖分打平，胜负全看语言分；语言分也打平才按文件顺序取靠前的。不带 lang 的匿名族
     # 语言分恒为 0 —— 这就是「包回退到主字体」的成因，改回匿名族会让这条断言先炸。
@@ -1386,16 +1326,16 @@ def fonts_xml():
     cjk_families = list(cjk_root)
     cjk_own = [family for family in cjk_families
                if [(node.text or "").strip() for node in family.findall("font")] == ["C.ttf"]]
-    assert len(cjk_own) == 1, "二创汉字族应恰好一个"
+    assert len(cjk_own) == 1, "母版直通族应恰好一个"
     cjk_own = cjk_own[0]
     assert {tag.strip() for tag in (cjk_own.get("lang") or "").split(",")} >= {"zh-Hans", "zh-Hant"}, \
-        "二创汉字族必须带 zh 语言标签：匿名族语言分为 0，中文永远落语言区里的主字体"
+        "母版直通族必须带 zh 语言标签：匿名族语言分为 0，中文永远落语言区里的主字体"
     assert {node.get("supportedAxes") for node in cjk_own.findall("font")} == {CJK_AXES}, \
-        "二创汉字族只能是纯可变字件（混写静态字件真机卡第一屏）"
+        "母版直通族只能是纯可变字件（混写静态字件真机卡第一屏）"
     zh_at = [index for index, family in enumerate(cjk_families)
              if family is not cjk_own and is_cjk_locale(family.get("lang"))]
     assert cjk_families.index(cjk_own) < min(zh_at), \
-        "二创汉字族必须排在所有 CJK 语言区族之前：语言分打平时按文件顺序取靠前的"
+        "母版直通族必须排在所有 CJK 语言区族之前：语言分打平时按文件顺序取靠前的"
 
     # 语言区（locale fallback family）：缺字时按「完整 BCP-47 标签 → 仅语言 → 顺序」匹配，
     # 语言区优先于默认区顺序（AOSP font_fallback.xml 头注）。整族删掉会让中文场景的缺字
@@ -1527,7 +1467,6 @@ def build_end_to_end():
 
         def test_build(**kwargs):
             kwargs.setdefault("supplemental_font_sources", ())
-            kwargs.setdefault("cjk", False)   # 自检夹具不跑两万字描边
             kwargs.setdefault("fixture", True)  # 打印时标明这是夹具版本，不是发行版
             return build(**kwargs)
         fonts_dir = tmp / "fonts"
@@ -1751,19 +1690,6 @@ def version_stamp():
     for padded in ("26.11.01", "26.09.30", "26.9.30.0.42"):
         assert not VERSION_RE.fullmatch(padded), padded
     # 四段只在本地手工省略 --day 时退化；CI 的 --query-ci 自动取数恒有当日序号，不走这条路径。
-    # 命名跟版本号同一套：迭代版不带日期，正式发布带 yy.m.d.当日序号.总序号。
-    global CJK_RELEASE_VERSION
-    old = CJK_RELEASE_VERSION
-    try:
-        CJK_RELEASE_VERSION = None
-        assert cjk_naming(None) == (CJK_FAMILY, CJK_FONT_NAME), cjk_naming(None)
-        CJK_RELEASE_VERSION = "26.10.30.1.42"
-        assert cjk_naming(CJK_RELEASE_VERSION) == ("Selfrounds CJK 26.10.30.1.42",
-                                                   "SelfroundsCJK-VF-26.10.30.1.42.ttf"), cjk_naming(CJK_RELEASE_VERSION)
-        CJK_RELEASE_VERSION = "dev"
-        assert cjk_naming(CJK_RELEASE_VERSION) == (CJK_FAMILY, CJK_FONT_NAME), "dev 不该带日期"
-    finally:
-        CJK_RELEASE_VERSION = old
     degraded = stamp_version(prop, "42", day=None, date="26.9.30")
     assert "version=26.9.30.42" in degraded and "versionCode=42" in degraded, degraded
     assert VERSION_RE4.fullmatch("26.9.30.42")
@@ -3148,67 +3074,6 @@ def runtime_scripts():
 
 # ---------------------------------------------------------------- 仓库自身的数据与常量
 
-@check
-def center_x():
-    """横向归中：默认关；打开后只平移、不缩放、不动字宽，且只碰满格字。
-
-    母版 10% 的满格字墨心偏中线 20~54 单位（`羽` −31、`扁` −54.5），按母版框对齐会把
-    偏差原样抄过来。`SELFFONT_CENTER=1` 时把它平移回 500。这里用三个字验死两件事：
-    默认态一个点都不许动；打开后所有点的 x 位移必须完全相等（「只平移」的证明）。
-    """
-    import sys as _sys
-    _sys.path.insert(0, str(ROOT / "tools"))
-    import box_align
-    import cjk_vf
-    import design_cjk
-
-    glyphs = cjk_glyphs()
-    sample = [ord(ch) for ch in "羽扁日" if ord(ch) in glyphs]
-    assert len(sample) == 3, "抽样字不在字库里"
-    saved = box_align.CENTER_X
-    try:
-        rings = {}
-        for cp in sample:
-            data = glyphs[cp]
-            cjk_vf.settle_junction_widths(data)
-            rs, _flags = cjk_vf._glyph_rings_all(data, cp)
-            rings[cp] = cjk_vf.align_face_height(rs)
-
-        box_align.CENTER_X = False
-        off = {cp: box_align.apply_all(rings[cp], cp) for cp in sample}
-        for cp in sample:
-            assert off[cp] == box_align.apply(rings[cp], cp), "关闭时必须与旧行为逐点相同"
-
-        box_align.CENTER_X = True
-        on = {cp: box_align.apply_all(rings[cp], cp) for cp in sample}
-        moved = 0
-        for cp in sample:
-            before = [p for ring in off[cp][400] for p in ring]
-            after = [p for ring in on[cp][400] for p in ring]
-            shifts = {round(b[0] - a[0], 3) for a, b in zip(before, after)}
-            assert len(shifts) == 1, f"{chr(cp)} 各点 x 位移不一致（不是纯平移）：{len(shifts)} 种"
-            dx = shifts.pop()
-            assert all(b[1] == a[1] for a, b in zip(before, after)), f"{chr(cp)} y 被改动了"
-            width = max(p[0] for p in before) - min(p[0] for p in before)
-            if width >= box_align.CENTER_WIDE:
-                centre = (min(p[0] for p in after) + max(p[0] for p in after)) / 2
-                assert abs(centre - 500) <= 0.01, f"{chr(cp)} 归中后墨心 {centre} 不在 500"
-                assert abs(dx) > 0.4, f"{chr(cp)} 满格字却没被归中（dx={dx}）"
-                moved += 1
-        assert moved >= 2, "满格字样本没有被归中，判据等于没测"
-        # 字宽不受影响：汉字前进量恒为 1000（归中只动轮廓，不动 advance）。
-        assert cjk_vf.advance_of(sample[0], on[sample[0]]) == 1000, "归中改动了字宽"
-        # 两条边界：非满格字（窄部件）与「母版偏差超兜底线」都不许动。
-        box_align.CENTER_X = True
-        narrow = {400: [[(0.0, 0.0), (100.0, 10.0), (100.0, 0.0), (0.0, 0.0)]]}
-        assert box_align.center_x(narrow, -1, target=(0, 0, 100, 10)) == narrow, \
-            "窄字（非满格）被归中了"
-        wide_ring = {400: [[(0.0, 0.0), (1000.0, 0.0), (1000.0, 900.0), (0.0, 900.0)]]}
-        crazy = (0, 0, 1700, 900)        # 墨心 850，偏 350 > CENTER_MAX
-        assert box_align.center_x(wide_ring, -1, target=crazy) == wide_ring, \
-            "母版偏差超兜底线的字被归中了（表坏时会把字挪飞）"
-    finally:
-        box_align.CENTER_X = saved
 
 
 @check
@@ -3667,7 +3532,7 @@ def passthrough_font():
         mother.write_bytes(make_font(family="Maruko Gothic", axes=False, han=True))
         output = tmp / "out" / "Selffont.zip"
         build(base=str(base), font=str(regular), output=output, build_num="9", day="2",
-              date="26.9.30", cjk=False, supplemental_font_sources=(),
+              date="26.9.30", supplemental_font_sources=(),
               passthrough_mother=str(mother), fixture=True)
         with zipfile.ZipFile(output) as archive:
             member = f"system/fonts/{mother.name}"
@@ -3714,7 +3579,7 @@ def passthrough_font():
             try:
                 offline = dead / "out" / "offline.zip"
                 build(base=str(dead / "base.zip"), font=None, output=offline, build_num="9", day="2",
-                      date="26.9.30", cjk=False, supplemental_font_sources=(),
+                      date="26.9.30", supplemental_font_sources=(),
                       passthrough_mother=str(mother), fixture=True)
             finally:
                 globals()["PRIMARY_URL"], globals()["PRIMARY_SHA256"] = _real_url, _real_sha
@@ -3738,7 +3603,7 @@ def passthrough_font():
         # 在管理器眼里永远是降级，刷过基准件的机器再也换不回正规包。id 分开就没有这个问题。
         bench = tmp / "out" / "bench.zip"
         build(base=str(base), font=str(regular), output=bench, build_num="7", day="1", fixture=True,
-              date="26.11.1", cjk=False, supplemental_font_sources=(),
+              date="26.11.1", supplemental_font_sources=(),
               passthrough_mother=str(mother), module_id="selffont-bench")
         with zipfile.ZipFile(bench) as archive:
             bench_prop = archive.read("module.prop").decode()
@@ -3849,278 +3714,8 @@ def module_hotswap():
         assert result.returncode == 2, "on 这个子命令必须已经不存在（不许有第四版挂载实现）"
 
 
-@check
-def probe_position():
-    """定位探针能跑、量具自己没写错：`tools/probe_position.py` 的常量必须与构建期一致。
-
-    探针不读字体文件（本机没有成品），它把「摆位」那一段复算一遍：settle_junction_widths
-    → align_face_height → box_align.apply。这里只验它**量的东西没走样**——
-    win 必须盖住字身框（否则「行框不裁字」那一条白测），判据线必须比 2% em 宽一点点，
-    抽样必须真的抽到汉字。真正跑全库用 `python tools/probe_position.py --sample 300`。
-    """
-    import sys as _sys
-    _sys.path.insert(0, str(ROOT / "tools"))
-    import probe_position as probe
-    assert probe.EM == 1000 and probe.WIDE < probe.EM, "满格判据的宽度阈值不合理"
-    assert probe.TOL_HARD > probe.TOL >= 20, "判据线必须严于 3% em，且提示线要宽于判据线"
-    assert probe.cjk_vf.HHEA_ASCENT > 900 and probe.cjk_vf.HHEA_DESCENT < -160, \
-        f"win 装不下字身框 {probe.cjk_vf.FRAME}：行框那一条等于没测"
-    assert probe.cjk_vf.FRAME[3] <= probe.cjk_vf.HHEA_ASCENT, "字身框上沿高过 win 上沿"
-    sample = probe.sample_codepoints(None, 8)
-    assert len(sample) == 8 and all(probe.cjk_vf.is_han(cp) for cp in sample), \
-        f"抽样没抽到汉字：{[hex(cp) for cp in sample[:4]]}"
-    rows = probe.measure(sample)["rows"]
-    assert len(rows) == 8, f"复算的字数不对：{len(rows)}"
-    r = probe.report(probe.measure(sample))
-    assert r["advance"]["not_1000"] == [], f"汉字 advance 不是 1000：{r['advance']['not_1000']}"
-    assert not r["outside"], f"复算出来的字出字身框：{r['outside'][:3]}"
-    assert probe.verdict(r)[-1].startswith("判定: "), "没有判定行"
 
 
-@check
-def cjk_font():
-    """二创汉字字库：数据能读、能编成 OTF、在配置里单独成族且排在主字体之前。
-
-    只用 3 个字验管线，不在这里跑两万字（--check 要能几秒跑完）。
-    """
-    import io as _io
-    assert CJK_DATA.exists(), f"缺少二创汉字数据：{CJK_DATA}"
-    assert CJK_LICENSE.exists() and b"SIL OPEN FONT LICENSE" in CJK_LICENSE.read_bytes(), \
-        "二创字体必须随包带 OFL 文本（母版 Maruko 是 SIL OFL 1.1）"
-    global CJK_RELEASE_VERSION
-    saved, CJK_RELEASE_VERSION = CJK_RELEASE_VERSION, None   # 检查固定用迭代版的命名
-    try:
-        return _cjk_font_check()
-    finally:
-        CJK_RELEASE_VERSION = saved
-
-
-def _cjk_font_check():
-    import io as _io
-    import sys as _sys
-
-    _sys.path.insert(0, str(ROOT / "tools"))
-    import cjk_vf                                   # 读 GPOS 里的字偶距给自己验
-    glyphs = cjk_glyphs()
-    assert len(glyphs) >= 19000, f"二创汉字只读到 {len(glyphs)} 字"
-    # `A` `H` `o` `y` 是给字偶距自检用的：母版真排的 `Ay` 是咬进去的（最小白 44），
-    # `HH`/`oo` 没压过（168/96）。四个字两组对照，正好能判「有没有压错对象」。
-    # `法`（0x6CD5）是端头多边形的锚字：它的收笔端在母版里是正圆，
-    # LINE_TOL/ARC_STEPS 一改回去就会变成一圈直线，下面的断言就在这个字上判。
-    sample = {cp: glyphs[cp] for cp in
-              (0x4E00, 0x53E3, 0x9F98, 0x6CD5, 0x31, 0x20, 0x41, 0x48, 0x6F, 0x79,
-               0x6A, 0x5B, 0x7B, 0x2B) if cp in glyphs}
-    data = build_cjk_font(dict(sample))          # build_vf 会消费传入的字典，这里给副本
-    carrier = layout_metrics(TTFont(_io.BytesIO(make_carrier())))
-    calibrated = build_cjk_font(dict(sample), carrier)
-    # 高度重校准：和主字体同一函数、同一空壳，行框必须是同一套数字。
-    with TTFont(_io.BytesIO(calibrated)) as font:
-        hhea, os2 = font["hhea"], font["OS/2"]
-        assert (hhea.ascent, hhea.descent, hhea.lineGap) == (930, -250, 0), \
-            f"汉字字件行高未对齐空壳：{hhea.ascent}/{hhea.descent}/{hhea.lineGap}"
-        assert (os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap) == (930, -250, 0), \
-            f"汉字字件 typo 未对齐空壳：{os2.sTypoAscender}/{os2.sTypoDescender}"
-        low, high = ink_envelope(font)
-        assert os2.usWinAscent >= high and os2.usWinDescent >= -low, \
-            f"汉字字件裁剪包络切墨：ink={low}..{high} win={os2.usWinDescent}/{os2.usWinAscent}"
-    with TTFont(_io.BytesIO(data)) as font:
-        assert font["head"].unitsPerEm == 1000
-        assert font["name"].getDebugName(1) == cjk_naming(None)[0]
-        assert set(font.getBestCmap()) == set(sample), "码位没有一对一落进 cmap"
-        # 字宽是构建期自算的：全角占一个 em，半角按本字墨宽加侧距。
-        # 全写成 1000 的话，这个字件（排在主字体之前）会把拉丁和数字摊成方块。
-        hmtx, cmap_here = font["hmtx"], font.getBestCmap()
-        assert hmtx[cmap_here[0x4E00]][0] == 1000, "全角字宽必须是 1000"
-        assert hmtx[cmap_here[0x31]][0] < 600, f"数字字宽没自算：{hmtx[cmap_here[0x31]][0]}"
-        assert 0x20 in cmap_here, "空格没有补进 cmap：它在母版里没有轮廓，必须补空字形"
-        assert hmtx[cmap_here[0x20]][0] == 250, f"空格字宽 {hmtx[cmap_here[0x20]][0]} 不等于四分之一 em"
-        # 非字母的前进量取自母版逐字量出来的表（`tools/side_targets.bin`）：三档模型对它们
-        # 量不准，`+` 曾差 194 单位、`[` `{` 被 200 的下限夹住。这里挡住「表丢了/没接上」。
-        assert cjk_vf.side_target(0x2B)[0] > 850, "side_targets.bin 没接上：`+` 的前进量又被压扁了"
-        assert hmtx[cmap_here[0x2B]][0] > 850, f"`+` 前进量 {hmtx[cmap_here[0x2B]][0]}，母版是 922"
-        assert hmtx[cmap_here[0x5B]][0] > 280, f"`[` 前进量 {hmtx[cmap_here[0x5B]][0]}，母版是 317"
-        assert hmtx[cmap_here[0x7B]][0] > 350, f"`{{` 前进量 {hmtx[cmap_here[0x7B]][0]}，母版是 389"
-        # 负 LSB 的字必须留着负左边距：母版 `j` 的 lsb 是 −63，钩本来就伸到前一个字下面。
-        # 这一条挡的是「按整字墨迹反推侧距」那个 bug——`j` 曾被整体右移 92 单位。
-        assert hmtx[cmap_here[0x6A]][1] < 0, f"`j` 的左边距变成了 {hmtx[cmap_here[0x6A]][1]}，负 LSB 丢了"
-        assert hmtx[cmap_here[0x6A]][0] < 260, f"`j` 的字宽 {hmtx[cmap_here[0x6A]][0]}，母版是 235"
-        # 字偶距：目标是母版**真排**出来的白（tools/kern_targets.bin），不是一把固定尺。
-        # 母版压过的 `Ay` 必须咬进去；母版没压过的 `HH`、只压 2 个单位的 `oo` 不许跟着压。
-        assert "GPOS" in font, "字偶距没有写进 GPOS：母版里 Ay 靠字对咬合，缺了就散架"
-        ay = cjk_vf.kern_value(font, 0x41, 0x79)
-        hh = cjk_vf.kern_value(font, 0x48, 0x48)
-        oo = cjk_vf.kern_value(font, 0x6F, 0x6F)
-        assert ay <= -150, f"Ay 没有咬进去：{ay}（母版真排的笔距是 473，最小白 44）"
-        assert abs(hh) < 12, f"HH 被压了：{hh}（母版 HH 的最小白 168，不该动）"
-        assert -40 <= oo <= 0, f"oo 的字偶距越界：{oo}（母版 oo 最小白 96，本字件自然白是 111）"
-        # 端头不许是折线（2026-11-01 主人指出的「多边形」）：`法` 的 `去` 字收笔端，
-        # 改前 LINE_TOL=0.80 + ARC_STEPS=9 让整圈半圆被判成 12 段直线，6× 下就是多边形。
-        # 判据：收笔端点 45 单位内的轮廓段里，直线段占比 ≤ 50%；且端头不能整圈都是直线。
-        from fontTools.pens.recordingPen import RecordingPen as _Rec
-        pen = _Rec()
-        font.getGlyphSet()[font.getBestCmap()[0x6CD5]].draw(pen)
-        point, segments, previous = (893.0, -18.0), [], None
-        for op, args in pen.value:
-            if op == "moveTo":
-                previous = args[0]
-            elif op in ("lineTo", "qCurveTo", "curveTo"):
-                end = args[-1]
-                if previous is not None:
-                    near = min(((previous[0] - point[0]) ** 2 + (previous[1] - point[1]) ** 2,
-                                (end[0] - point[0]) ** 2 + (end[1] - point[1]) ** 2)) < 45 ** 2
-                    if near:
-                        segments.append(op)
-                previous = end
-        straight = segments.count("lineTo")
-        assert segments, "`法` 的收笔端点附近没量到轮廓段：坐标锚点漂了？"
-        assert straight < len(segments), f"`法` 收笔端整圈都是直线（{len(segments)} 段）：端头成了多边形"
-        assert straight / len(segments) <= 0.5, \
-            f"`法` 收笔端直线段 {straight}/{len(segments)}，超过一半：端头是多边形（LINE_TOL/ARC_STEPS 被改回？）"
-        glyph_set = font.getGlyphSet()
-        blanks = {f"uni{cp:04X}" for cp in (0x20,) if cp in sample}
-        for name in font.getGlyphOrder()[1:]:
-            pen = BoundsPen(glyph_set)
-            glyph_set[name].draw(pen)
-            if name in blanks:
-                assert pen.bounds is None, f"{name} 是空白字符，不该有轮廓"
-            else:
-                assert pen.bounds is not None, f"{name} 没有轮廓"
-    xml = configure_fonts((ROOT / "fonts.xml").read_bytes(), PRIMARY_NAME,
-                          [{"axes": [("wght", 400)]}], cjk=True)
-    root = ET.fromstring(xml)
-    holders = [family for family in root.findall("family")
-               if any((node.text or "").strip() == cjk_naming(None)[1] for node in family.findall("font"))]
-    assert len(holders) == 1, "二创字件必须恰好出现在一个 family 里"
-    alone = holders[0]
-    assert len(alone.findall("font")) == 1, "二创字件不能与别的字件同族（真机会卡开机）"
-    assert alone.get("name") is None, "二创族不带名字：它按语言区参与回退，不是可选家族"
-    # 曾经这里断言「不带语言、只要排在主字体之前就行」——那是错的：Minikin 逐族打分
-    # （覆盖分<<29 | 语言分<<1 | 变体分），匿名族语言分恒 0，中文全被语言区里的主字体抢走。
-    # 现在要求带 zh 标签，且排在所有 CJK 语言区族之前，语言分打平时才按顺序取胜。
-    assert {tag.strip() for tag in (alone.get("lang") or "").split(",")} >= {"zh-Hans", "zh-Hant"}, \
-        "二创族必须带 zh 语言标签，否则语言分为 0，中文永远落语言区里的主字体"
-    order = list(root)
-    zh_families = [family for family in order
-                   if family is not alone and is_cjk_locale(family.get("lang"))]
-    assert zh_families, "模板里应有 CJK 语言区族（本断言同时防止测试夹具漂移成空集）"
-    assert order.index(alone) < min(order.index(family) for family in zh_families), \
-        "二创族必须排在所有 CJK 语言区族之前：语言分打平时按文件顺序取靠前的"
-
-
-def emit_cjk_font(out_dir: Path) -> None:
-    """出二创汉字字件：数据 → 可变字体 → 行框锚定设备空壳 → 三个静态实例。
-
-    这一段原来是 `tools/build_cjk.py`。规范禁止把一次性辅助脚本堆在仓库里（同一个
-    `build.py` 能跑完的事，不该多一个入口），所以并回来当一个参数。
-    """
-    import io
-    import time
-    from fontTools.ttLib import TTFont
-    from fontTools.varLib.instancer import instantiateVariableFont
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    start = time.time()
-    glyphs = cjk_glyphs()
-    print(f"读数据 {len(glyphs)} 字 {time.time() - start:.1f}s", flush=True)
-
-    # 度量空壳：设备上就是基础包里的 Roboto；本机用自检里的同一份夹具，行框同一套数字。
-    carrier = layout_metrics(TTFont(io.BytesIO(make_carrier()), recalcBBoxes=False))
-    print("空壳度量", carrier, flush=True)
-
-    start = time.time()
-    data = build_cjk_font(glyphs, carrier)
-    print(f"编字体并校准 {len(data) / 1e6:.1f} MB {time.time() - start:.1f}s", flush=True)
-    (out_dir / cjk_naming(CJK_RELEASE_VERSION)[1]).write_bytes(data)
-
-    font = TTFont(io.BytesIO(data), recalcBBoxes=False)
-    hhea, os2 = font["hhea"], font["OS/2"]
-    print(f"  hhea {hhea.ascent}/{hhea.descent}/{hhea.lineGap}"
-          f"  typo {os2.sTypoAscender}/{os2.sTypoDescender}/{os2.sTypoLineGap}"
-          f"  win {os2.usWinAscent}/{os2.usWinDescent}")
-    low, high = ink_envelope(font)
-    print(f"  墨迹包络 {low}..{high}  字形数 {len(font.getGlyphOrder())}", flush=True)
-    del font
-
-    for weight in (300, 400, 500):
-        inst = instantiateVariableFont(TTFont(io.BytesIO(data)), {"wght": weight})
-        buf = io.BytesIO()
-        inst.save(buf)
-        (out_dir / f"static-{weight}.ttf").write_bytes(buf.getvalue())
-        print(f"  静态 {weight} {len(buf.getvalue()) / 1e6:.1f} MB", flush=True)
-    print("完成", flush=True)
-
-
-def preview_chars(chars: str, glyphs: dict[int, dict]) -> dict[int, dict]:
-    """预览选字：按输入顺序去重、跳过数据里没有的码位，返回按码位排序的子集。
-
-    不做全量构建，是为了「改一笔、几秒钟看见」：数据改完直接跑
-    `.venv/bin/python build.py --preview 鬱響鬢`，不必等 50 分钟的全量出件。
-    """
-    order = list(dict.fromkeys(cp for cp in map(ord, chars) if cp in glyphs))
-    if not order:
-        raise ValueError(f"这些字都不在 {CJK_DATA.name} 里：{chars!r}")
-    return {cp: glyphs[cp] for cp in sorted(order)}
-
-
-def emit_preview(chars: str, out_dir: Path, compare: Path | None = None, size: int = 200) -> None:
-    """预览路径（规范「设计取向记录」要求的热重载）：只编选中的字，出小字体 + 母版对照图。
-
-    `--compare` 给母版 TTF 时，用同一套 FreeType 渲染（`tools/freetype_iou.py`）出上下两排
-    对照图，并打印每字 IoU；不给就只出 `preview.ttf`。产物写在 out_dir（默认 `work/preview/`），
-    不入库。
-    """
-    import time
-
-    start = time.time()
-    glyphs = cjk_glyphs()
-    print(f"读数据 {len(glyphs)} 字 {time.time() - start:.1f}s", flush=True)
-    subset = preview_chars(chars, glyphs)
-    start = time.time()
-    data = build_cjk_font(dict(subset))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / "preview.ttf"
-    target.write_bytes(data)
-    print(f"编 {len(subset)} 字 → {target} {len(data) / 1024:.0f} KB {time.time() - start:.1f}s",
-          flush=True)
-    if compare is None:
-        return
-
-    import sys as _sys
-
-    _sys.path.insert(0, str(ROOT / "tools"))
-    from PIL import Image, ImageDraw, ImageFont
-    import freetype_iou
-
-    chars_sorted = [chr(cp) for cp in subset]
-    cell_w = size + 60
-    cell_h = size + 50
-    gutter = 56
-    width = gutter + cell_w * len(chars_sorted) + 20
-    height = cell_h * 2 + 60
-    canvas = Image.new("L", (width, height), 255)
-    pen = ImageDraw.Draw(canvas)
-    label_font = ImageFont.truetype(str(compare), 34)
-    pen.text((8, 30), "母", font=label_font, fill=0)
-    pen.text((8, cell_h + 30), "本", font=label_font, fill=0)
-    values = []
-    for index, char in enumerate(chars_sorted):
-        x = gutter + index * cell_w
-        for row, path in enumerate((compare, target)):
-            ink, (dx, dy) = freetype_iou.bitmap(path, char, size)
-            top = 30 + row * cell_h
-            if ink.size:
-                glyph = Image.new("L", (ink.shape[1], ink.shape[0]), 255)
-                glyph.paste(0, mask=Image.fromarray((ink * 255).astype("uint8")))
-                left = x + max((cell_w - ink.shape[1]) // 2 + dx, 0)
-                canvas.paste(glyph, (left, top + size + dy))
-        values.append(freetype_iou.compare(compare, target, char, size))
-        pen.text((x + 4, 30 + 2 * cell_h - 40), f"{values[-1]:.3f}", font=label_font, fill=0)
-    png = out_dir / "preview.png"
-    canvas.save(png)
-    print(f"对照图 {png}（上排母版、下排本版；每格下方是该字 IoU）", flush=True)
-    ordered = sorted(values)
-    print(f"IoU 中位 {ordered[len(ordered) // 2]:.3f}  最低 {ordered[0]:.3f}  "
-          f"（{len(values)} 字，{size} px 同基线）", flush=True)
 
 
 def main() -> None:
@@ -4128,18 +3723,10 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="跑内建自检：不下载、不打包")
     # 只跑指定的检查项。变异测试要一条一条验，全量一次 25 秒，五次就两分钟起步。
     parser.add_argument("--only", metavar="名字", help="只跑这一项检查（配合 --check）")
-    parser.add_argument("--cjk-font", type=Path, metavar="DIR",
-                        help="只出二创汉字字件（可变 + 三个静态实例）到 DIR，不下载、不打包")
     parser.add_argument("--passthrough-mother", metavar="TTF",
                         help="母版直通：把这份 TTF 原样放进包（不改任何轮廓），只用于量基准")
     parser.add_argument("--module-id", metavar="ID",
                         help="改写模块 id（基准件用独立的 id，避免与发行件同一 id 互相压制 versionCode）")
-    parser.add_argument("--preview", metavar="字…",
-                        help="只编这几个字出预览小字体（几秒），配合 --compare 出母版对照图")
-    parser.add_argument("--preview-out", type=Path, metavar="DIR", default=ROOT / "work" / "preview",
-                        help="预览产物目录（默认 work/preview/，不入库）")
-    parser.add_argument("--compare", type=Path, metavar="TTF",
-                        help="预览对照用的母版字体（不给就只出 preview.ttf）")
     parser.add_argument("--base", help="基础包 ZIP：本地路径或 URL（默认下载并缓存）")
     parser.add_argument("--font", metavar="PATH|URL", help="主字体：本地文件或 URL（默认用内置来源）")
     parser.add_argument("--output", type=Path,
@@ -4154,11 +3741,7 @@ def main() -> None:
     parser.add_argument("--keep-web-fonts", action="store_true",
                         help="放行网页自带字体（图标字体等）；默认压成主字体")
     args = parser.parse_args()
-    if args.preview:
-        emit_preview(args.preview, args.preview_out, args.compare)
-    elif args.cjk_font:
-        emit_cjk_font(args.cjk_font)
-    elif args.check:
+    if args.check:
         run_checks(args.only)
     else:
         build(base=args.base, font=args.font, output=args.output, build_num=args.build,
