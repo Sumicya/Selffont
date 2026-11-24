@@ -144,11 +144,18 @@ jobs:
       - name: 验收（纯平移、字宽不变、横竖墨心归位）
         run: |
           set -euo pipefail
-          # 失败时把断言原因写进 step summary：沙箱里拉不到 Actions 原始日志
-          # （被 blob.core.windows.net 挡住），只能靠这条通道读回失败原因。
           python - <<'PY' 2>&1 | tee build/verify.md
-          import hashlib, io, os, statistics, zipfile
+          import hashlib, io, os, statistics, sys, traceback, zipfile
           from fontTools.ttLib import TTFont
+
+          # 失败原因必须能读回来：沙箱拉不到 Actions 原始日志（blob.core.windows.net
+          # 被挡），但 `::error::` 会进 check-runs 的 annotations，那条走 API 能读。
+          # 不改脚本结构，只挂一个 excepthook，异常时把最后三行打成 annotation。
+          def _report(exc_type, exc, tb):
+              lines = traceback.format_exception(exc_type, exc, tb)
+              tail = "".join(lines[-3:]).replace("\n", " | ")
+              print(f"::error::{tail[:900]}", file=sys.stderr)
+          sys.excepthook = _report
 
           name, mother = os.environ["NAME"], os.environ["MOTHER_NAME"]
           raw = open(f"build/{name}.zip", "rb").read()
