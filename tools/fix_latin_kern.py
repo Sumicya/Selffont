@@ -244,8 +244,6 @@ def main() -> int:
             flat[g] = flatten(gs, g)
 
     band_of = {g: bands(a) for g, a in flat.items() if len(a)}
-    XMIN = {g: float(a[:, [0, 2]].min()) for g, a in flat.items() if len(a)}
-    XMAX = {g: float(a[:, [0, 2]].max()) for g, a in flat.items() if len(a)}
     deltas, tight, missing = {}, [], []
     for a in letters:
         for b in letters:
@@ -299,12 +297,15 @@ def main() -> int:
                 # 硬底线：kern 后的 advance 不能小于前字自身墨宽 + 后字左空，
                 # 否则后字会画进前字的怀里（1.9 档试过，Fu 的 advance 掉到 175，
                 # 而 F 自己就宽 540，u 直接被 F 盖住）。
-                # 底线只看「后字左缘不能压进前字墨迹」这一条，不用「整字宽 + floor」：
-                # 斜边字（A/V/W）墨宽本来就撑满 advance，用整字宽当底线会让所有
-                # A 系修正被挡掉（实测 AC 收不动）。真正要防的是后字画进前字怀里。
+                # 底线用**实测逐带墨距**，不用包围盒。
+                # 上一版用「advance >= 墨宽」当底线，那是 bbox 判据：A 的 bbox 宽 597，
+                # 但两个字形真正靠近的地方在中下部，那里 A 的右缘只到 450。
+                # 实测 kern 压到 −200 时带最小还是 39，根本没碰上；bbox 却早在 −37 就拦住了。
+                # 现在改成：算出候选 kern 后，真的量一次带最小，小于 floor 才拉回来。
                 cand = cur - (mn - cap)
-                if hmtx[ga][0] + cand < XMAX[ga] - XMIN[ga]:
-                    cand = (XMAX[ga] - XMIN[ga]) - hmtx[ga][0]
+                probe = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cand)
+                if probe is not None and probe[0] < floor:
+                    cand += floor - probe[0]
                 if cand >= cur:
                     continue
                 deltas[(ga, gb)] = cand
