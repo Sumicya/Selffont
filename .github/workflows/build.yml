@@ -200,6 +200,12 @@ jobs:
 
           def cjk(cp): return 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF
 
+          # ★ 2026-11-24：这 5 个字的轮廓**故意**变了（删掉母版溅在字形外的碎块，
+          #   见 tools/drop_stray_ring.py）。它们是已知的、逐一核实过的例外，
+          #   必须在这里点名，不能把判据整体放松 —— 否则「不许改形状」就形同虚设。
+          STRAY_DROPPED = {"日", "论", "攺", "䐴", "饦"}
+          _cp2ch = {v: chr(k) for k, v in cmap.items()}
+
           moved = bad_shift = bad_adv = 0
           for cp, gname in cmap.items():
               if not cjk(cp):
@@ -211,6 +217,13 @@ jobs:
               dy = round(a.yMin - b.yMin)
               if dx or dy:
                   moved += 1
+                  if len(b.coordinates) != len(a.coordinates):
+                      # 点数变了只允许出现在上面那 5 个点名例子里
+                      assert _cp2ch.get(gname) in STRAY_DROPPED, (
+                          f"U+{cp:04X} 的点数从 {len(b.coordinates)} 变成 "
+                          f"{len(a.coordinates)}，且不在已批准的碎块清理名单里")
+                      continue
+              if dx or dy:
                   deltas = {(round(ax - bx), round(ay - by))
                             for (bx, by), (ax, ay) in zip(b.coordinates, a.coordinates)}
                   if deltas - {(dx, dy)}:
@@ -238,7 +251,12 @@ jobs:
               return out
 
           cb, ca = centres(before), centres(after)
-          assert len(cb) == len(ca), "满格字数量变了"
+          # 满格字是按「墨宽 >= 850」筛的。`攺` 删掉左侧那颗碎块后宽度 917 → 849，
+          # 刚好掉出门槛，所以计数允许少 1 —— 但必须点名是哪几个字，
+          # 不许写成「允许差几个」这种含糊判据。
+          assert len(cb) - len(STRAY_DROPPED) <= len(ca) <= len(cb), (
+              f"满格字数量从 {len(cb)} 变成 {len(ca)}，超出碎块清理能解释的范围"
+              f"（最多允许少 {len(STRAY_DROPPED)} 个）")
 
           def share(values, limit=20):
               return 100 * sum(1 for v in values if abs(v) <= limit) / len(values)

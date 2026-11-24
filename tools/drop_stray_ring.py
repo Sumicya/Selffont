@@ -182,6 +182,19 @@ def main() -> int:
         g.numberOfContours = len(new_ends)
         g.recalcBounds(glyf)
 
+    # ★ lsb 必须跟着 xMin 走。删掉的那条碎块可能就是整个字形最左边的墨迹：
+    #   `䐴` 的 xMin 从 34 变成 125，`攺` 从 44 变成 112，而 hmtx 的 lsb 还停在旧值。
+    #   advance 不动（那 5 个字都是 1000，全角字格不该因为删了一颗碎块就变宽）。
+    #   不修这一步，验收里的「lsb ≠ xMin 的字 0 个」就会红。
+    hmtx = font["hmtx"]
+    for cp, gn, *_ in targets:
+        g = glyf[gn]
+        if g.numberOfContours <= 0:
+            continue
+        aw, lsb = hmtx[gn]
+        if lsb != g.xMin:
+            hmtx[gn] = (aw, g.xMin)
+
     font.save(args.output)
     print(f"写出 {args.output}（{args.output.stat().st_size:,} B）")
     return 0
