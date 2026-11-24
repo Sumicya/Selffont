@@ -284,7 +284,11 @@ jobs:
               return out
 
           vb, va = vcentres(before), vcentres(after)
-          assert len(vb) == len(va), "满宽满高字数量变了"
+          # 同上：满宽满高也是按墨宽 ≥ 850 筛的，`攺` 删碎块后掉出门槛，计数会少。
+          # 允许范围的上限就是点名例外的个数，不写含糊判据。
+          assert len(vb) - len(STRAY_DROPPED) <= len(va) <= len(vb), (
+              f"满宽满高字数量从 {len(vb)} 变成 {len(va)}，超出碎块清理能解释的范围"
+              f"（最多允许少 {len(STRAY_DROPPED)} 个）")
           mid = statistics.median(vb)
           dvb = [abs(v - mid) for v in vb]
           dva = [abs(v - mid) for v in va]
