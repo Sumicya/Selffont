@@ -63,6 +63,7 @@ def flatten(glyphset, gname: str) -> np.ndarray:
 
 
 BAND = 10          # 逐带量水平间距的带宽（upm 千分比 10 = 1% em）
+MIN_SHARED = 4     # 共同带少于这个数就不据其读数收宽（yV、yT 这类单点接触）
 
 
 def bands(a: np.ndarray) -> dict:
@@ -227,6 +228,8 @@ def main() -> int:
                     help="对这几个首字母改用绝对上限（如 A，配合 --cap-to）")
     ap.add_argument("--cap-to", type=float, default=0.0,
                     help="--cap-letters 里那些首字母的目标上限（upm 千分比）")
+    ap.add_argument("--grid", type=int, default=5,
+                    help="把算出的 kern 吸附到这个单位的倍数（2 或 5）")
     args = ap.parse_args()
 
     font = TTFont(args.source)
@@ -271,46 +274,42 @@ def main() -> int:
     # 第二轮：同首字母里明显偏宽的对收回。
     # 为什么需要：A 的右斜腿与圆体（C/G/O/Q）之间天然空一块，`AC` 182 而同字母
     # 中位才 69；这一层不是「碰撞」，是比例不匀，得靠相对量判断，不能用绝对阈值。
-    if args.tighten_ratio > 0 or (args.cap_letters and args.cap_to > 0):
-        by_first = {}
+    if args.cap_letters and args.cap_to > 0:
+        # 绝对目标，不用比例。母版本身的 kern 是坏的（`AC` 202 而同首字母中位 69），
+        # 拿坏数据的中位数当基准只会把错误按比例放大一份。这里的判据只有一条：
+        # 逐对实测墨距，宽于目标的就收到目标，窄的原样不动。
+        target = args.cap_to * upm / 1000
+        n_loose = 0
         for a in letters:
+            if a not in args.cap_letters:
+                continue
             for b in letters:
                 ga, gb = cmap[ord(a)], cmap[ord(b)]
                 if ga not in band_of or gb not in band_of:
                     continue
                 cur = deltas.get((ga, gb), old.get((ga, gb), 0))
                 r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cur)
-                if r is not None:
-                    by_first.setdefault(a, []).append((ga, gb, r[0], cur))
-        n_loose = 0
-        for a, items in by_first.items():
-            med = sorted(x[2] for x in items)[len(items) // 2]
-            cap = med * args.tighten_ratio
-            if a in args.cap_letters and args.cap_to > 0:
-                cap = args.cap_to * upm / 1000
-            for ga, gb, mn, cur in items:
-                if mn <= cap:
+                if r is None or r[0] <= target:
                     continue
-                # 只收母版已经有 kern 条目的对。没有条目的宽对是字形结构决定的
-                # （F 的右上悬空、L 的右下空档、j 的左出），硬塞负 kern 会把两个
-                # 字形推到一起——1.9 档试过，Fu/Fy/Lj 直接叠住。
-                if (ga, gb) not in old:
+                # 共同带太少时这个读数不可信：`yV` 只共用 band 0 一个带（y 的碗在
+                # y=0 还没展开、V 的底尖刚出现），量出 521 全是假象，真按它压 400
+                # 就把 V 塞进 y 的碗里了。少于 MIN_SHARED 带的对交给人工，不机械收。
+                if r[3] < MIN_SHARED:
                     continue
-                # 硬底线：kern 后的 advance 不能小于前字自身墨宽 + 后字左空，
-                # 否则后字会画进前字的怀里（1.9 档试过，Fu 的 advance 掉到 175，
-                # 而 F 自己就宽 540，u 直接被 F 盖住）。
-                # 底线用**实测逐带墨距**，不用包围盒。
-                # 上一版用「advance >= 墨宽」当底线，那是 bbox 判据：A 的 bbox 宽 597，
-                # 但两个字形真正靠近的地方在中下部，那里 A 的右缘只到 450。
-                # 实测 kern 压到 −200 时带最小还是 39，根本没碰上；bbox 却早在 −37 就拦住了。
-                # 现在改成：算出候选 kern 后，真的量一次带最小，小于 floor 才拉回来。
-                cand = cur - (mn - cap)
+                # 母版没有条目的宽对也要收。老版本这里有个「必须已有条目」的保护，
+                # 理由是硬塞负 kern 会把两字推到一起（1.9 档 Fu/Fy/Lj 叠住）；
+                # 现在下面两条底线是实测的，能拦住那种情况，所以放开。
+                # 但「母版无条目」的对必须重新量一次，不能只信目标值。
+                cand = cur - (r[0] - target)
                 probe = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cand)
                 if probe is not None and probe[0] < floor:
                     cand += floor - probe[0]
-                # 两条底线缺一不可。上面那条管「墨迹不许碰上」，这条管「后字不许画进
-                # 前字怀里」——F 的 bbox 宽 540 但墨迹集中在上半部，逐带墨距能到 100，
-                # 而 advance 只剩 128 时 u 就整个落进 F 的怀里了（L100 档实测）。
+                # 母版无条目的对：收到目标后必须仍有 >= MIN_SHARED 个带、且墨不碰。
+                if (ga, gb) not in old:
+                    after = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cand)
+                    if after is None or after[2] > 0 or after[3] < MIN_SHARED:
+                        continue
+                # advance 底线：后字不许落进前字怀里（L100 档 Fu 的 −402 教训）。
                 min_adv = (XMAX[ga] - XMIN[ga]) + floor
                 if hmtx[ga][0] + cand < min_adv:
                     cand = min_adv - hmtx[ga][0]
@@ -318,7 +317,7 @@ def main() -> int:
                     continue
                 deltas[(ga, gb)] = cand
                 n_loose += 1
-        print(f"按同首字母中位 ×{args.tighten_ratio} 收回 {n_loose} 对")
+        print(f"按绝对目标 {args.cap_to} 收回 {n_loose} 对首字母在 {args.cap_letters[:6]}… 里")
 
     print(f"压紧 {len(tight)} 对（带最小低于 {floor:.0f} 或有水平重叠），"
           f"母版无条目 {len(missing)} 对")
@@ -327,6 +326,20 @@ def main() -> int:
     for p, mn, ov in sorted(missing, key=lambda r: r[1])[:8]:
         print(f"    [缺条目] {p}  带最小 {mn:7.1f}  重叠带 {ov}")
 
+    # 吸附到网格：算出来的 kern 会是 −13、−185、−402 这种脏数字。统一到 2 或 5 的
+    # 倍数，落在栅格里也更像设计值。吸附后要复核两条底线，不能因取整越界。
+    if args.grid > 1:
+        g = args.grid
+        for (ga, gb), v in list(deltas.items()):
+            v = int(round(v / g)) * g
+            r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + v)
+            if r is not None and r[0] < floor:
+                v += int(-(-(floor - r[0]) // g)) * g
+            min_adv = (XMAX[ga] - XMIN[ga]) + floor
+            if hmtx[ga][0] + v < min_adv:
+                v = int(-(-(min_adv - hmtx[ga][0]) // g)) * g
+            deltas[(ga, gb)] = v
+        print(f"按 {g} 的倍数吸附 {len(deltas)} 条")
     changed = write_kern(font, deltas)
     print(f"改写 {changed} 条 kern（只动已有的对，mark/mkmk 与 GSUB 未碰）")
     args.output.parent.mkdir(parents=True, exist_ok=True)
