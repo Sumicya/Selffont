@@ -82,6 +82,21 @@ jobs:
           python tools/fix_vpos.py "work/hpos/${MOTHER_NAME}" -o "work/vpos/${MOTHER_NAME}" \
             | tee -a build/hpos.md
           cp build/hpos.md "$GITHUB_STEP_SUMMARY"
+      - name: 拉丁侧距与字偶距（只动拉丁，汉字一个点不动）
+        run: |
+          set -euo pipefail
+          # 母版的拉丁侧距过宽、kern 也坏（39,171 条里有一批是压穿的，`Fu` 的墨距
+          # 实测 112 而包围盒报 501）。这两步只处理 0x41-0x7A 的字母：
+          #   slim_mother  --scale 0.60   把拉丁侧距收到 0.60 倍（唯一的设计性改动）
+          #   fix_latin_kern --min-ink 34 把碰撞推回 >=34，只动已有的对
+          # 汉字（advance 恒 1000 的全角字）在 slim_mother 里被 LATIN_MAX 挡住，
+          # 一个都不碰；下面验收里的「汉字 advance 全为 1000」「纯平移」照旧成立。
+          mkdir -p work/latin work/kern
+          python tools/slim_mother.py "work/vpos/${MOTHER_NAME}" \
+            -o "work/latin/${MOTHER_NAME}" --scale 0.60 | tee build/latin.md
+          python tools/fix_latin_kern.py "work/latin/${MOTHER_NAME}" \
+            -o "work/kern/${MOTHER_NAME}" --min-ink 34 | tee -a build/latin.md
+          cp build/latin.md "$GITHUB_STEP_SUMMARY"
       - name: 取版本号（五段，不带 SHA）
         env:
           GH_TOKEN: ${{ github.token }}
@@ -98,7 +113,7 @@ jobs:
           set -euo pipefail
           # 五段 yy.m.d.当日号.总序号，全部来自上一步取号，不再自己拼日期。
           name="build-${VERSION}"
-          python build.py --passthrough-mother "work/vpos/${MOTHER_NAME}" \
+          python build.py --passthrough-mother "work/kern/${MOTHER_NAME}" \
             --date "$(echo "$VERSION" | cut -d. -f1-3)" \
             --day "$(echo "$VERSION" | cut -d. -f4)" \
             --build "$(echo "$VERSION" | cut -d. -f5)" --module-id selffont-bench \
@@ -144,7 +159,7 @@ jobs:
           # ★ 2026-11-10：出包时直通件会过 normalize_metrics 把行框对齐设备空壳
           #   （930/-250/0），所以这里**不能**再要求整份字节相等 —— 那条断言等于
           #   禁止行框归一，而直通件正是全包唯一没过归一的那一份。
-          #   改成：轮廓与 hmtx 必须与 work/vpos 那一份逐字相等（下面几段已经在查），
+          #   改成：轮廓与 hmtx 必须与 work/kern 那一份逐字相等（下面几段已经在查），
           #   外加一条「hhea 已被对齐到空壳」的正面断言。
           # 行框目标值取自**同一个包里的度量空壳**（不猜磁盘路径）；空壳不在包里
           # 就直接挂 —— 不许「找不到就跳过」，那正是假绿。
@@ -162,7 +177,9 @@ jobs:
                   f"直通件行框没对齐空壳：hhea.{_key}={_got}，"
                   f"按 {_packed_font['head'].unitsPerEm}/{_shell_font['head'].unitsPerEm} 换算应为 {_want}")
 
-          before = TTFont(os.path.join("work", mother))
+          # 比较基准要跟出包那一份一致（现在是 work/kern），否则缩过侧距的拉丁
+          # 会被当成「轮廓被动了」误报。汉字那部分两个基准是同一份。
+          before = TTFont(os.path.join("work", "kern", mother))
           after = TTFont(io.BytesIO(packed))
           cmap = before.getBestCmap()
           gb, ga = before["glyf"], after["glyf"]

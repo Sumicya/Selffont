@@ -1,3 +1,51 @@
+## 2026-11-24 · 接入出包链路；修 slim_mother 会改汉字轮廓的 bug
+
+用户定案「非常美丽，出包吧」。
+
+### 一、接入 `build.yml`
+
+在「修水平与竖向定位」之后、「取版本号」之前插入一步：
+
+```bash
+python tools/slim_mother.py "work/vpos/${MOTHER_NAME}" -o "work/latin/${MOTHER_NAME}" --scale 0.60
+python tools/fix_latin_kern.py "work/latin/${MOTHER_NAME}" -o "work/kern/${MOTHER_NAME}" --min-ink 34
+```
+
+出包改用 `work/kern/${MOTHER_NAME}`；验收脚本的比较基准同步从 `work/vpos` 改成
+`work/kern`（否则缩过侧距的拉丁会被当成「轮廓被动了」误报）。
+
+### 二、修一个会改汉字的 bug（重要）
+
+`slim_mother.py` 里 `todo = [n for n in order if glyf[n].numberOfContours != 0]`
+**把全字库都收进来了**。去重（`drop_redundant`）和重画（`TTGlyphPen`）对每个字形
+都生效，于是 27,559 个汉字的轮廓也被改了：
+
+```
+汉字轮廓签名  vpos = 5243b651df1fc95a
+              latin(修前) = e7d328072b95210c   ← 被改
+              latin(修后) = 5243b651df1fc95a   ← 一致
+```
+
+用户明确要求汉字一个点不动，这是硬约束。改成按 cmap 里 `0x20 <= cp < LATIN_MAX` 建
+字形集合，汉字（含 CJK 扩展 A/B）不进 `todo`。修后逐字复核：27,559 个汉字签名与
+`vpos` 完全一致，advance 全为 1000，lsb 全等于 xMin。
+
+### 三、本地跑通的验证
+
+按 CI 顺序在本机串了一遍：`fix_hpos` → `fix_vpos` → `slim_mother` → `fix_latin_kern`。
+
+| 检查 | 结果 |
+|---|---|
+| 汉字轮廓签名（27,559 个） | 与 vpos 一致 |
+| 汉字 advance | 全为 1000 |
+| 汉字 lsb≠xMin | 0 个 |
+| 拉丁 advance 变了 | 52/52（预期） |
+| `kern` 步再改 advance | 0 个 |
+
+**未做**：**没有真的出包**。`build.py` 要下载基础包 ZIP，这个沙箱没有外网（只放行
+github/npm/pypi，`raw` 之外的目标会被 TLS 掐断），所以本地只能验证到字体产物，
+不能验证到 zip。出包要靠 CI：推一次带 `tools/` 或 `.github/` 改动的提交即可触发。
+
 ## 2026-11-24 · 斜边 150 + 全部 kern 对齐 5 的倍数；IC/IG 退回基线
 
 用户定案：**`IC`/`IG` 基线更好，但要 150 的斜边**；另外全部 kern 统一到 5 的倍数，

@@ -128,8 +128,13 @@ def main() -> int:
     cmap, hmtx, glyf = font.getBestCmap(), font["hmtx"], font["glyf"]
     target = args.latin_gap * upm // 1000
 
+    # 只处理拉丁字形。母版有 27,559 个汉字，之前的 todo 把它们全收进来了：去重
+    # (`drop_redundant`) 和重画 (`TTGlyphPen`) 对每个字形都生效，于是汉字的轮廓
+    # 也被改了——用户明确要求汉字一个点不动。实测签名 vpos=5243b6… → latin=e7d328…。
+    # 现在按 cmap 里落在拉丁区的码位建集合，汉字（含 CJK 扩展 A/B）一律不进 todo。
+    latin_glyphs = {g for cp, g in cmap.items() if 0x20 <= cp < LATIN_MAX}
     order = font.getGlyphOrder()
-    todo = [n for n in order if glyf[n].numberOfContours != 0]
+    todo = [n for n in order if n in latin_glyphs and glyf[n].numberOfContours != 0]
     if args.limit:
         todo = todo[:args.limit]
 
