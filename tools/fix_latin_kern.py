@@ -144,6 +144,23 @@ def band_gap(pa: dict, pb: dict, adv: float):
     return float(g.min()), float(g.mean()), int((g < 0).sum()), len(g)
 
 
+def target_for(a: str, b: str, base: float, groups: dict) -> float:
+    """按字对类型取目标墨距。
+
+    `de`/`or`/`lo` 这类小写连写是正文最高频组合，原设计给 130-150 是有道理的；
+    `AV`/`AT` 这类斜边相让才是真离群（260-280）。用一个目标拉平两边都会错。
+    """
+    if a.islower() and b.islower() and "low" in groups:
+        return groups["low"]
+    if a.isupper() and b.isupper() and "up" in groups:
+        return groups["up"]
+    if a.isupper() and b.islower() and "up_low" in groups:
+        return groups["up_low"]
+    if a.islower() and b.isupper() and "low_up" in groups:
+        return groups["low_up"]
+    return base
+
+
 def read_kern(font: TTFont) -> dict:
     """母版现有 kern 值（只看 PairPos）。"""
     out = {}
@@ -276,11 +293,28 @@ def main() -> int:
                     help="对这几个首字母改用绝对上限（如 A，配合 --cap-to）")
     ap.add_argument("--cap-to", type=float, default=0.0,
                     help="--cap-letters 里那些首字母的目标上限（upm 千分比）")
+    ap.add_argument("--pair-targets", default="",
+                    help="按字对类型分别设目标，格式 `小写:120,大写:150`；优先于 --cap-to")
+    ap.add_argument("--pairs", default="",
+                    help="给具体字对设目标，格式 `IC:105,IG:105`，优先于分组与 --cap-to")
     ap.add_argument("--within", type=float, default=0.0,
                     help="把墨距落在 target±within 的对也吸附到 target（双向统一）")
     ap.add_argument("--grid", type=int, default=5,
                     help="把算出的 kern 吸附到这个单位的倍数（2 或 5）")
     args = ap.parse_args()
+    exact_pairs = {}
+    for part in (args.pairs or "").split(","):
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        exact_pairs[k.strip()] = float(v)
+    pair_targets = {}
+    for part in (args.pair_targets or "").split(","):
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        pair_targets[{"低": "low", "小写": "low", "高": "up", "大写": "up",
+                      "低高": "low_up", "高低": "up_low"}.get(k.strip(), k.strip())] = float(v)
 
     font = TTFont(args.source)
     upm = font["head"].unitsPerEm
@@ -329,7 +363,7 @@ def main() -> int:
         # 绝对目标，不用比例。母版本身的 kern 是坏的（`AC` 202 而同首字母中位 69），
         # 拿坏数据的中位数当基准只会把错误按比例放大一份。这里的判据只有一条：
         # 逐对实测墨距，宽于目标的就收到目标，窄的原样不动。
-        target = args.cap_to * upm / 1000
+        base_target = args.cap_to * upm / 1000
         n_loose = 0
         for a in letters:
             if a not in args.cap_letters:
@@ -338,6 +372,11 @@ def main() -> int:
                 ga, gb = cmap[ord(a)], cmap[ord(b)]
                 if ga not in band_of or gb not in band_of:
                     continue
+                # 各类字对可以有自己的目标：小写连写（de/or/lo）本来就该比大写对松，
+                # 用一个 target 拉平等于毁掉原设计的节奏。
+                target = target_for(a, b, base_target, pair_targets)
+                if (a + b) in exact_pairs:
+                    target = exact_pairs[a + b] * upm / 1000
                 cur = deltas.get((ga, gb), old.get((ga, gb), 0))
                 r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cur)
                 if r is None:
