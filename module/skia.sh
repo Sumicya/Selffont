@@ -1,25 +1,27 @@
 #!/system/bin/sh
 # Skia 那条路的开关：`/system/etc/fonts.xml`（Flutter / WebView / 部分厂商小组件读它）。
 #
-# 为什么默认 off，以及 2026-11-10 改了什么（有源码依据，见下）：
-#   机制不在「有码位就命中」，在**位置**。AOSP minikin `FontCollection::calcCoverageScore`：
-#       if ((vs == 0 || hasVSGlyph) && (mFamilies[0] == fontFamily || fontFamily->isCustomFallback()))
-#           return kFirstFontScore;     // ← 无条件最高分，直接 return，不看别的族
-#   旧版这里把我们的族插在 `<familyset>` 之后第一个位置 ⇒ 正好是 mFamilies[0]
-#   ⇒ 本包字件的 cmap 一旦含该码位就必被选中，设备自带的 Noto/OPPO 完全没有机会。
-#   实测（.evidence/h3_before.xml）：本包族序号 = 0 / 共 5 个族。
-#   本包字件 cmap 有 33,944 个码位（汉字 20,977 + 扩展 A 6,582 + 假名 189 + …，谚文 0），
-#   所以「大片没字」的量级完全对得上——不是空字形（空字形只有 13 个，其中 8 个是填空符）。
-# 2026-11-10 的改动：**不再插匿名首族**，只插 sans-serif 与中日韩 lang 族。
-#   这样本包族不再占 0 号位，命中要靠 hasGlyph + 语言分，缺字能正常落到设备的族。
-# 仍未验证：真机上的可视差异。本轮没有设备，只有离线数字（见 .evidence/）。
+# 2026-11-07 重写。旧版把字件插在「中日韩 lang 族**族尾**」，并且只插中日韩族。按 Skia 源码
+# 逐条复算（`tools/skia_paths.py` 就是那个复算器），这个插法在 Flutter 里命中率是 **0.00%**：
+#   · Flutter 走 Skia（`flutter/engine` `txt/src/txt/platform_android.cc`：
+#     `GetDefaultFontFamilies()` 返回 `{"sans-serif"}`、`SkFontMgr_New_Android(nullptr, …)`），
+#     每次逐字回退拿的族名就是 `sans-serif`。
+#   · `SkFontMgr_android.cpp` `onMatchFamilyStyleCharacter` 第一层只查 `sans-serif`
+#     **这一个族**；该族里 400 档已有设备自己的 OPPO/Noto，`unicharToGlyph != 0` 成立就 return。
+#   · 而 `find_family_style_character` 对每个族**只取一个** face（`matchAStyle`），
+#     `SkFontMgr.cpp:242 matchStyleCSS3` 并列时取先出现的（`maxScore < currentScore` 严格小于）。
+#     ⇒ 排在族尾＝永远轮不到。
+# 现在：插 `sans-serif`、中日韩语言族、以及无 name 无 lang 的匿名默认族的**族首**，默认开。
+# 实测（同一份假设备配置，只差插法）：族尾 0.00% → 族首 100%（w100–w900 全档、含无族名请求）。
+# 不吃掉设备的字：emoji 族（`lang="und-Zsye"`）、serif 族、阿拉伯族不在插入范围，逐字复算未受影响。
+#
+# 只插不换：设备那份里有 OPPO Sans 等 OEM 字件，整份盖掉会把它们删掉。
 #
 # 用法（手机上直接跑，改完重启生效）：
 #   sh skia.sh status     打印当前开关与模块里那份文件在不在
-#   sh skia.sh on         插（默认链 / sans-serif / 中日韩语言族最前面加我们的字件）
+#   sh skia.sh on         插（默认档）
 #   sh skia.sh off        撤（删模块里那份，回设备原文件）
 #   sh skia.sh apply      按当前标记落地一次（customize.sh 安装时调这个）
-# 一律只插不换：设备自己那份里有 OPPO Sans 等 OEM 字件，整份盖掉会把它们删掉。
 command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
 MODDIR=${0%/*}; [ "$MODDIR" = "$0" ] && MODDIR=.
 STATE=${SELFFONT_SKIA_STATE:-/data/adb/selffont-skia.state}
@@ -29,8 +31,8 @@ TARGET=$MODDIR/system/etc/fonts.xml
 
 state() {
     case $(sed -n 's/^mode=//p' "$STATE" 2>/dev/null | tail -n 1) in
-        on) echo on ;;
-        *) echo off ;;
+        off) echo off ;;
+        *) echo on ;;
     esac
 }
 
@@ -57,47 +59,53 @@ apply() {
         return 0
     fi
     mkdir -p "$MODDIR/system/etc"
-    awk -v rowsfile="$INSERT" '
-        function cjk(tag,   s, n, a, i, v) {
-            if (!match(tag, /lang="[^"]*"/)) return 0
+    # 韩文保护。本包 cmap 里谚文 0 个，而 Skia 对每族只查一个 face：我们一旦占了族首，
+    # 设备的 NotoSansCJKkr / NotoSansKR 就再也轮不到，韩文整片落豆腐。实测判据见
+    # tools/skia_paths.py（设备有韩文字件时族首插法的 Korean 命中率 0%）。
+    # 只在「设备那份配置里确有韩文字件」时把 lang 含 ko 的族跳过，其余照插。
+    skip_ko=0
+    if grep -q 'lang="[^"]*ko' "$ROOT/system/etc/fonts.xml" 2>/dev/null; then
+        skip_ko=1
+    fi
+    awk -v rowsfile="$INSERT" -v skipko="$skip_ko" '
+        # 这一族该不该插：命名族 `sans-serif`、带中日韩 lang 的族、无 name 无 lang 的匿名默认族。
+        # emoji（und-Zsye）/ serif / 阿拉伯等一族都不碰——每族只查一个 face，插进去会顶掉它们。
+        function wanted(tag,   s, n, a, i, v) {
+            if (tag ~ /name="sans-serif"/) return 1
+            if (!match(tag, /lang="[^"]*"/)) {
+                # 无 lang：只有完全没有 name 的匿名默认族要插；其余命名族（serif 等）不动。
+                return tag !~ /name="/
+            }
             s = substr(tag, RSTART + 6, RLENGTH - 7)
             n = split(s, a, ",")
             for (i = 1; i <= n; i++) {
                 v = a[i]; sub(/-.*$/, "", v); gsub(/[ \t]/, "", v)
-                if (tolower(v) == "zh" || tolower(v) == "ja" || tolower(v) == "ko") return 1
+                v = tolower(v)
+                if (v == "zh" || v == "ja") return 1
+                if (v == "ko") return skipko ? 0 : 1
             }
             return 0
         }
         BEGIN {
             while ((getline row < rowsfile) > 0) rows = rows row "\n"
             close(rowsfile)
-            pending = 0
         }
+        # 插在 <family …> 之后的第一行（族首）。Skia 对每个族只取一个 face 且并列取先出现的，
+        # 所以只有族首能让我们的字件被选中；插族尾等于没插（旧版实测 0.00%）。
         {
-            # 2026-11-10 三次修正的最终形态（每条都有实测反例，见 .evidence/）：
-            #   ① 不再在 <familyset> 后插匿名族 —— 那是 mFamilies[0]，minikin 一票通过。
-            #   ② 不再插 sans-serif —— 设备上它往往就是 0 号族，等于没改。
-            #   ③ 插在**族尾**（</family> 之前），不是族首：族内 getClosestMatch 同权重先到者
-            #      优先，插族首会把设备自带的 Noto 挤到后面，仍然是我们被选中。
-            # 只对带 lang 的中/日/韩族生效；插的是 <font> 行，必须落在 </family> 之前。
-            if ($0 ~ /<\/family>/ && pending) {
-                printf "%s", rows
-                pending = 0
-            }
             print
-            if ($0 ~ /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/) {
-                pending = cjk($0) ? 1 : 0
-            }
+            if ($0 ~ /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/ && wanted($0)) printf "%s", rows
         }
         ' "$ROOT/system/etc/fonts.xml" > "$TARGET" 2>/dev/null
-    # 校验插进去了几条：拿插入行里的字件文件名去数（不写死 Selffont，自检夹具用的就是别的名字）。
+    # 校验插进去了几条：拿插入行里的字件文件名去数（不写死 Selffont，自检夹具有别的名字）。
     # grep -c 没命中会先打印 0 再返回 1，写成 `|| echo 0` 会拿到两行的 "0\n0"，
     # [ -gt 0 ] 直接报 Illegal number，所以先 `|| true` 再补默认值。
     marker=$(sed -n 's|.*>\([^<]*\)</font>.*|\1|p' "$INSERT" | head -n 1)
     touched=$(grep -c -F "$marker" "$TARGET" 2>/dev/null || true)
     [ -n "$touched" ] || touched=0
     if [ "${touched:-0}" -gt 0 ]; then
-        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（中日韩语言族族尾；不占 mFamilies[0]，设备字件在前、OEM 原样保留）"
+        [ "$skip_ko" = 1 ] && note="，韩文族已跳过（本包无谚文，留给设备）" || note=""
+        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（sans-serif / 中日韩族 / 匿名默认族的族首$note）"
         return 0
     fi
     rm -f "$TARGET"

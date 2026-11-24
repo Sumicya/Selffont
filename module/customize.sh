@@ -100,13 +100,15 @@ for partition in system system_ext product; do
     done
 done
 
-# Skia 那份（/system/etc/fonts.xml）默认**不动**，开关在 skia.sh。
-# 理由与真机症状写在 skia.sh 头注：Skia 的逐字回退「有码位即命中」，插到默认链最前面会让
-# Flutter（FlClash 这类）界面大片没字；默认 off 时它用设备自己的链，一定有字。
-# 要试插：sh /data/adb/modules/MFGA/skia.sh on（重启生效），撤：... skia.sh off。
+# Skia 那份（/system/etc/fonts.xml）**默认插**，开关在 skia.sh。
+# 2026-11-07 之前默认 off，理由是「插到默认链最前面会让 Flutter 界面大片没字」。那个归因错了：
+# 它引的是 minikin 的 calcCoverageScore，而 `/system/etc/fonts.xml` 在 AOSP 里只由
+# `SystemFonts.getSystemFontConfigFromLegacyXml()` 读（SystemFonts.java:57/342，测试用），
+# 生产路径读的是同目录的 font_fallback.xml（:56/:309）。Flutter 走 Skia，与 minikin 无关。
+# 现在按 Skia 源码逐字复算定插法（tools/skia_paths.py）：见 skia.sh 头注。
 insert="$MODPATH/fonts-insert.xml"
 skia=$(sh "$MODPATH/skia.sh" apply 2>&1)
-echo "$skia" | grep -q '未插' || ui_print "$skia"
+case $skia in *未插*) ;; *) ui_print "$skia" ;; esac
 
 # 安装结果落盘：安装日志在管理器里一闪而过，真机上没人抢得到这几行。
 # 落到 /data/adb（不在模块里，卸载模块也还在），重启后 `cat` 就能回答「到底换了没、换了几处」。

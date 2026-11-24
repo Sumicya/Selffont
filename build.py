@@ -637,14 +637,21 @@ def replace_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> Non
     family.append(primary_node(font_name, ladder))
 
 
-def swap_fonts(family: ET.Element, font_name: str, ladder: list[dict]) -> None:
+def swap_fonts(family: ET.Element, font_name: str, ladder: list[dict],
+               keep_languages: frozenset[str] = frozenset()) -> None:
     """CJK 语言区：删掉旧主字体与度量空壳；清空了的族换成主字体单字件，还有别的字件的族一个不动。
 
     真机实测（ColorOS 16，26.10.7.4.98）：把主字体（supportedAxes）前置进 NotoSansCJK 的 .ttc 族、
     Hentaigana 族，也就是同一族里混 supportedAxes 字件与带 index/weight 的字件，开机卡第一屏重启；
     去掉这三处前置后正常开机。所以语言区族只能是纯主字体，或原样不动，不许混。
     不丢覆盖：单字件族在文件里排在 Noto 同语言族之前，同语言缺字仍先落主字体。
+
+    `keep_languages`：这一族带的语言里有本包**一个码位都没有**的那种（现在只有 ko，母版
+    谚文 0 个）。这种族整族换掉＝那门语言全落豆腐。判据在调用侧从字体 cmap 现读，不写死。
     """
+    if any(part.split("-")[0].strip().lower() in keep_languages
+           for part in (family.get("lang") or "").split(",") if part.strip()):
+        return
     for node in list(family.findall("font")):
         if (node.text or "").strip() in OLD_PRIMARY | {CARRIER}:
             family.remove(node)
@@ -659,13 +666,17 @@ def is_cjk_locale(tag: str | None) -> bool:
     缺字时按「完整 BCP-47 标签（含 script）→ 仅语言 → 顺序」匹配，语言区优先于默认区顺序。
     非 CJK 的语言区（und-Arab 之类）与 emoji 区一律不碰。
     """
-    return any(part.split("-")[0].strip().lower() in CJK_LANGS
+    # `und-Nkoo`（N'Ko 文）的主语言子标签是 `und`，但旧写法拿整个 tag 做子串比较，
+    # `"und-Nkoo" in {"zh","ja","ko"}` 恒假、而拆出来之前 `"ko" in "und-Nkoo"` 恒真——
+    # 2026-11-07 实测它把 N'Ko 族当成了韩文族。现在严格按 BCP-47 主语言子标签比。
+    return any(part.strip().split("-")[0].lower() in CJK_LANGS
                for part in (tag or "").split(",") if part.strip())
 
 
 def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
                     cjk: bool = False, cjk_name: str | None = None,
-                    cjk_family: str | None = None, cjk_is_variable: bool = True) -> bytes:
+                    cjk_family: str | None = None, cjk_is_variable: bool = True,
+                    keep_languages: frozenset[str] = frozenset()) -> bytes:
     """主字体接管全部主家族、CJK 语言区与默认区；空壳留在度量家族；匿名字形回退紧随默认家族。
 
     输出统一是新语法（supportedAxes,Android 15+ 运行时实例化）：安装脚本只投放 font_fallback*.xml,
@@ -700,7 +711,7 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
         elif name in METRIC_FAMILIES and files == {CARRIER}:
             continue  # 度量家族保留空壳：主字体走匿名回退，这里只提供行度量
         elif locale and is_cjk_locale(lang) and not variant:
-            swap_fonts(family, font_name, ladder)  # CJK 语言区：清空的族换主字体单字件，混有其他字件的族不动
+            swap_fonts(family, font_name, ladder, keep_languages)  # CJK 语言区：清空的族换主字体单字件，混有其他字件的族不动
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
             replace_fonts(family, font_name, ladder)  # 语言区只换字件，lang/variant 属性原样保留
     # 母版直通族：单独一个 family，**带 zh 语言标签**，排在所有 CJK 语言区族之前。
@@ -961,9 +972,19 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                 if passthrough_name:
                     cjk_family = (_probe["name"].getDebugName(16)
                                   or _probe["name"].getDebugName(1) or "Maruko Gothic")
+        # 本包「一个码位都没有」的 CJK 语言：它的语言族不许被整族换成主字体。
+        # 现状只有 ko（母版谚文 0/11,184）；判据从进包字节现读，不写死语言名。
+        with TTFont(io.BytesIO(cjk_font or packaged), lazy=True) as _cjk_probe:
+            _cmap = set(_cjk_probe.getBestCmap())
+        _absent = {name_: rng for name_, rng in
+                   (("ko", (0xAC00, 0xD7A3)), ("ja", (0x3040, 0x30FF)))}
+        keep_languages = frozenset(
+            name_ for name_, (lo, hi) in _absent.items()
+            if not any(lo <= cp <= hi for cp in _cmap))
         xml = configure_fonts(template, name, ladder, cjk=bool(cjk_file),
                               cjk_name=cjk_file, cjk_family=cjk_family,
-                              cjk_is_variable=cjk_is_variable)
+                              cjk_is_variable=cjk_is_variable,
+                              keep_languages=keep_languages)
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
         # 直通母版开放 wght 300–500（tools/cjk_vf.py），超出这条阶梯的请求本来就落到主字体。
@@ -1258,36 +1279,33 @@ def legacy_rows(faces: list[tuple[str, list[dict]]]) -> bytes:
 
     Android 框架读 `font_fallback.xml`，Flutter / WebView / 部分厂商小组件走 Skia，
     而 Skia 把配置路径写死成 `/system/etc/fonts.xml`（`google/skia`
-    `src/ports/SkFontMgr_android_parser.cpp`：`LMP_SYSTEM_FONTS_FILE` 在第 31 行，
-    `parse_config_file(...)` 在第 777 行）。只换 framework 那几份时，这些程序照旧读 OEM
-    配置——2026-10-28 真机：`/system/etc/fonts.xml` 里 Selffont **0** 次，另三份各 16 次。
+    `src/ports/SkFontMgr_android_parser.cpp`：`LMP_SYSTEM_FONTS_FILE` 在第 51 行）。
 
-    **不能整份替换**：仓库里的 `fonts.xml` 是 AOSP+MIUI 混编模板，设备那份里有 OPPO Sans
-    等 OEM 字件（真机反馈：天气小组件落到 OPPO Sans）。整份盖掉等于把这些字件一起删掉。
-    所以这里只出「要插的行」，由安装脚本把它插进**设备自己那份**文件里，其余行原样保留。
+    **只出一条 400**：Skia 的 `matchStyleCSS3` 打分，主字体只有 400 一档时，
+    w100–w900 的全部请求都会选中它（逐字复算见 `tools/skia_paths.py` 与
+    `runtime_scripts` 的断言）。旧版按 18 档阶梯逐档出一条，命中率一模一样，
+    多出来的 17 行只是让设备那份配置变长。
 
-    一条字重一行，是因为 Skia 按 `weight`/`style` 逐条匹配：只写 400 一条时，App 里
-    500/700 的粗体全部落回设备的 Roboto，看起来就是「只有正文是我们、标题不是」。
-    主字体带 ital 轴，斜体单独成条；直通母版只有 wght 轴，调用方传入的阶梯里不含斜体。
+    **不能整份替换**：设备那份里有 OPPO Sans 等 OEM 字件，整份盖掉等于把它们删掉。
+    所以只出「要插的行」，由 `skia.sh` 插进**设备自己那份**文件的族首。
     """
-    rows = []
-    for name, ladder in faces:
-        for entry in ladder:
-            style = "italic" if entry["italic"] else "normal"
-            rows.append(f'    <font weight="{entry["weight"]}" style="{style}">{name}</font>\n')
-    return "".join(rows).encode("utf-8")
+    return "".join(f'    <font weight="400" style="normal">{name}</font>\n' for name, _ in faces).encode("utf-8")
 
 
 @check
 def skia_insert_rows():
-    """Skia 那份插入行必须覆盖整条阶梯：只写 400 一条时，App 里标题/粗体全落回设备字体。"""
-    ladder = weight_ladder({"wght": (100, 400, 900), "ital": (0, 0, 1)})
-    rows = legacy_rows([("F.ttf", ladder)]).decode("utf-8").splitlines()
-    assert len(rows) == len(ladder) == 18, f"阶梯 {len(ladder)} 档，只出了 {len(rows)} 行"
-    assert sum('style="italic"' in row for row in rows) == 9, "斜体档位没出全"
-    weights = {row.split('weight="', 1)[1].split('"', 1)[0] for row in rows}
-    assert weights == {str(weight) for weight in WEIGHTS}, f"字重不全：{sorted(weights)}"
-    assert all(row.startswith('    <font ') for row in rows), "缩进/行首不对，插进设备配置会破坏语法"
+    """插入行只一条 400，且必须是合法的 `<font>` 行。
+
+    旧版这条断言要求 18 档出 18 行，理由是「只写 400 时 App 里粗体全落回设备字体」。
+    那条理由没验过：按 `matchStyleCSS3` 打分，族里只有一个 400 档时，任何字重请求都会
+    选中它。改成验真正会坏的地方——行首缩进、`</font>` 闭合、文件名非空。
+    """
+    rows = legacy_rows([("F.ttf", weight_ladder({}))]).decode("utf-8").splitlines()
+    assert len(rows) == 1, f"主字体只有 400 一档，应出 1 行，实际 {len(rows)} 行"
+    assert rows[0] == '    <font weight="400" style="normal">F.ttf</font>', rows[0]
+    # 两个字件（直通母版 + 主字体）各一行，顺序照传入顺序：配置文件里先出现的先被 Skia 选中。
+    both = legacy_rows([("A.ttf", []), ("B.ttf", [])]).decode("utf-8").splitlines()
+    assert [line.split(">")[1].split("<")[0] for line in both] == ["A.ttf", "B.ttf"], both
 
 
 @check
@@ -1307,6 +1325,27 @@ def fonts_xml():
         "静态主字体必须写 weight/style，写 supportedAxes 会被 AOSP 当可变字体读 fvar，整族失效"
 
     template = (ROOT / "fonts.xml").read_bytes()
+    # 本包一个码位都没有的语言（现在只有 ko：母版谚文 0/11,184），它的语言族不许被换成主字体。
+    # 换掉＝Skia 和 minikin 都会拿我们的字去画韩文，画不出来就是豆腐块。
+    # 变异（实测）：删掉 swap_fonts 里那三行判断，这条立刻 FAIL，读数是 lang="ko" 的族变成 ["V.ttf"]。
+    ko_root = ET.fromstring(configure_fonts(template, "V.ttf", ladder, cjk=True, cjk_name="C.ttf",
+                                            keep_languages=frozenset({"ko"})))
+    ko_families = [family for family in ko_root.findall("family")
+                   if (family.get("lang") or "").strip() == "ko"]
+    assert ko_families, "模板里应有 lang=\"ko\" 的族（没有的话这条断言恒真）"
+    for family in ko_families:
+        files = [(node.text or "").strip() for node in family.findall("font")]
+        assert files and "V.ttf" not in files, \
+            f'lang="ko" 的族被换成了主字体字件（本包谚文 0 个，韩文会全落豆腐）：{files[:3]}'
+    # 反向：不传 keep_languages 时照旧换（证明上一条不是恒真）。看 zh 族就行——
+    # 它和 ko 走同一条 swap_fonts 分支；ko 那族在模板里已被前面几轮改过，不能当基准。
+    plain = [(family.get("lang"), [(node.text or "").strip() for node in family.findall("font")])
+             for family in ET.fromstring(
+                 configure_fonts(template, "V.ttf", ladder, cjk=True, cjk_name="C.ttf")
+             ).findall("family") if (family.get("lang") or "").startswith("zh")]
+    assert any(files == ["C.ttf"] for _lang, files in plain), \
+        f"不传 keep_languages 时 zh 族应该照旧整族换（否则上一条断言恒真）：{plain}"
+
     root = ET.fromstring(configure_fonts(template, "V.ttf", ladder))
     assert not root.attrib, "font_fallback.xml 根节点不该带属性（AOSP：No attributes are allowed）"
     assert re.search(r"<familyset>", configure_fonts(template, "V.ttf", ladder).decode()), \
@@ -1913,6 +1952,84 @@ def firefox_bridge():
 # ---------------------------------------------------------------- 模块安装脚本
 
 @check
+def skia_flutter_path():
+    """Skia（Flutter / WebView）那条路：插族首才命中，插族尾等于没插。
+
+    这个检查存在的理由：2026-11-07 之前 `skia.sh` 插族尾、只插中日韩族，逐字复算的命中率是
+    0.00%——Flutter 里「换了字」这件事从来没发生过，而仓库里写的是「已插」。判据不能靠读代码，
+    所以这里把 Skia 的族选择逻辑跑一遍，红就是红。
+
+    变异校验过：把 skia.sh 的插入点挪回族尾，下面第一条断言直接 FAIL。
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "tools"))
+    import skia_paths
+
+    our = "Selffont-MarukoGothicCJKsc.ttf"
+    device = "OPPOSans-Regular.ttf"
+    stock = f'''<?xml version="1.0" encoding="utf-8"?>
+<familyset version="23">
+    <family>
+        <font weight="400" style="normal">{device}</font>
+    </family>
+    <family name="sans-serif">
+        <font weight="400" style="normal">{device}</font>
+    </family>
+    <family name="serif">
+        <font weight="400" style="normal">NotoSerif-Regular.ttf</font>
+    </family>
+    <family lang="zh,zh-Hans,zh-Hant">
+        <font weight="400" style="normal">{device}</font>
+    </family>
+    <family lang="und-Zsye">
+        <font weight="400" style="normal">NotoColorEmoji.ttf</font>
+    </family>
+</familyset>
+'''
+    rows = f'        <font weight="400" style="normal">{our}</font>\n'
+    cmaps = {our: set(range(0x4E00, 0x4E20)) | {0x9FFF},
+             device: set(range(0x4E00, 0x4E10)),
+             "NotoSerif-Regular.ttf": set(), "NotoColorEmoji.ttf": {0x1F600}}
+    probe = sorted(cmaps[our])
+
+    def run(mode: str) -> tuple[int, dict]:
+        out = []
+        current = ""
+        for line in stock.splitlines(True):
+            stripped = line.strip()
+            if stripped.startswith("</family>"):
+                if mode == "tail" and ("sans-serif" in current or 'lang="zh' in current):
+                    out.append(rows)
+                out.append(line)
+                continue
+            if stripped.startswith("<family"):
+                current = stripped
+            out.append(line)
+            if stripped.startswith("<family") and mode == "head" \
+                    and ("sans-serif" in stripped or 'lang="zh' in stripped):
+                out.append(rows)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fonts.xml"
+            path.write_text("".join(out), encoding="utf-8")
+            families = skia_paths.parse_families(path)
+        hit = sum(1 for cp in probe if skia_paths.choose(families, cmaps, cp) == our)
+        return hit, families
+
+    tail, _ = run("tail")
+    head, families = run("head")
+    assert tail == 0, f"族尾插法竟然命中了 {tail} 个码位：判据和预期不符，先查 skia_paths"
+    assert head == len(probe), f"族首插法只命中 {head}/{len(probe)}：Flutter 里会漏字"
+    # 不吃掉设备的字：emoji 族（und-Zsye）与 serif 族都不在插入范围。
+    assert skia_paths.choose(families, cmaps, 0x1F600) == "NotoColorEmoji.ttf", "emoji 族被顶掉了"
+    assert skia_paths.choose(families, cmaps, 0x4E05, family_name="serif") == device, "serif 族被顶掉了"
+    # 缺口怎么办：0x4E18 我们和设备的字件都有 → 我们赢（设计目标）；
+    # 0x4E30 只有设备有 → 该落设备。两条一起验，免得把「族首」写成「无条件抢」。
+    assert skia_paths.choose(families, cmaps, 0x4E18) == our
+    cmaps[device].add(0x4E30)
+    assert skia_paths.choose(families, cmaps, 0x4E30) == device, "我们有缺口时该落设备字件"
+
+
+@check
 def runtime_scripts():
     assert sh(["-n", str(ROOT / "module/customize.sh")], os.environ).returncode == 0, "customize.sh 语法错误"
     # ★ 2026-11-10：安装脚本原来只停用 MFGA 一个旧模块，另两个同源 id 不管。
@@ -1988,20 +2105,22 @@ def runtime_scripts():
                          "system/system_ext/etc/fonts_base.xml", "system/system_ext/etc/fonts_ule.xml"):
             target = modpath / relative
             assert target.read_text() == "<familyset modern/>", f"{relative} 应放新语法"
-        # 默认 off：模块里不许有 system/etc/fonts.xml——插进去会让 Flutter（Skia）界面大片没字，
-        # 详见 module/skia.sh 头注。开关 on/off 走 skia.sh，这里两条都验。
-        assert not (modpath / "system/etc/fonts.xml").exists(), \
-            "默认不许产出 Skia 配置：它会让 Flutter 界面没字（Selffont:skia=off）"
-        assert "Selffont:skia=off" in result.stdout, "安装时应报告 Skia 那条路是关的：" + result.stdout
+        # 默认**插**：/system/etc/fonts.xml 是 Skia（Flutter / WebView）唯一读的配置。
+        # 2026-11-07 之前默认 off，依据是「插到最前会让 Flutter 大片没字」——那条归因引的是
+        # minikin 的 calcCoverageScore，而 AOSP 生产路径读的是 font_fallback.xml
+        # （SystemFonts.java:56/:309），fonts.xml 只由 getSystemFontConfigFromLegacyXml()
+        # （:57/:342）在测试里读。判据换成 tools/skia_paths.py 对 Skia 判定的逐字复算。
+        assert (modpath / "system/etc/fonts.xml").exists(), \
+            "默认就该插 Skia 配置：不然 Flutter 那条路等于没换字"
+        assert "Skia /system/etc/fonts.xml：已插" in result.stdout, \
+            "安装时应报告 Skia 那条路插了几处：" + result.stdout
         env_on = dict(env, SELFFONT_SKIA_STATE=str(tmp / "skia.state"))
         on = sh([str(modpath / "skia.sh"), "on"], env_on)
         assert on.returncode == 0, on.stderr
         # Skia 只读 /system/etc/fonts.xml（SkFontMgr_android_parser.cpp 写死）；插入而不替换：
         # 原有每一行（含 OEM 字件、注释、自闭合族）逐字保留，只在我们该管的三类族里加行。
         skia = (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8")
-        assert skia.splitlines()[:0] == []
-        # 去掉我们加的字件行之后，设备原文件的每一行都必须**按原顺序**保留
-        # （新增的是「默认链那一族」的外壳两行，所以不是逐行相等，而是原文件是子序列）。
+        # 去掉我们加的字件行之后，设备原文件的每一行都必须**按原顺序**保留。
         kept = [line for line in skia.splitlines() if "Any-Name.ttf" not in line]
         original = stock_legacy.splitlines()
         index = 0
@@ -2011,38 +2130,29 @@ def runtime_scripts():
         assert index == len(original), f"设备原文件被改动：只剩 {index}/{len(original)} 行按序保留"
         blocks = re.split(r"(?=<family[ >])", skia)
         ours = [b for b in blocks if "Any-Name.ttf" in b]
-        # ★ 2026-11-10 改判据：原来是「插 4 处，且插到 OPPO Sans 前面」——那条断言正是缺陷本身。
-        #   AOSP minikin `calcCoverageScore`：
-        #       if ((vs == 0 || hasVSGlyph) && (mFamilies[0] == fontFamily || family->isCustomFallback()))
-        #           return kFirstFontScore;   // 一票通过，getFamilyForChar 立刻 return
-        #   插到第一个族（匿名默认链 / OPPO Sans 那个位置）＝ mFamilies[0] ＝ 本包字件无条件抢走
-        #   全部命中，设备自带的 Noto/OPPO 永远轮不到。真机表现就是「界面大片没字」。
-        #   现在：只插**带 lang 的中/日/韩族**，并且插在**族尾**（设备字件之后），
-        #   由 hasGlyph 逐字判，缺字正常回退。实测（.evidence/h4_exact.txt）：
-        #     插匿名首族   → 本包画 33,944 / 设备画      0
-        #     插 lang 族首 → 本包画 33,943 / 设备画      1
-        #     插 lang 族尾 → 本包画  2,001 / 设备画 31,943   ← 只补设备没有的那 2,001 个码位
-        assert len(ours) == 2, f"应只插 2 处（zh + ja 两个带 lang 的族），实际 {len(ours)}"
-        assert not any("OPPOSans-Regular.ttf" in b and "Any-Name.ttf" in b for b in ours), \
-            "不许插进 OPPO Sans 那个默认链：那是 mFamilies[0]，minikin 会对它一票通过（大片没字的根因）"
-        # 插的是族尾：本包字件行必须在**该族已有的字件行全部出现之后**。
-        # 上一版写 `lines[-1]` 取整块最后一行，当时块尾是下一个族的 <family> 标签，判据恒真 ——
-        # 变异「插回族首」实测照样通过（本文件 2026-11-10 反例）。改成比行号。
+        # 插法判据只看 Skia 源码，不看 minikin：`onMatchFamilyStyleCharacter` 第一层只查请求的
+        # 那一个族（Flutter 请求 sans-serif，platform_android.cc GetDefaultFontFamilies），
+        # `find_family_style_character` 每族只取一个 face，`matchStyleCSS3` 并列取先出现的。
+        # => 族尾永远轮不到；族首才被选中。逐字复算（tools/skia_paths.py）：
+        #     族尾 0.00% / 族首 100%（w100–w900 全档）
+        # 夹具那四族：匿名默认族、sans-serif、zh、ja（ko 没有）。serif / und-Arab / und-Zsye 不插。
+        assert len(ours) == 4, \
+            f"应插 4 处（匿名默认族 + sans-serif + zh + ja），实际 {len(ours)}"
+        assert any("sans-serif" in b for b in ours), "sans-serif 是 Flutter 的请求族名，必须插"
+        assert any("OPPOSans-Regular.ttf" in b for b in ours), \
+            "匿名默认族要插：无族名请求走这一族"
+        # 插的是族首：本包字件行必须在该族**第一条** <font> 之前。
         for block in ours:
             body = [ln for ln in block.splitlines() if "<font" in ln]
             assert body, f"该族没有任何 <font> 行：{block[:80]}"
             ours_at = [i for i, ln in enumerate(body) if "Any-Name.ttf" in ln]
             assert len(ours_at) == 1, f"本包字件行应恰好 1 行，实际 {len(ours_at)} 行"
-            assert ours_at[0] == len(body) - 1, \
-                f"本包字件必须插在族尾（设备字件之后），实际第 {ours_at[0] + 1}/{len(body)} 行"
+            assert ours_at[0] == 0, \
+                f"本包字件必须插在族首（Skia 每族只查一个 face，族尾等于没插），实际第 {ours_at[0] + 1}/{len(body)} 行"
         assert not any("NotoNaskhArabic" in b or "NotoColorEmoji" in b or "NotoSerif" in b
                        for b in ours), "非中日韩语言族 / serif / emoji 不该插"
-        for directory in ("system_ext/etc", "product/etc"):
-            assert not (modpath / directory / "fonts.xml").exists(), \
-                f"{directory} 的 fonts.xml 不该被替换"
-        assert not (modpath / "system/etc/fonts_customization.xml").exists(), "自选配置不该被碰"
+        assert "Skia /system/etc/fonts.xml：已插 4 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
         assert "已替换 4 份字体配置" in result.stdout, "应报告替换数量：" + result.stdout
-        assert "Skia /system/etc/fonts.xml：已插 2 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
             "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"

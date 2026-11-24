@@ -16,6 +16,11 @@
       "path": "tools/cjk_vf.py",
       "why": "只服务自研汉字的 VF 编编译（gvar/GPOS 组装），汉字已下线，现在只为 side_target/kern_value 两张拉丁表保留读取函数。",
       "limit": "删除这段 VF 逻辑后，拉丁的侧距与字偶距读取不受影响；未做拆分，靠 build.py 自检守着这两条路径。"
+    },
+    {
+      "path": "tools/skia_paths.py",
+      "why": "复刻 Skia 的族选择与 matchStyleCSS3 打分，给 build.py 的 skia_flutter_path 检查项当判据。",
+      "limit": "它是复刻件，不是 Skia 本身。Skia 换源码（五层顺序或打分规则）时本文件不会自动跟着变；两条变异（并列改取最后、插入点挪回族尾）实测会红，但源码演进这一层没有守卫。"
     }
   ],
   "deferred": [

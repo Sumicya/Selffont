@@ -1,3 +1,75 @@
+## 2026-11-07 · Flutter 从来没换过字：Skia 那条路的插法错了，`skia.sh` 重写
+
+**结论**：`/system/etc/fonts.xml` 那条路上，改前的插法（只插中日韩语言族、插在**族尾**）
+在 Flutter 里的逐字命中率是 **0.00%**。不是「效果一般」，是一个字都轮不到。
+现在改成插 `sans-serif`、中日韩语言族、匿名默认族的**族首**，默认开，实测 100%。
+
+### 根因（源码逐条，不是推断）
+
+| # | 事实 | 出处 |
+|---|---|---|
+| 1 | Flutter 的字体全走 Skia，默认族名就是 `sans-serif` | `flutter/engine` `txt/src/txt/platform_android.cc`：`GetDefaultFontFamilies()` → `{"sans-serif"}`、`SkFontMgr_New_Android(nullptr, …)` |
+| 2 | 逐字回退第一层只查**这个名字的那一个族** | `SkFontMgr_android.cpp` `onMatchFamilyStyleCharacter` 注释 1..5，`find_family_style_character(familyName, fNameToFamilyMap, …)` |
+| 3 | 每个族**只取一个** face，不逐字试整个族 | 同上 `find_family_style_character`：`styleSet->matchAStyle(style)` 然后只查这一个 `unicharToGlyph != 0` |
+| 4 | 同分时**先出现的赢** | `src/core/SkFontMgr.cpp:242` `matchStyleCSS3`：`if (maxScore < currentScore)` 严格小于 |
+| 5 | `/system/etc/fonts.xml` 在 AOSP 里**只给测试用**，生产路径读 `font_fallback.xml` | `graphics/java/android/graphics/fonts/SystemFonts.java:56` `FONTS_XML = "/system/etc/font_fallback.xml"`、`:309` 生产调用；`:57` `LEGACY_FONTS_XML`、`:342` `getSystemFontConfigFromLegacyXml()` |
+
+⇒ 3+4 决定：插在族尾的字件，`matchAStyle` 永远选不到它，后面那句 `unicharToGlyph` 也就永远不执行。
+
+**顺带更正 2026-11-10（十六）的归因**。那一条把「插到最前面就大片没字」记在 minikin 的
+`calcCoverageScore`「`mFamilies[0]` 一票通过」头上。第 5 条表明 minikin 不读这份文件，
+那段引文解释不了 Flutter。原文按 §16 保留，此处更正：**当时的现象是真的，归因错了**。
+
+### 改了什么
+
+1. `module/skia.sh` 重写：插 `sans-serif` + 中日韩语言族 + 匿名默认族（无 name 无 lang）的
+   **族首**；`serif` / `und-Arab` / `und-Zsye`（emoji）一族都不碰——每族只取一个 face，
+   插进去就等于顶掉它。
+2. 默认值 `off` → `on`（`state()` 改判）。
+3. 韩文保护：设备配置里带 `ko` 族时，把韩语族跳过。本包 cmap 谚文 **0/11,184**，
+   占了族首就是整片豆腐。这条是「插族首」唯一真实的代价，已在脚本里挡住。
+4. `legacy_rows()` 从「18 档逐档一条」改成**只出 400 一条**。复算显示族里只有一个 400 档时，
+   w100–w900 的全部请求都选中它，命中率与 18 条完全相同，少 17 行。
+5. 新增 `tools/skia_paths.py`：复刻 Skia 五层族选择 + `matchStyleCSS3` 打分，带自检。
+6. `build.py` 新增检查项 `skia_flutter_path`（第 20 项）：族尾必须 0 命中、族首必须全命中、
+   emoji/serif 不许被顶掉。变异实测：把插入点挪回族尾 → `runtime_scripts` 红在
+   「必须插在族首…实际第 3/3 行」；把 `<=` 写成 `==` 之外的打分错 → `skia_paths --selftest` 红。
+
+### 顺带查出的第二个真缺陷：`is_cjk_locale` 把 N'Ko 当成韩文
+
+`is_cjk_locale` 旧写法 `part in CJK_LANGS` 是**子串**比较，`und-Nkoo` 里含 `ko` ⇒ N'Ko 族被
+当成韩文族。现在按 BCP-47 主语言子标签比：`part.split("-")[0].lower()`。
+已加断言，变异（删掉 `keep_languages` 判断）实测红在
+`lang="ko" 的族被换成了主字体字件（本包谚文 0 个，韩文会全落豆腐）：['V.ttf']`。
+
+### 覆盖面：汉字是满的，缺的是别的
+
+| 集合 | 总数 | 母版有 | 缺 |
+|---|---|---|---|
+| GB2312 汉字 | 6,763 | 6,763 | **0** |
+| GBK 汉字 | 20,902 | 20,902 | **0** |
+| GB18030 汉字 | 20,992 | 20,977 | 15（U+9FF0–U+9FFF） |
+| CJK 基本区 / 扩展 A | 20,977 / 6,582 | 同 | 0 |
+| 谚文 | 11,184 | **0** | 11,184 |
+| 箭头 / 几何 / 希腊 | 112 / 96 / 144 | 25 / 40 / 84 | — |
+
+汉字不缺。缺的非汉字由设备 Noto 出，回退链正常——**除了韩文**，因为它同时被
+`configure_fonts` 的语言区整族换过（上面第二条）。
+
+### 重构（§6：判据只有代码量）
+
+删除 4 个零引用孤儿：`tools/drop_stray.py`(78) / `fig_endcap_regression.py`(149) /
+`fig_line_height.py`(108) / `fig_selfx_severity.py`(135)。
+`build.py + tools/` 合计 **25,414 → 24,694 行（−720）**，`wc -l` 实测。
+
+### 未做 / 不知道
+
+- **真机没刷过**。以上全是离线复算（`tools/skia_paths.py` 复刻 Skia 判定），没有一个字是在
+  真机上看出来的。FlClash / WebView 的实际观感仍待装包确认。
+- 复刻器是按 Skia **当前 main** 的源码写的。设备上的 `libskia` 如果是旧版，判据可能不同；
+  这一点无法离线证。
+- 设备 `fonts.xml` 的真实形态用的是仓库夹具与 Redmi dump 的形状，没有拿到主人这台的原件。
+
 ## 2026-11-24 · 拿到真实失败原因：`满宽满高字数量变了`
 
 前三次 CI 红在验收步，沙箱拉不到日志（`blob.core.windows.net` 被挡），只能靠猜。
