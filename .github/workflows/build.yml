@@ -97,6 +97,16 @@ jobs:
           python tools/fix_latin_kern.py "work/latin/${MOTHER_NAME}" \
             -o "work/kern/${MOTHER_NAME}" --min-ink 34 | tee -a build/latin.md
           cp build/latin.md "$GITHUB_STEP_SUMMARY"
+      - name: 去掉挂在字形外的碎块
+        run: |
+          set -euo pipefail
+          # 母版在 5 个字外面各溅了一颗 8–9 点的碎块（日 论 攺 䐴 饦），屏幕上就是
+          # 「日 右上角多一个小点」。判据：8–9 点 + 尺寸 30–80 单位 + 与最近轮廓的
+          # 空隙 0.5–40 单位。全库扫描只有这 5 个命中，其它 33,884 个字形一个点不动。
+          mkdir -p work/stray
+          python tools/drop_stray_ring.py "work/kern/${MOTHER_NAME}" \
+            -o "work/stray/${MOTHER_NAME}" | tee build/stray.md
+          cp build/stray.md "$GITHUB_STEP_SUMMARY"
       - name: 取版本号（五段，不带 SHA）
         env:
           GH_TOKEN: ${{ github.token }}
@@ -113,7 +123,7 @@ jobs:
           set -euo pipefail
           # 五段 yy.m.d.当日号.总序号，全部来自上一步取号，不再自己拼日期。
           name="build-${VERSION}"
-          python build.py --passthrough-mother "work/kern/${MOTHER_NAME}" \
+          python build.py --passthrough-mother "work/stray/${MOTHER_NAME}" \
             --date "$(echo "$VERSION" | cut -d. -f1-3)" \
             --day "$(echo "$VERSION" | cut -d. -f4)" \
             --build "$(echo "$VERSION" | cut -d. -f5)" --module-id selffont-bench \
@@ -159,7 +169,7 @@ jobs:
           # ★ 2026-11-10：出包时直通件会过 normalize_metrics 把行框对齐设备空壳
           #   （930/-250/0），所以这里**不能**再要求整份字节相等 —— 那条断言等于
           #   禁止行框归一，而直通件正是全包唯一没过归一的那一份。
-          #   改成：轮廓与 hmtx 必须与 work/kern 那一份逐字相等（下面几段已经在查），
+          #   改成：轮廓与 hmtx 必须与 work/stray 那一份逐字相等（下面几段已经在查），
           #   外加一条「hhea 已被对齐到空壳」的正面断言。
           # 行框目标值取自**同一个包里的度量空壳**（不猜磁盘路径）；空壳不在包里
           # 就直接挂 —— 不许「找不到就跳过」，那正是假绿。
