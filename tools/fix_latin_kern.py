@@ -244,6 +244,8 @@ def main() -> int:
             flat[g] = flatten(gs, g)
 
     band_of = {g: bands(a) for g, a in flat.items() if len(a)}
+    XMIN = {g: float(a[:, [0, 2]].min()) for g, a in flat.items() if len(a)}
+    XMAX = {g: float(a[:, [0, 2]].max()) for g, a in flat.items() if len(a)}
     deltas, tight, missing = {}, [], []
     for a in letters:
         for b in letters:
@@ -269,7 +271,7 @@ def main() -> int:
     # 第二轮：同首字母里明显偏宽的对收回。
     # 为什么需要：A 的右斜腿与圆体（C/G/O/Q）之间天然空一块，`AC` 182 而同字母
     # 中位才 69；这一层不是「碰撞」，是比例不匀，得靠相对量判断，不能用绝对阈值。
-    if args.tighten_ratio > 0:
+    if args.tighten_ratio > 0 or (args.cap_letters and args.cap_to > 0):
         by_first = {}
         for a in letters:
             for b in letters:
@@ -306,6 +308,12 @@ def main() -> int:
                 probe = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cand)
                 if probe is not None and probe[0] < floor:
                     cand += floor - probe[0]
+                # 两条底线缺一不可。上面那条管「墨迹不许碰上」，这条管「后字不许画进
+                # 前字怀里」——F 的 bbox 宽 540 但墨迹集中在上半部，逐带墨距能到 100，
+                # 而 advance 只剩 128 时 u 就整个落进 F 的怀里了（L100 档实测）。
+                min_adv = (XMAX[ga] - XMIN[ga]) + floor
+                if hmtx[ga][0] + cand < min_adv:
+                    cand = min_adv - hmtx[ga][0]
                 if cand >= cur:
                     continue
                 deltas[(ga, gb)] = cand
