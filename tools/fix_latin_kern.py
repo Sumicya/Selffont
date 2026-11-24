@@ -223,6 +223,10 @@ def main() -> int:
                     help="任何一对的带最小间距不小于这个值（upm 千分比，默认 40）")
     ap.add_argument("--tighten-ratio", type=float, default=0.0,
                     help="把宽于「同首字母中位 × 该系数」的对收回来（0 = 不收，试 1.6）")
+    ap.add_argument("--cap-letters", default="",
+                    help="对这几个首字母改用绝对上限（如 A，配合 --cap-to）")
+    ap.add_argument("--cap-to", type=float, default=0.0,
+                    help="--cap-letters 里那些首字母的目标上限（upm 千分比）")
     args = ap.parse_args()
 
     font = TTFont(args.source)
@@ -282,6 +286,8 @@ def main() -> int:
         for a, items in by_first.items():
             med = sorted(x[2] for x in items)[len(items) // 2]
             cap = med * args.tighten_ratio
+            if a in args.cap_letters and args.cap_to > 0:
+                cap = args.cap_to * upm / 1000
             for ga, gb, mn, cur in items:
                 if mn <= cap:
                     continue
