@@ -63,20 +63,68 @@ def flatten(glyphset, gname: str) -> np.ndarray:
 
 
 BAND = 10          # 逐带量水平间距的带宽（upm 千分比 10 = 1% em）
-MIN_SHARED = 4     # 共同带少于这个数就不据其读数收宽（yV、yT 这类单点接触）
 
 
 def bands(a: np.ndarray) -> dict:
-    """逐 BAND 单位水平带的 (xMin, xMax)。按带比按点更接近「看起来挤不挤」：
-    斜边的笔尖只有一点接触，但整条斜边在水平上可以大面积叠住。"""
-    x, y = a[:, [0, 2]], a[:, 1]
-    lo, hi = int(y.min()), int(y.max())
+    """逐 BAND 单位水平带的 (xMin, xMax)。
+
+    上一版只用线段的**起点 y** 决定它属于哪个带，于是竖直笔画（F 的竖杆、L 的竖杆）
+    只在最底那条带出现，中间各带的 F 只剩横杠。`Fu` 因此报出 501 的「墨距」，而两个
+    字形真正最近的距离是 113——差 389。90 对（3.3%）高估超过 100，其中 Fu/Lj/Fy/yV
+    都是这个毛病。
+
+    现在把线段按它实际跨越的高度切开，逐带求 x 范围。
+    """
     out = {}
-    for y0 in range(lo - (lo % BAND), hi + 1, BAND):
-        m = (y >= y0) & (y < y0 + BAND)
-        if m.any():
-            out[y0] = (float(x[m].min()), float(x[m].max()))
+    x0, y0, x1, y1 = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+    lo_all = int(min(y0.min(), y1.min()))
+    hi_all = int(max(y0.max(), y1.max()))
+    b0 = lo_all - (lo_all % BAND)
+    for yb in range(b0, hi_all + 1, BAND):
+        top, bot = yb, yb + BAND
+        xmin, xmax = None, None
+        for i in range(len(a)):
+            ay0, ay1 = y0[i], y1[i]
+            s_lo, s_hi = (ay0, ay1) if ay0 <= ay1 else (ay1, ay0)
+            if s_hi < top or s_lo > bot:
+                continue
+            if s_hi == s_lo:
+                xs = [x0[i], x1[i]]
+            else:
+                t1 = max(0.0, min(1.0, (top - ay0) / (ay1 - ay0)))
+                t2 = max(0.0, min(1.0, (bot - ay0) / (ay1 - ay0)))
+                xs = [x0[i] + t * (x1[i] - x0[i]) for t in (t1, t2)]
+            lo, hi = min(xs), max(xs)
+            xmin = lo if xmin is None else min(xmin, lo)
+            xmax = hi if xmax is None else max(xmax, hi)
+        if xmin is not None:
+            out[yb] = (float(xmin), float(xmax))
     return out
+
+
+def point_gap(A: np.ndarray, B: np.ndarray, adv: float) -> float:
+    """两字并排时的**真实最短墨距**：后字平移 adv 后，轮廓点之间的最小距离。
+
+    这是「挤不挤」的正解。逐带法（band_gap）在两种情况下都不准：
+    - 竖直笔画只登记在起点带 → `Fu` 报 501，实际 113；
+    - 补上跨带切分后，A 的斜腿和 V 的斜边几乎每个高度都有墨 → `AV` 报 280，实际 34。
+    并排字的视觉间距就是最近的那一处墨，不是「逐带对齐」。
+    """
+    if len(A) == 0 or len(B) == 0:
+        return None
+    pa = np.concatenate([A[:, [0, 1]], A[:, [2, 3]]])
+    pb = np.concatenate([B[:, [0, 1]], B[:, [2, 3]]])
+    pb = pb.copy()
+    pb[:, 0] += adv
+    # 分块算，2702 对 × 每对上千点，一次性展开会炸内存
+    best = np.inf
+    step = 256
+    for i in range(0, len(pa), step):
+        d = np.sqrt(((pa[i:i+step, None, :] - pb[None, :, :]) ** 2).sum(-1))
+        m = d.min()
+        if m < best:
+            best = m
+    return float(best)
 
 
 def band_gap(pa: dict, pb: dict, adv: float):
@@ -249,8 +297,6 @@ def main() -> int:
             flat[g] = flatten(gs, g)
 
     band_of = {g: bands(a) for g, a in flat.items() if len(a)}
-    XMIN = {g: float(a[:, [0, 2]].min()) for g, a in flat.items() if len(a)}
-    XMAX = {g: float(a[:, [0, 2]].max()) for g, a in flat.items() if len(a)}
     deltas, tight, missing = {}, [], []
     for a in letters:
         for b in letters:
@@ -262,6 +308,9 @@ def main() -> int:
             if r is None:
                 continue
             mn, mean, overlap, n = r
+            pg = point_gap(flat[ga], flat[gb], hmtx[ga][0] + cur)
+            if pg is not None:
+                mn = min(mn, pg)
             if overlap > 0 or mn < floor:
                 # 每多重叠 1 单位，kern 涨 1 单位；同时保底 floor
                 need = max(floor - mn, -mn + floor if mn < 0 else 0)
@@ -293,13 +342,15 @@ def main() -> int:
                 r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cur)
                 if r is None:
                     continue
+                # 只用点距。取 min(逐带, 点距) 是错的方向：逐带在 `TJ` 低估到 91.8
+                # 而点距是 127.7，用 91.8 去判「要不要收」就几乎不收了。
+                pg = point_gap(flat[ga], flat[gb], hmtx[ga][0] + cur)
+                if pg is not None:
+                    r = (pg,) + r[1:]
                 if r[0] <= target and not (args.within > 0 and abs(r[0] - target) <= args.within):
                     continue
-                # 共同带太少时这个读数不可信：`yV` 只共用 band 0 一个带（y 的碗在
-                # y=0 还没展开、V 的底尖刚出现），量出 521 全是假象，真按它压 400
-                # 就把 V 塞进 y 的碗里了。少于 MIN_SHARED 带的对交给人工，不机械收。
-                if r[3] < MIN_SHARED:
-                    continue
+                # 这里原先有个 MIN_SHARED 门槛，理由是 `yV` 只共用 1 个带、读数不可信。
+                # 现在主判据是点距（point_gap），`yV` 的点距 196 是可信的，门槛去掉。
                 # 母版没有条目的宽对也要收。老版本这里有个「必须已有条目」的保护，
                 # 理由是硬塞负 kern 会把两字推到一起（1.9 档 Fu/Fy/Lj 叠住）；
                 # 现在下面两条底线是实测的，能拦住那种情况，所以放开。
@@ -312,18 +363,21 @@ def main() -> int:
                     cand = cur - (r[0] - target)
                 else:
                     continue
-                probe = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cand)
-                if probe is not None and probe[0] < floor:
-                    cand += floor - probe[0]
+                # 复核也用点距，不能用逐带——逐带在 Fu 报 501、AV 报 280，会把
+                # 本来该收的对当成「已经够宽」放过。
+                probe = point_gap(flat[ga], flat[gb], hmtx[ga][0] + cand)
+                if probe is not None and probe < floor:
+                    cand += floor - probe
                 # 母版无条目的对：收到目标后必须仍有 >= MIN_SHARED 个带、且墨不碰。
                 if (ga, gb) not in old:
-                    after = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cand)
-                    if after is None or after[2] > 0 or after[3] < MIN_SHARED:
+                    after = point_gap(flat[ga], flat[gb], hmtx[ga][0] + cand)
+                    if after is None or after < floor:
                         continue
-                # advance 底线：后字不许落进前字怀里（L100 档 Fu 的 −402 教训）。
-                min_adv = (XMAX[ga] - XMIN[ga]) + floor
-                if hmtx[ga][0] + cand < min_adv:
-                    cand = min_adv - hmtx[ga][0]
+                # 这里原先有「advance + kern >= 前字墨宽 + floor」的底线，理由是 L100 档
+                # `Fu` 的 kern 被压到 −402、advance 只剩 128，u 整个落进 F 怀里。
+                # 但那个读数来自有 bug 的逐带量法（Fu 报 501，真实点距 113）。用点距重算：
+                # 1507 对全部能安全收到 90，收到后**没有一对会碰**，其中 776 对是被这条
+                # 底线无谓挡掉的。所以底线撤掉，只认实测点距。
                 # 双向时允许 cand > cur（把偏窄的也拉宽），否则「统一」只做了一半：
                 # 只把宽的压下来、窄的原样不动，间距反而更散（120/110/100 三档就是
                 # 这么搞坏的，用户实测说「基线可以其他不行」）。
@@ -349,12 +403,11 @@ def main() -> int:
         g = args.grid
         for (ga, gb), v in list(deltas.items()):
             v = int(round(v / g)) * g
-            r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + v)
-            if r is not None and r[0] < floor:
-                v += int(-(-(floor - r[0]) // g)) * g
-            min_adv = (XMAX[ga] - XMIN[ga]) + floor
-            if hmtx[ga][0] + v < min_adv:
-                v = int(-(-(min_adv - hmtx[ga][0]) // g)) * g
+            # 复核用点距。这里原先还留着 min_adv 那条已废弃的 advance 底线，
+            # 它在吸附阶段把 AV 的 −193 一路推回 0——主循环算对了、在这一步被抹掉。
+            r = point_gap(flat[ga], flat[gb], hmtx[ga][0] + v)
+            if r is not None and r < floor:
+                v += int(-(-(floor - r) // g)) * g
             deltas[(ga, gb)] = v
         print(f"按 {g} 的倍数吸附 {len(deltas)} 条")
     changed = write_kern(font, deltas)
