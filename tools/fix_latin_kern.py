@@ -440,6 +440,13 @@ def main() -> int:
     # 倍数，落在栅格里也更像设计值。吸附后要复核两条底线，不能因取整越界。
     if args.grid > 1:
         g = args.grid
+        # 基线自己就有 39 条不在 5 的倍数上（−13、−185 这种）。既然要「看起来不像
+        # 魔法数字」，就得连没动的对一起对齐，否则只有我改过的是整的、其余还是脏的。
+        for a in letters:
+            for b in letters:
+                ga, gb = cmap[ord(a)], cmap[ord(b)]
+                if ga in flat and gb in flat and (ga, gb) in old:
+                    deltas.setdefault((ga, gb), old[(ga, gb)])
         for (ga, gb), v in list(deltas.items()):
             v = int(round(v / g)) * g
             # 复核用点距。这里原先还留着 min_adv 那条已废弃的 advance 底线，
