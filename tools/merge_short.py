@@ -88,7 +88,6 @@ def densify(pts, on, step=DENSE):
         while j < k + n and not on[idx[j % n]]:
             ctrl.append(pts[idx[j % n]])
             j += 1
-        endp = np.array(out[-1], float)
         nxt_on = pts[idx[j % n]] if j < n + k else out[0]
         cur = np.array(out[-1], float)
         for m_, cp in enumerate(ctrl):
