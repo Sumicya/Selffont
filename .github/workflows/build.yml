@@ -177,9 +177,12 @@ jobs:
                   f"直通件行框没对齐空壳：hhea.{_key}={_got}，"
                   f"按 {_packed_font['head'].unitsPerEm}/{_shell_font['head'].unitsPerEm} 换算应为 {_want}")
 
-          # 比较基准要跟出包那一份一致（现在是 work/kern），否则缩过侧距的拉丁
-          # 会被当成「轮廓被动了」误报。汉字那部分两个基准是同一份。
-          before = TTFont(os.path.join("work", "kern", mother))
+          # ★ 2026-11-24 修正：基准必须留**原始母版**，不能换成 work/kern。
+          #   下面几条断言查的是「汉字被 fix_hpos/fix_vpos 纯平移过、且墨心归位」，
+          #   拿 already-修过定位的 kern 版当基准，`share(ca) > share(cb)` 必然相等→必红。
+          #   拉丁被 slim_mother 缩过侧距不影响这些断言：循环里 `if not cjk(cp): continue`，
+          #   只查汉字；汉字在 slim_mother 里被 LATIN_MAX 挡住，一个点都没动。
+          before = TTFont(os.path.join("work", mother))
           after = TTFont(io.BytesIO(packed))
           cmap = before.getBestCmap()
           gb, ga = before["glyf"], after["glyf"]
