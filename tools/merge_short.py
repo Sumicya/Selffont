@@ -135,11 +135,12 @@ def candidates(pts, on, min_len, corner_deg):
     """
     n = len(pts)
     if n < 4:
-        return set()
+        return set(), set()
     drop = set()
+    drop_off = set()
     ons = [i for i in range(n) if on[i]]
     if len(ons) < 3 and not on.all():
-        return set()
+        return set(), set()
 
     def nxt_on(i):
         for k in range(1, n + 1):
@@ -154,6 +155,38 @@ def candidates(pts, on, min_len, corner_deg):
             if on[j]:
                 return j
         return i
+
+    # 情况 A：区间里只有隐含点（两个连续 off 之间）。这种「on→off,off→on」里的
+    # 隐含点，只要那两个 off 点共线于前后 on，就可以删掉一个 off。
+    # 实测 `日` 的右竖边就是这样：(802,610)off + (802,180)off + 隐含中点 (802,395)，
+    # 一条直线用了 2 个控制点。
+    for i in range(n):
+        if on[i]:
+            continue
+        j = (i + 1) % n
+        if on[j] or not on[(j + 1) % n]:
+            continue
+        # i, j 是两个连续的真实 off 点，后面是真实 on
+        k = (j + 1) % n
+        # 前一个 on
+        pp = i
+        for t in range(1, n + 1):
+            if on[(i - t) % n]:
+                pp = (i - t) % n
+                break
+        a, b, ce = pts[pp], pts[i], pts[k]
+        d = np.array(pts[j], float)
+        chord = ce - a
+        L = float(np.hypot(*chord))
+        if L < 1e-9:
+            continue
+        # 两个 off 都必须贴在 a→ce 这条线上
+        def off_line(x):
+            q = np.asarray(x, float) - np.asarray(a, float)
+            return abs(chord[0] * q[1] - chord[1] * q[0]) / L
+        if off_line(b) <= 0.5 and off_line(d) <= 0.5:
+            # 删掉第二个 off 也无所谓，形状就是这条直线；删 i 保留 j 更贴近中点
+            drop_off.add(i)
 
     for i in ons:
         p = prv_on(i)
@@ -181,7 +214,7 @@ def candidates(pts, on, min_len, corner_deg):
             d = 0.0
         if d <= 2.0:
             drop.add(i)
-    return drop
+    return drop, drop_off
 
 
 def main() -> int:
@@ -221,7 +254,8 @@ def main() -> int:
             pts, on = ring_slice(g, st, e)
             # 先粗筛：这条轮廓有没有候选点。没有就完全不做密集采样，
             # 否则 33,751 个字形 × 每条轮廓的 O(n²) 距离会跑到几小时。
-            if not candidates(pts, on, args.min_len, args.corner):
+            _c, _off = candidates(pts, on, args.min_len, args.corner)
+            if not _c and not _off:
                 st = e + 1
                 continue
             # 逐个删、每删一个就重新测：一次删一批会把一条短边整段删掉
@@ -229,7 +263,8 @@ def main() -> int:
             cur_pts, cur_on, dropped = pts, on, []
             ref = densify(pts, on)
             while True:
-                trial = candidates(cur_pts, cur_on, args.min_len, args.corner)
+                trial, trial_off = candidates(cur_pts, cur_on, args.min_len, args.corner)
+                trial = trial | trial_off
                 best = None
                 for i in sorted(trial):
                     keep = [k for k in range(len(cur_pts)) if k != i]
