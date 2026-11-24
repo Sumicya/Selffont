@@ -228,6 +228,8 @@ def main() -> int:
                     help="对这几个首字母改用绝对上限（如 A，配合 --cap-to）")
     ap.add_argument("--cap-to", type=float, default=0.0,
                     help="--cap-letters 里那些首字母的目标上限（upm 千分比）")
+    ap.add_argument("--within", type=float, default=0.0,
+                    help="把墨距落在 target±within 的对也吸附到 target（双向统一）")
     ap.add_argument("--grid", type=int, default=5,
                     help="把算出的 kern 吸附到这个单位的倍数（2 或 5）")
     args = ap.parse_args()
@@ -289,7 +291,9 @@ def main() -> int:
                     continue
                 cur = deltas.get((ga, gb), old.get((ga, gb), 0))
                 r = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cur)
-                if r is None or r[0] <= target:
+                if r is None:
+                    continue
+                if r[0] <= target and not (args.within > 0 and abs(r[0] - target) <= args.within):
                     continue
                 # 共同带太少时这个读数不可信：`yV` 只共用 band 0 一个带（y 的碗在
                 # y=0 还没展开、V 的底尖刚出现），量出 521 全是假象，真按它压 400
@@ -300,7 +304,14 @@ def main() -> int:
                 # 理由是硬塞负 kern 会把两字推到一起（1.9 档 Fu/Fy/Lj 叠住）；
                 # 现在下面两条底线是实测的，能拦住那种情况，所以放开。
                 # 但「母版无条目」的对必须重新量一次，不能只信目标值。
-                cand = cur - (r[0] - target)
+                # 双向：落在 target±within 的也拉到 target，否则只有「过宽」的被收，
+                # 中等的那批不动，落点永远散着（实测 K100 只有 7% 落在 100±1）。
+                if args.within > 0 and abs(r[0] - target) <= args.within:
+                    cand = cur - (r[0] - target)
+                elif r[0] > target:
+                    cand = cur - (r[0] - target)
+                else:
+                    continue
                 probe = band_gap(band_of[ga], band_of[gb], hmtx[ga][0] + cand)
                 if probe is not None and probe[0] < floor:
                     cand += floor - probe[0]
@@ -313,7 +324,13 @@ def main() -> int:
                 min_adv = (XMAX[ga] - XMIN[ga]) + floor
                 if hmtx[ga][0] + cand < min_adv:
                     cand = min_adv - hmtx[ga][0]
-                if cand >= cur:
+                # 双向时允许 cand > cur（把偏窄的也拉宽），否则「统一」只做了一半：
+                # 只把宽的压下来、窄的原样不动，间距反而更散（120/110/100 三档就是
+                # 这么搞坏的，用户实测说「基线可以其他不行」）。
+                only_shrink = args.within <= 0
+                if only_shrink and cand >= cur:
+                    continue
+                if cand == cur:
                     continue
                 deltas[(ga, gb)] = cand
                 n_loose += 1
