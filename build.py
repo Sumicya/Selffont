@@ -2115,6 +2115,42 @@ def runtime_scripts():
         assert "Skia /system/etc/fonts.xml：已插" in result.stdout, \
             "安装时应报告 Skia 那条路插了几处：" + result.stdout
         env_on = dict(env, SELFFONT_SKIA_STATE=str(tmp / "skia.state"))
+        # 开关状态跨版本残留：2026-11-25 真机，主人在旧版点过 off，升级到默认 on 的版本后
+        # `/data/adb/selffont-skia.state` 还在，mode=off 被照读 ⇒ 新默认值对老用户永远无效。
+        # 判据：状态文件里记的版本和 module.prop 的 version 不一致 ⇒ 当作没表过态，回默认 on。
+        state_file = tmp / "skia.state"
+        state_file.write_text("mode=off\n", encoding="utf-8")  # 旧版残留：不带 ver
+        assert "Selffont:skia=on" in sh([str(modpath / "skia.sh"), "status"], env_on).stdout, \
+            "旧版残留的 mode=off（不带 ver）必须被忽略，否则新默认值对老用户无效"
+        _version = re.search(r"^version=(.+)$", (modpath / "module.prop").read_text(), re.M).group(1)
+        state_file.write_text(f"mode=off\nver={_version}\n", encoding="utf-8")
+        assert "Selffont:skia=off" in sh([str(modpath / "skia.sh"), "status"], env_on).stdout, \
+            "用户在**本版本**里亲手关的必须尊重"
+        state_file.write_text(f"mode=off\nver=0.0.0\n", encoding="utf-8")
+        assert "Selffont:skia=on" in sh([str(modpath / "skia.sh"), "status"], env_on).stdout, \
+            "别的版本留下的 off 不该跨版本生效"
+        sh([str(modpath / "skia.sh"), "off"], env_on)
+        assert "mode=off" in state_file.read_text() and f"ver={_version}" in state_file.read_text(), \
+            "write_state 必须把当前版本记进状态文件：" + state_file.read_text()
+        # ★ MFGA 抢同一个挂载点：它的 script/search_dirs.sh 把**自己那份** fonts.xml
+        #   整份 cp 到 system/etc/fonts.xml。两份模块同时存在时谁后加载谁赢，
+        #   我们控制不了顺序；它赢的时候我们的插入等于没做（逐字复算 0.00%，2026-11-25 真机）。
+        #   判据：输入取 MFGA 那份，并且生成结果要写回它，让两份内容一致。
+        rival = tmp / "modules/MFGA/system/etc"
+        rival.mkdir(parents=True)
+        rival_fonts = rival / "fonts.xml"
+        rival_fonts.write_text(stock_legacy, encoding="utf-8")
+        env_rival = dict(env_on, SELFFONT_MODULES=str(tmp / "modules"))
+        (modpath / "system/etc/fonts.xml").unlink(missing_ok=True)
+        result_rival = sh([str(modpath / "skia.sh"), "on"], env_rival)
+        assert result_rival.returncode == 0, result_rival.stderr
+        assert (modpath / "system/etc/fonts.xml").exists(), "有 MFGA 时也要产出自己那份"
+        inserted = [ln for ln in rival_fonts.read_text(encoding="utf-8").splitlines()
+                    if "Any-Name.ttf" in ln]
+        assert inserted, "MFGA 那份里没有插入我们的行：它赢挂载时 FlClash 不会换字"
+        assert rival_fonts.read_text(encoding="utf-8") == \
+            (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8"), \
+            "两份必须内容一致，否则谁赢挂载结果不同"
         on = sh([str(modpath / "skia.sh"), "on"], env_on)
         assert on.returncode == 0, on.stderr
         # Skia 只读 /system/etc/fonts.xml（SkFontMgr_android_parser.cpp 写死）；插入而不替换：
@@ -2135,12 +2171,8 @@ def runtime_scripts():
         # `find_family_style_character` 每族只取一个 face，`matchStyleCSS3` 并列取先出现的。
         # => 族尾永远轮不到；族首才被选中。逐字复算（tools/skia_paths.py）：
         #     族尾 0.00% / 族首 100%（w100–w900 全档）
-        # 夹具那四族：匿名默认族、sans-serif、zh、ja（ko 没有）。serif / und-Arab / und-Zsye 不插。
-        assert len(ours) == 4, \
-            f"应插 4 处（匿名默认族 + sans-serif + zh + ja），实际 {len(ours)}"
-        assert any("sans-serif" in b for b in ours), "sans-serif 是 Flutter 的请求族名，必须插"
-        assert any("OPPOSans-Regular.ttf" in b for b in ours), \
-            "匿名默认族要插：无族名请求走这一族"
+        # 夹具那几族里只有 sans-serif、zh、ja 该插（ko 没有）。匿名默认族 / serif /
+        # und-Arab / und-Zsye 都不插——匿名族插了会让后面的 Unicode16/17/18 整片豆腐。
         # 插的是族首：本包字件行必须在该族**第一条** <font> 之前。
         for block in ours:
             body = [ln for ln in block.splitlines() if "<font" in ln]
@@ -2151,7 +2183,41 @@ def runtime_scripts():
                 f"本包字件必须插在族首（Skia 每族只查一个 face，族尾等于没插），实际第 {ours_at[0] + 1}/{len(body)} 行"
         assert not any("NotoNaskhArabic" in b or "NotoColorEmoji" in b or "NotoSerif" in b
                        for b in ours), "非中日韩语言族 / serif / emoji 不该插"
-        assert "Skia /system/etc/fonts.xml：已插 4 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
+        # ★ 匿名族（无 name 无 lang）**绝对不许插**。2026-11-25 真机豆腐块就是这一条：
+        #   Skia 第 3 层按文件顺序扫匿名族，扫到我们这条、不认识那个码位就 continue，
+        #   而后面的 Unicode16/17/18-new.ttf 全在匿名族里 ⇒ 生僻符号整片豆腐。
+        #   实测：Unicode18 的 1,290 个码位母版一个都没有，只有 3 个非汉字重叠。
+        anonymous_blocks = [b for b in blocks
+                            if re.match(r"\s*<family\s*>", b) and "Any-Name.ttf" in b]
+        assert not anonymous_blocks, \
+            "匿名族里插了本包字件：它会把后面 Unicode16/17/18 那几族整个跳掉（生僻符号全变豆腐）"
+        # 上一条只保证「我们自己不往匿名族里插」。还要保证**别人**的匿名族里那些
+        # 我们不认识的码位仍能落到它们自己身上（豆腐块的真实观感）。
+        cmaps = {"Any-Name.ttf": {0x4E2D}, "Unicode18-new.ttf": {0x1D300},
+                 "OPPOSans-Regular.ttf": set()}
+        for block in blocks:
+            if "Unicode18-new.ttf" in block:
+                cmaps.setdefault("Unicode18-new.ttf", {0x1D300})
+        import sys as _s
+        _s.path.insert(0, str(ROOT / "tools"))
+        import skia_paths as _sp
+        rich = stock_legacy.replace(
+            '    <family name="empty-self-close" />',
+            '    <family>\n        <font weight="400" style="normal">Unicode18-new.ttf</font>\n'
+            '    </family>\n    <family name="empty-self-close" />')
+        (system / "system/etc/fonts.xml").write_text(rich, encoding="utf-8")
+        (modpath / "system/etc/fonts.xml").unlink(missing_ok=True)
+        result_rich = sh([str(modpath / "skia.sh"), "on"], env_on)
+        assert result_rich.returncode == 0, result_rich.stderr
+        parsed = _sp.parse_families(modpath / "system/etc/fonts.xml")
+        assert _sp.choose(parsed, cmaps, 0x1D300) == "Unicode18-new.ttf", \
+            "我们也有的码位之外的生僻符号必须仍落设备字件（否则就是豆腐块）"
+        assert _sp.choose(parsed, cmaps, 0x4E2D) == "Any-Name.ttf", \
+            "汉字仍要由我们画（sans-serif 族首）"
+        assert len(ours) == 3, \
+            f"应插 3 处（sans-serif + zh + ja），实际 {len(ours)}"
+        assert any("sans-serif" in b for b in ours), "sans-serif 是 Flutter 的请求族名，必须插"
+        assert "Skia /system/etc/fonts.xml：已插 3 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
         assert "已替换 4 份字体配置" in result.stdout, "应报告替换数量：" + result.stdout
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \

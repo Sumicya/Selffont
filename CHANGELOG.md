@@ -1,3 +1,83 @@
+## 2026-11-25 · 真机两个症状同一个根因：MFGA 抢挂载点 + 匿名族插入把生僻符号顶成豆腐
+
+**真机读数（主人贴回）**
+
+```
+cat: /data/adb/selffont-skia.state: No such file or directory
+Selffont:skia=on
+模块里那份：在（重启后 Flutter 走主字体链）
+```
+
+开关是 on、文件也投放了，但 **FlClash 主界面一个字没变**，同时 **MFGA 界面出现豆腐块（生僻符号）**。
+
+### 症状一：FlClash 没变 —— MFGA 把同一个挂载点整份盖掉
+
+`Numbersf/MakeFontsGreatAgain` 的 `script/search_dirs.sh`：
+
+```sh
+SRC_FONT_XML="$MODPATH/fonts.xml"
+...
+cp -f "$SRC" "$MODPATH/system/$MOD_SUBDIR/$FILE_NAME"   # FILE_NAME=fonts.xml, MOD_SUBDIR=etc
+```
+
+它把自己那份 **79,785 B / 1,824 行** 的 `fonts.xml` 整份盖到 `/system/etc/fonts.xml`，
+和我们模块的 `system/etc/fonts.xml` 抢**同一个路径**。谁的模块后被加载谁赢，这个顺序我们控制不了。
+
+- 它那份里 `Selffont` 出现 **0 次**，`sans-serif` 族只有 `Roboto-Regular.ttf` 空壳。
+- 逐字复算（`tools/skia_paths.py`）：在**它那份**配置下我们的字件命中率 **0/33,944 = 0.00%**。
+  ⇒ 它赢的时候，我们的插入等于没做。这就是 FlClash 没变的全部原因。
+
+**改法**：`skia.sh` 的输入改成「最可能赢那个挂载点」的那份（`$MODULES/MFGA/system/etc/fonts.xml`
+优先，没有才用设备模板），往里插我们的行；生成后**把同一份内容写回 MFGA 自己的目录**。
+两份内容逐字节相同 ⇒ 谁赢挂载都带着我们的行。夹具断言两份必须相等。
+
+### 症状二：豆腐块 —— 我把字件插进了匿名族族首
+
+上一版 `skia.sh` 会往**匿名族**（无 name 无 lang）族首插字件。Skia 第 3 层按文件顺序扫匿名族，
+扫到我们这条、`unicharToGlyph` 不认识那个码位 → `continue` 到下一族；而 MFGA 的
+`Unicode16-new.ttf` / `Unicode17-new.ttf` / `Unicode18-new.ttf` **全在后面的匿名族里**，
+于是那些符号整片落豆腐。
+
+实测（`Unicode18-new.ttf`，256,404 B）：**1,293 个码位，母版只有 3 个非汉字重叠，汉字 0 个**
+⇒ 那 1,290 个符号母版一个都画不出，本该由它出。
+
+**改法**：匿名族一律不插。无族名请求改由 `sans-serif` 那条覆盖（Flutter 的默认族就是
+`sans-serif`，不依赖匿名族）。修后复算：
+
+| 码位集 | 改前 | 改后 |
+|---|---|---|
+| Unicode18 的 1,293 个生僻符号，能画出 | 我们抢走后画不出 | **1,293/1,293**（全落它自己） |
+| 汉字 w400 由我们画 | 100%（`sans-serif` 那条本来有） | **100%** |
+| 汉字 w700 由我们画 | 100% | **94.11%**（余下是设备也有的常用字，Skia 按字重挑同族 Roboto 空壳；落设备字形，不是豆腐） |
+
+### 症状三：新版「默认开」对老用户无效
+
+`/data/adb/selffont-skia.state` 是**跨版本持久**的。主人在旧版点过 `off`，升级后
+`mode=off` 仍被照读 ⇒ 新的默认值永远不生效。（主人这次的状态文件不存在，所以没踩到；
+但这条迟早会咬人。）
+
+**改法**：状态文件加 `ver=`。`state()` 只在「`ver` 等于当前 `module.prop` 的 `version`」时才
+信任 `mode`；版本变了就回到默认 `on`。六种情况实测：无文件 → on；旧版残留 `mode=off` 无 ver → on；
+本版本亲手关 → off；本版本亲手开 → on；别的版本的 off → on；`off` 写回带当前 ver。
+
+### 自检（20 项全过，三处变异实测会红）
+
+| 变异 | 红在哪 |
+|---|---|
+| 把插入点挪回族尾 | `本包字件必须插在族首…实际第 3/3 行` |
+| 恢复「插匿名族」 | `匿名族里插了本包字件：它会把后面 Unicode16/17/18 那几族整个跳掉（生僻符号全变豆腐）` |
+| 不写回 MFGA 那份 | `MFGA 那份里没有插入我们的行：它赢挂载时 FlClash 不会换字` |
+| `state()` 忽略 `ver` | `旧版残留的 mode=off（不带 ver）必须被忽略` |
+
+### 未做 / 不知道
+
+- **仍然没有真机复验**。上面的每个数字都是离线复算 + 真机主人贴回的两行状态。
+  「FlClash 换字了没有」只能刷完看。
+- `w700` 的 94.11% 没往上做：剩下那 5.89% 是设备**也有**的常用汉字，Skia 按字重挑了
+  同族的 Roboto 空壳。要 100% 得把我们的行插到那个 Roboto 空壳**之前**并在 9 档里
+  逐档占位，代价是设备那 9 档全被顶掉——不做，落设备字形是可接受的。
+- MFGA 的 Xposed 版（`mfga-xposed/`）走另一条注入路径，这本轮没看。
+
 ## 2026-11-07 · Flutter 从来没换过字：Skia 那条路的插法错了，`skia.sh` 重写
 
 **结论**：`/system/etc/fonts.xml` 那条路上，改前的插法（只插中日韩语言族、插在**族尾**）
