@@ -95,28 +95,36 @@ def choose(families: list[dict], cmaps: dict[str, set[int]],
            family_name: str | None = "sans-serif") -> str | None:
     """按 Skia 的真实代码路径，返回画这个码位的字件名（None = 谁都画不出）。
 
-    ★ 2026-11-25 修正。旧版这里凭空写了一层「命名族精确匹配」，据此三次得出
-    「族首插法 100%」的结论，三次真机都没变。真实代码（SkFontMgr_android.cpp）：
+    ★★ 2026-11-26 第二次修正。上一版（11-25）把「命名族」整层删掉了，理由是从
+    parser.cpp:311 的 `fIsFallbackFont = false` 推出「带名字的族进不了回退表，所以
+    族名 sans-serif 不可能被匹配到」。这个推理漏了一步：`onMatchFamilyStyleCharacter`
+    的五层顺序里，**第一层不是回退表，是命名族表 `fNameToFamilyMap`**。
+    SkFontMgr_android.cpp 现行源码（逐行抄，见下面注释的行号）：
 
-      onMatchFamilyStyleCharacter(familyName, …)             :374
-          for currentFamilyName in { familyName, SkString() }  :385
-              for elegant in {1, 0}
-                  ... find_family_style_character(currentFamilyName, …)
-      find_family_style_character()                           :342
-          for i in fallbackNameToFamilyMap:                   :348
-              if familyName != family->fFallbackFor: continue :350   ← 只比 fFallbackFor
-              if langTag 不匹配 face->fLang: continue         :355
-              if variant 不匹配: continue                     :363
-              if face->unicharToGlyph(character) != 0: return face
+      onMatchFamilyStyleCharacter(familyName, style, bcp47, n, character)   :346
+        // 5 层顺序，注释原文就写在函数里
+        find(familyName, lang, elegant):
+          1) if (!familyName.isEmpty())
+               find_family_style_character(familyName, fNameToFamilyMap, ...,
+                   [](name, ntf){ return name == ntf.name; })              :371  ← 命名族！
+          2) if (!familyName.isEmpty())
+               find_family_style_character(familyName, fFallbackNameToFamilyMap,
+                   [](name, ntf){ return name == ntf.styleSet->fFallbackFor; })
+          3) find_family_style_character(SkString(), fFallbackNameToFamilyMap,
+                   [](_, ntf){ return ntf.styleSet->fFallbackFor.isEmpty(); })  ← 无名族
+          4) find_family_style_character(familyName, fNameToFamilyMap,
+                   [](name, ntf){ return name != ntf.name; })
+          5) find_family_style_character(familyName, fFallbackNameToFamilyMap, ...)
 
-    两条硬事实：
-      1) 它遍历的是 **fFallbackNameToFamilyMap**，而 parser.cpp:311 在族带 name= 时
-         把 fIsFallbackFont 置 false —— 带名字的族根本不进这张表。所以族名
-         `sans-serif` 在这条路上**不可能**被匹配到（AOSP 真实配置里
-         fallbackFor="sans-serif" 出现 0 次）。旧版那一层是假的。
-      2) 请求族名取 `families[0]`（FontCollection.cpp:340），Flutter 默认是
-         sans-serif；所以第一轮必然空过，**真正生效的只有第二轮的空族名**：
-         只找 fFallbackFor == "" 的无名族，**按文件顺序**。
+    所以：**名字精确相等的命名族在第一层就被问**，命中即返回，根本走不到第 3 层的无名族。
+    上一版据此把「插命名族」判成无效，是本项目连续多轮「复算 100%、真机不变」的直接原因。
+    这里把第一层补回来，并把命名族的匹配写成 ASCII 小写化的精确相等（onMatchFamily 的实现）。
+
+    另外两条不变的事实仍然有效：
+      · find_family_style_character 每族**只取一个面**（matchAStyle → matchStyleCSS3），
+        并列时先出现的赢（SkFontMgr.cpp:242 的 `maxScore < currentScore` 严格小于）。
+      · 拿到面之后还要问 unicharToGlyph：没有就继续下一个名字（下一条命中的族）。
+        这一条才是「我方不覆盖的字符自动由设备接住」的机制来源。
     """
     def hit(haystack: list[dict]) -> str | None:
         for family in haystack:
@@ -127,14 +135,31 @@ def choose(families: list[dict], cmaps: dict[str, set[int]],
                 return face["file"]
         return None
 
-    # 逐字回退只在无名族组成的那张表里找；命中的条件是 fFallbackFor 相等。
+    named = [f for f in families if not f["fallback"] and f.get("name")]
     fallback = [f for f in families if f["fallback"]]
     for current in ((family_name,) if family_name else ()) + (None,):
-        got = hit([f for f in fallback if f["fallback_for"] == current])
+        if current:
+            # 1) 名字精确相等的命名族（onMatchFamily 用 SkAutoAsciiToLC 小写化后精确比较）
+            got = hit([f for f in named if (f.get("name") or "").lower() == current.lower()])
+            if got:
+                return got
+            # 2) fallbackFor 等于请求名的回退族
+            got = hit([f for f in fallback if f["fallback_for"] == current])
+            if got:
+                return got
+        # 3) fallbackFor 为空的匿名回退族，按文件顺序
+        got = hit([f for f in fallback if not f["fallback_for"]])
         if got:
             return got
-    # 命名族只经 matchFamily/matchStyle 参与（Flutter 的默认字面走这条），
-    # 那是另一条路径，不属于逐字回退；这里返回 None 表示「逐字回退画不出」。
+        if current:
+            # 4) 名字不等于请求名的命名族
+            got = hit([f for f in named if (f.get("name") or "").lower() != current.lower()])
+            if got:
+                return got
+            # 5) fallbackFor 既不为空也不等于请求名的回退族
+            got = hit([f for f in fallback if f["fallback_for"] not in (None, "", current)])
+            if got:
+                return got
     return None
 
 
@@ -146,10 +171,10 @@ def _selftest() -> None:
     # 400 请求下 500 比 300 更近（Skia 在 400..500 之间偏好更重）
     assert match_style_css3([{"weight": 300}, {"weight": 500}], weight=400) == 1
 
-    # ① 命名族对逐字回退**无效**：find_family_style_character 只遍历无名族
-    #    （parser.cpp:311 在族带 name= 时置 fIsFallbackFont=false）。插 sans-serif 族首
-    #    一个字都不换 —— 2026-11-25 前三次真机「没变」就是这个。
-    named_only = [
+    # ① 命名族**有效**（2026-11-26 修正）：onMatchFamilyStyleCharacter 的第一层
+    #    就是按名字精确匹配 fNameToFamilyMap，命中即返回，走不到第 3 层无名族。
+    #    上一版这里断言「插命名族不该生效」，正是连续多轮「复算通过、真机不变」的根因。
+    named_head = [
         {"name": "sans-serif", "lang": "", "fallback": False, "fallback_for": None,
          "faces": [{"file": "ours.ttf", "weight": 400, "slant": 0},
                    {"file": "dev.ttf", "weight": 400, "slant": 0}]},
@@ -157,8 +182,30 @@ def _selftest() -> None:
          "faces": [{"file": "dev_zh.ttf", "weight": 400, "slant": 0}]},
     ]
     cmaps = {"ours.ttf": {0x4E2D}, "dev.ttf": {0x4E2D}, "dev_zh.ttf": {0x4E2D}}
-    assert choose(named_only, cmaps, 0x4E2D) == "dev_zh.ttf", \
-        "插命名族不该生效：逐字回退看不到命名族"
+    assert choose(named_head, cmaps, 0x4E2D) == "ours.ttf", \
+        "插命名族族首必须生效（第一层按名字匹配）"
+
+    # ①b 我方没有的字形走哪条路，必须说准（这一条我上一版又说错了）。
+    #     find_family_style_character **每族只取一个面**：sans-serif 族里 matchAStyle 选中的
+    #     就是我方那条，我方没有该字形 ⇒ 这个族交不出面 ⇒ 跳到**下一个族**，
+    #     不是「同族的下一条」。所以我方字件在同族里对全部字符是「取代」，不是「分工」。
+    #     分工发生在族之间：第 3 层（fallbackFor 为空的匿名回退族，按文件顺序）接住剩下的字符。
+    cmaps2 = dict(cmaps, **{"dev.ttf": {0x4E2D, 0x1F600}})   # 同族设备那条有 emoji，也用不上
+    assert choose(named_head, cmaps2, 0x1F600) is None, \
+        "同族的下一条不会被问到（每族只取一个面）：我方没有的字符跳到下一个族"
+    assert choose(named_head, cmaps, 0x1F600) is None, "谁都画不出时返回 None，不伪造"
+    # ①b 的反向：第 3 层匿名回退族有我方没有的字形 ⇒ 由它接住（这才是真机上的兜底路径）。
+    cmaps3 = dict(cmaps, **{"dev_zh.ttf": {0x4E2D, 0x1F600}})
+    assert choose(named_head, cmaps3, 0x1F600) == "dev_zh.ttf", \
+        "我方不覆盖的字符由匿名回退族接住（第 3 层）——这条才是不出豆腐块的机制"
+
+    # ①c 族尾等于没插：并列同权重时 matchStyleCSS3 取先出现的。
+    named_tail = [
+        {"name": "sans-serif", "lang": "", "fallback": False, "fallback_for": None,
+         "faces": [{"file": "dev.ttf", "weight": 400, "slant": 0},
+                   {"file": "ours.ttf", "weight": 400, "slant": 0}]},
+    ]
+    assert choose(named_tail, cmaps, 0x4E2D) == "dev.ttf", "族尾等于没插"
 
     # ② 插无名族族首才生效。
     anon_head = [
