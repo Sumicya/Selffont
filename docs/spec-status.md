@@ -2,19 +2,30 @@
 
 | 项 | 值 |
 | --- | --- |
-| 指针路径 | `selfs/GLOBAL.md`（唯一真源，见 `b5692bc` 的提交说明） |
-| 查证日期 | 2026-11-26 |
-| 查证方法 | ① `git log --all --name-only -- selfs/GLOBAL.md` 为空；② `git rev-list --all` 逐个 `git cat-file -e <c>:selfs/GLOBAL.md` 全部 absent；③ 文件系统 `find / -name GLOBAL.md` 无命中 |
-| 结论 | **从未在任何一次提交里存在过**。`b5692bc` 删掉了 `AGENTS.md`，指针留下，被指向的文件没有进来 |
+| 指针路径 | `selfs/GLOBAL.md` |
+| 实际位置 | **独立仓库 `Sumicya/selfs`，文件 `GLOBAL.md`**（不是本仓的 `selfs/` 目录） |
+| 提交 | `1e218c6400c88c79dbdc2a0a563ccfa6be11622f`（`selfs` 仓 `main` 分支头） |
+| 字节 | 9300（`wc -c`） |
+| 首行 | `# Sumicya 规范` |
+| 末行 | `## 附录 D 许可 …字体按 OFL-1.1…` |
+| 采样时刻 | 2026-11-25T19:22:13+00:00 |
 
-## 后果（2026-11-26 检讨 §02 的记录）
+## 更正（§18：黑历史不删，更正另起一条）
 
-判据失去外部来源，只能从我自己的历史检讨、`CHANGELOG.md` 和主人历轮原话里拼。
-由此产生过一次可查的自证循环：`tools/mark.py` 插 `〔N〕`，主人要的是 `〖N〗`，
-而我拿这个工具的通过输出当「标号合规」的证据。工具与规范脱钩时，工具的输出不能当证据。
+**旧结论（2026-11-26 早先写入本文件）**：称 `selfs/GLOBAL.md`「从未在任何一次提交里存在过」，
+依据是本仓 `git rev-list --all` 逐个 `cat-file -e` 全部 absent、全盘 `find GLOBAL.md` 无命中。
 
-## 处置
+**更正**：那条查证只查了**本仓**与**本地文件系统**，而指针指的是**另一个仓库**。主人说「重取我
+没有删库」是对的——文件一直在 `Sumicya/selfs`。旧结论作废。
+
+**引发的偏差**（本条事故）：我在「规范不存在」的前提下开工，判据只能从历史检讨与自述工具里拼，
+于是出现了可查的自证循环——`tools/mark.py` 插 `〔N〕`，我拿它的通过输出当「标号合规」的证据，
+而规范要的是 `〖N〗`。
+
+## 现行处置
 
 1. `tools/mark.py` 已改为插 `〖N〗`，解析两种括号（历史稿不判成无标记）。
-2. 本文件存在的意义是：规范一旦被放回仓库，下一个会话一进门就能撞见，不必再靠记忆推断。
-3. 每篇检讨开头标注判据来源（主人原话／历史稿／CHANGELOG／自算），把「我读过什么」摊开。
+2. 每轮开头与收尾各取一次 `selfs` 仓 `GLOBAL.md` 的提交号与字节（§2），对不上先对齐。
+3. 本文件的读数刷新方式：
+   `gh api repos/Sumicya/selfs/commits/main -q .sha` 取提交号，
+   `gh api repos/Sumicya/selfs/contents/GLOBAL.md -H 'Accept: application/vnd.github.raw' | wc -c` 取字节。
