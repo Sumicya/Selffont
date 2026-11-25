@@ -1530,23 +1530,18 @@
     <family lang="und-Zsye" ignore="true">
         <font weight="400" style="normal">NotoColorEmojiLegacy.ttf</font>
     </family>
-    <!-- ★ 2026-11-26 真机：这两个族原来引 NotoColorEmoji.ttf / NotoColorEmojiFlags.ttf，
-         而本模块打包的是 NotoEmoji.ttf / Noto-COLRv1.ttf —— 名字对不上。
-         本模块会把这四份配置整份覆盖到设备上，覆盖之后 emoji 族指向不存在的文件，
-         屏幕上 emoji 全成方框（真机实录：九个 emoji 九个豆腐）。
-         这里改回设备真实存在的名字（本模块不打包它们，设备 /system/fonts 里本来就有）；
-         本模块打包的 NotoEmoji / Noto-COLRv1 排在后面兜底，两个名字都在配置里出现一次。 -->
-    <family lang="und-Zsye">
-        <font weight="400" style="normal">NotoColorEmoji.ttf</font>
-    </family>
-    <family lang="und-Zsye">
-        <font weight="400" style="normal">NotoColorEmojiFlags.ttf</font>
-    </family>
-    <family lang="und-Zsye">
-        <font weight="400" style="normal">NotoEmoji.ttf</font>
-    </family>
+    <!-- ★ 2026-11-26 真机：这组族原来引 NotoColorEmoji.ttf / NotoColorEmojiFlags.ttf /
+         NotoColorEmojiLegacy.ttf —— 全是**设备才有**的名字，本模块一个都不打包。
+         本模块把这几份配置整份覆盖到设备上，覆盖之后 emoji 族指向设备上未必存在的文件，
+         屏幕上 emoji 全成方框（真机实录：🛙🪋🪌🪍🫌🫝🫫🫹🫺 九个九个豆腐）。
+         现改成**只用本模块打包的字件**（安装后必然存在于 /system/fonts），不赌设备文件名：
+           · Noto-COLRv1.ttf 排第一：本地实测这九个码位它全有（NotoEmoji.ttf 一个都没有）
+           · NotoEmoji.ttf 第二：COLRv1 不被支持时回落单色轮廓
+         这两个名字在整份配置里只出现这一次（configure_fonts 要求补充字件恰好引用一次，
+         所以下面默认区原来那两个同名字件的匿名族已一并删掉）。 -->
     <family lang="und-Zsye">
         <font weight="400" style="normal">Noto-COLRv1.ttf</font>
+        <font weight="400" style="normal">NotoEmoji.ttf</font>
     </family>
     <family lang="und-Zsym">
         <font weight="400" style="normal">NotoSansSymbols-Regular-Subsetted2.ttf</font>
@@ -1824,12 +1819,6 @@
     </family>
     <family>
         <font weight="400" style="normal">NotoMusic-Regular.ttf</font>
-    </family>
-    <family>
-        <font weight="400" style="normal">NotoEmoji.ttf</font>
-    </family>
-    <family>
-        <font weight="400" style="normal">Noto-COLRv1.ttf</font>
     </family>
     <family>
         <font weight="400" style="normal">Tibetan-Regular.ttf</font>

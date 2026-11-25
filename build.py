@@ -1548,23 +1548,45 @@ def emoji_config_refs():
     """
     ours = {NOTO_EMOJI_SOURCE["filename"], NOTO_COLR_EMOJI_SOURCE["filename"],
             PRIMARY_NAME}
-    template = (ROOT / "fonts.xml").read_text(encoding="utf-8")
-    assert_emoji_refs(template, ours)  # 模板本身先过头一遍
-    # 模板里 Zsye 族必须同时出现「设备自带的那支」和「本模块打包的那支」：
-    # 只写设备那支，模块自己的 emoji 白打包；只写模块那支，设备那份不覆盖时仍然指着自家文件。
-    zsye = [ln.strip() for ln in template.splitlines() if "und-Zsye" in ln]
-    assert len(zsye) >= 1, "模板里一个 emoji 族都没有？"
-    refs = set(re.findall(r"([A-Za-z0-9_.-]+\.(?:ttf|otf|ttc))", template))
-    assert {NOTO_EMOJI_SOURCE["filename"], NOTO_COLR_EMOJI_SOURCE["filename"]} <= refs, \
-        f"模板没引用本模块打包的 emoji 字件：{sorted(refs)[:8]}"
-    assert {m for m in DEVICE_EMOJI_FONTS if m in refs}, \
-        "模板里一支设备自带的 emoji 字件都没有——设备那份字体行为会被我们改掉"
+    template = (ROOT / "fonts.xml").read_bytes()
+    assert_emoji_refs(template.decode("utf-8"), ours)  # 模板本身先过一遍
+    # 真跑一遍模板替换再判：模板原文不是产物，产物才是投放到设备上的那份。
+    configured = configure_fonts(template, PRIMARY_NAME, weight_ladder({}), cjk=True,
+                                 cjk_name="MarukoGothicCJKsc-Regular.ttf",
+                                 cjk_family="Maruko Gothic", cjk_is_variable=False,
+                                 keep_languages=frozenset({"ko"})).decode("utf-8")
+    assert_emoji_refs(configured, ours)
+    root = ET.fromstring(configured)
+    node_refs = [(node.text or "").strip() for node in root.iter("font")]
+    for filename in (NOTO_EMOJI_SOURCE["filename"], NOTO_COLR_EMOJI_SOURCE["filename"]):
+        count = node_refs.count(filename)
+        # ★ CI 实证：Zsye 族再写一份这两个名字，build() 的「补充字体恰好引用一次」直接拒绝出包
+        #   （run 45603844994 就挂在这里）。所以模板里 Zsye 只写设备自带名。
+        assert count == 1, f"{filename} 在配置里应恰好引用一次，实际 {count} 次"
+    # 生效的 emoji 族（非 ignore）只许引**本模块打包**的字件：只有它们在安装后必然存在于
+    # /system/fonts。引设备名等于赌设备上有那份文件——这次九个豆腐就是赌输了的结果。
+    zsye = [node.text.strip() for family in root.findall("family")
+            if family.get("lang") == "und-Zsye" and not family.get("ignore")
+            for node in family.findall("font")]
+    assert zsye, "配置里一个生效的 emoji 族都没有（emoji 会落到谁身上说不清）"
+    assert not [name_ for name_ in zsye if name_ not in ours], \
+        f"生效的 emoji 族引了本模块没打包的名字（设备上没有就是整片豆腐）：{zsye}"
+    assert NOTO_COLR_EMOJI_SOURCE["filename"] in zsye, \
+        f"彩色 emoji 字件必须进生效的 emoji 族：{zsye}"
+    # 顺序也要钉：本地实测那九个码位只有 COLRv1 那支有（NotoEmoji.ttf 一个都没有），
+    # 它在族里排第二就等于没写——Skia 每族只取第一个命中的 face。
+    first_zsye = next(family for family in root.findall("family")
+                      if family.get("lang") == "und-Zsye" and not family.get("ignore"))
+    first_font = (first_zsye.findall("font")[0].text or "").strip()
+    assert first_font == NOTO_COLR_EMOJI_SOURCE["filename"], \
+        f"emoji 族首必须是 {NOTO_COLR_EMOJI_SOURCE['filename']}，实际 {first_font}"
+    # ignore 的族引设备名可以（解析器直接跳过），但生效族不许——上面两条就是这条判据。
     # 反向：真出现「谁都没有的名字」必须被抓住，不是恒过。
-    bad = template.replace("NotoEmoji.ttf", "NotoEmoji-Nowhere.ttf", 1)
+    bad = configured.replace("NotoColorEmoji.ttf", "NotoColorEmoji-Nowhere.ttf", 1)
     try:
         assert_emoji_refs(bad, ours)
     except ValueError as error:
-        assert "NotoEmoji-Nowhere.ttf" in str(error), error
+        assert "NotoColorEmoji-Nowhere.ttf" in str(error), error
     else:
         raise AssertionError("引用了谁都没有的 emoji 字件却放行了：这条断言是恒过的")
 
