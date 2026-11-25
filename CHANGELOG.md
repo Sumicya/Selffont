@@ -1,3 +1,73 @@
+## 2026-11-25 · 重构：`runtime_scripts` 1,216 行拆成 3 项，`build.py` 3,966 → 3,960 行
+
+**结论**：一项检查变三项，判据一条没少，代码少 6 行。
+
+### 改前改后（同一份文件，`wc -l`）
+
+| 项 | 改前 `bfafde1` | 改后 |
+|---|---|---|
+| `build.py` | **3,966** | **3,960**（−6） |
+| `--check` 项数 | 20 | **22**（`runtime_scripts` 一拆三） |
+| 顶层函数 >80 行的 | 9 个，最大 `runtime_scripts` **1,216** | 11 个，最大 `boot_guard` **639**（一拆三，故 +2） |
+| `assert` 语句数（全文件） | 513 | 506（−7） |
+| 其中这三个函数里的 | 223（含 6 条 `sh -n`） | **217**（`sh -n` 0 条，已收成 1 个函数） |
+| `tools/deadcode.py` | 0 处 | 0 处 |
+
+复算：
+
+```sh
+cd /home/user/Selffont
+git show bfafde1:build.py | wc -l        # 3966
+wc -l build.py                            # 3960
+.venv/bin/python build.py --check         # 22 项全部通过
+```
+
+### 拆分表
+
+`runtime_scripts` 一个函数里塞了三个互不相干的场景（安装 / 开机守卫 / 全机清理），
+每个场景自带 `TemporaryDirectory`，断言交错，改一处要通读 1,216 行。按场景切：
+
+| 新函数 | 行数 | 管什么 |
+|---|---|---|
+| `install_scripts` | 273 | `customize.sh` 与它投放的四份配置、Skia 那份、火狐桥 |
+| `boot_guard` | 639 | `post-fs-data.sh` 与 `service.sh`：连续失败停用、走到底清零、日志有上界 |
+| `device_tools` | 304 | `tools/sf-clean.sh`、`tools/sf-why.sh`：默认只读、别人的脚本不动 |
+
+三个函数的边界按「出问题时该看哪份脚本」划，不按行数划。原先错落在清理场景里的
+「停用判断必须排在抓日志之前」那条断言，是守卫脚本自己的顺序，搬回 `boot_guard`。
+
+### `assert` 从 513 到 506：砍的是重复，不是覆盖
+
+同一句 `sh -n <脚本>` 在本文件里出现过 **8 次**（`module/` 下 5 个、`tools/` 下 3 个），
+8 处各写一遍且各自的报错文案不同。收成一个 `assert_shell_syntax(script)`，
+覆盖的脚本**仍是那 8 个**，只是不再各写一遍：513 − 8 + 1 = 506。
+
+拆分那三个函数范围内逐条对过账：
+
+| | 旧 `runtime_scripts` | 新三函数合计 |
+|---|---|---|
+| `assert` 总数 | 223 | 217 |
+| 其中 `sh -n` | 6 | 0（收进 `assert_shell_syntax`） |
+| 非 `sh -n` 断言 | **217** | **217** |
+
+### 变异验证（三条都真红）
+
+| 变异 | 结果 |
+|---|---|
+| `module/post-fs-data.sh` 尾部加 `if true; then` | `FAIL boot_guard: post-fs-data.sh 语法错误：…429: Syntax error` |
+| `module/customize.sh` 同上 | `FAIL install_scripts: customize.sh 语法错误：…148` |
+| `tools/sf-clean.sh` 同上 | `FAIL device_tools: sf-clean.sh 语法错误：…416` |
+
+变异后逐个 `cp` 恢复，`git status` 只剩 `build.py` 一处修改。
+
+### 顺带合并的重复
+
+- `han_envelope` / `ink_envelope`：两段同一套 glyf 包络扫描，只差 cmap 过滤 → 一个函数加 `han_only` 开关。
+- `make_music_font` / `make_carrier`：两份 `FontBuilder` 骨架只差字形、行高、名字表 → `_simple_font`。
+- 6 处 `with tempfile.TemporaryDirectory() as tmp: tmp = Path(tmp)` → `sandbox()` 上下文管理器。
+- 2 处 `import sys as _sys; _sys.path.insert(...)` → 模块顶部 `TOOLS` 常量。
+- 4 处三连空行 → 两连。
+
 ## 2026-11-25 · 真机两个症状同一个根因：MFGA 抢挂载点 + 匿名族插入把生僻符号顶成豆腐
 
 **真机读数（主人贴回）**

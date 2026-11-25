@@ -32,6 +32,7 @@ SHA、run_id、run_number、R_first、当日序号与最终版本；取不到数
 而 Gecko 每条回退链都由本模块前置主字体，命中与不命中最终都渲染主字体——既不可见也无收益，删。
 """
 import argparse
+import contextlib
 import hashlib
 import io
 import os
@@ -450,31 +451,17 @@ def weight_ladder(axes: dict) -> list[dict]:
 HAN_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2FA1F))
 
 
-def han_envelope(font: TTFont) -> tuple[int, int] | None:
-    """汉字的墨迹竖直包络：行框存在的意义就是装汉字，字母的下伸部不算。"""
+def ink_envelope(font: TTFont, han_only: bool = False) -> tuple[int, int] | None:
+    """墨迹竖直包络（yMin, yMax）。`han_only` 只算汉字——行框只为装汉字而存在，
+    字母的下伸部不算。没字形的字件返回 None。"""
     if "glyf" not in font:
         return None
     glyf, cmap = font["glyf"], font.getBestCmap() or {}
-    low, high = None, None
-    for codepoint, name in cmap.items():
-        if not any(start <= codepoint <= end for start, end in HAN_RANGES):
-            continue
-        glyph = glyf[name]
-        glyph.expand(glyf)
-        if glyph.numberOfContours == 0:
-            continue
-        low = glyph.yMin if low is None else min(low, glyph.yMin)
-        high = glyph.yMax if high is None else max(high, glyph.yMax)
-    return None if low is None else (low, high)
-
-
-def ink_envelope(font: TTFont) -> tuple[int, int] | None:
-    """整字库的墨迹竖直包络（所有非空字形）。没字形的字件返回 None。"""
-    if "glyf" not in font:
-        return None
-    glyf = font["glyf"]
-    low, high = None, None
-    for name in font.getGlyphOrder():
+    names = font.getGlyphOrder() if not han_only else [
+        name for code, name in cmap.items()
+        if any(start <= code <= end for start, end in HAN_RANGES)]
+    low = high = None
+    for name in names:
         glyph = glyf[name]
         # 必须先 expand：没解包的字形 numberOfContours 一律读成 0，
         # 照那个判断会把整库都当成空格子（自检里就炸在「没有可用的墨迹」）。
@@ -499,10 +486,10 @@ def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789"
     ascender, descender, line_gap = (round(value * upm / carrier_upm) for value in carrier["hhea"])
     if ascender <= 0 or descender >= 0:
         raise ValueError("空壳行度量不是合法的 ascent/descent")
-    envelope = ink_envelope(font)          # 整字库：裁剪包络要盖住它，一个都不能切
+    envelope = ink_envelope(font)              # 整字库：裁剪包络要盖住它，一个都不能切
     ink = ink_bounds(font, characters) if characters else None
     if ink is None and not characters:
-        ink = han_envelope(font)           # 汉字字件：行框只需装得下汉字
+        ink = ink_envelope(font, han_only=True)    # 汉字字件：行框只需装得下汉字
     if ink is None:
         raise ValueError("字件没有可用的墨迹，无法验证归一后的行框")
     if ink[1] > ascender or ink[0] < descender:
@@ -813,14 +800,11 @@ def stamp_version(prop: str, build: str | None, day: str | None = None, date: st
 
 # 取号只有一份实现：`tools/ci_version.py`（纯标准库，selfrounds／hotswap 两条工作流没有
 # fontTools 也能直接跑）。这里只导入，不复制——两处各写一遍，迟早会算出差一个数。
-def _load_version_module():
-    import sys as _sys
-    _sys.path.insert(0, str(ROOT / "tools"))
-    import ci_version
-    return ci_version
+TOOLS = ROOT / "tools"
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))     # 本文件里 2 处各写一遍 `import sys as _sys` 的地方收成一处
 
-
-_ci_version = _load_version_module()
+import ci_version as _ci_version          # 取号只有一份实现（tools/ci_version.py），这里只导入不复制
 KEEP_RUNS = _ci_version.KEEP_RUNS
 artifact_anchor = _ci_version.artifact_anchor
 check_number = _ci_version.check_number
@@ -1192,41 +1176,42 @@ def make_font(family="Test Primary", upm=1000, axes=True, han=False):
     return out.getvalue()
 
 
-def make_music_font(glyph_count=200):
-    """离线构建测试用字体：足够覆盖 Noto Music 的固定音符区段门槛。"""
-    codepoints = range(0x1D100, 0x1D100 + glyph_count)
-    order = [".notdef", *(f"u{codepoint:04X}" for codepoint in codepoints)]
+def _simple_font(order, cmap, glyphs, ascent, descent, names):
+    """FontBuilder 起一个只有骨架的字件。两张夹具只差字形、行高与名字表。"""
     b = FontBuilder(1000, isTTF=True)
     b.setupGlyphOrder(order)
-    b.setupCharacterMap({codepoint: f"u{codepoint:04X}" for codepoint in codepoints})
-    b.setupGlyf({name: box(40, 0, 460, 700) for name in order})
+    b.setupCharacterMap(cmap)
+    b.setupGlyf(glyphs)
     b.setupHorizontalMetrics(dict.fromkeys(order, (500, 0)))
-    b.setupHorizontalHeader(ascent=800, descent=-200)
-    b.setupNameTable({"familyName": "Noto Music", "styleName": "Regular",
-                      "uniqueFontIdentifier": "Noto Music Test", "fullName": "Noto Music Regular",
-                      "psName": "NotoMusic-Regular"})
-    b.setupOS2(sTypoAscender=800, sTypoDescender=-200, usWinAscent=800, usWinDescent=200, usWeightClass=400)
+    b.setupHorizontalHeader(ascent=ascent, descent=-descent)
+    b.setupNameTable(names)
+    b.setupOS2(sTypoAscender=ascent, sTypoDescender=-descent,
+               usWinAscent=ascent, usWinDescent=descent, usWeightClass=400)
     b.setupPost()
     out = io.BytesIO()
     b.save(out)
     return out.getvalue()
+
+
+def make_music_font(glyph_count=200):
+    """离线构建测试用字体：足够覆盖 Noto Music 的固定音符区段门槛。"""
+    codepoints = list(range(0x1D100, 0x1D100 + glyph_count))
+    order = [".notdef", *(f"u{codepoint:04X}" for codepoint in codepoints)]
+    return _simple_font(
+        order, {codepoint: f"u{codepoint:04X}" for codepoint in codepoints},
+        {name: box(40, 0, 460, 700) for name in order}, 800, 200,
+        {"familyName": "Noto Music", "styleName": "Regular",
+         "uniqueFontIdentifier": "Noto Music Test", "fullName": "Noto Music Regular",
+         "psName": "NotoMusic-Regular"})
 
 
 def make_carrier(visible=False):
     order = [".notdef", "space"] + (["A"] if visible else [])
-    b = FontBuilder(1000, isTTF=True)
-    b.setupGlyphOrder(order)
-    b.setupCharacterMap({32: "space", **({65: "A"} if visible else {})})
-    b.setupGlyf({name: TTGlyphPen(None).glyph() for name in order})
-    b.setupHorizontalMetrics(dict.fromkeys(order, (500, 0)))
-    b.setupHorizontalHeader(ascent=930, descent=-250)
-    b.setupNameTable({"familyName": "Carrier", "styleName": "Regular", "uniqueFontIdentifier": "Carrier",
-                      "fullName": "Carrier", "psName": "Carrier"})
-    b.setupOS2(sTypoAscender=930, sTypoDescender=-250, usWinAscent=930, usWinDescent=250, usWeightClass=400)
-    b.setupPost()
-    out = io.BytesIO()
-    b.save(out)
-    return out.getvalue()
+    return _simple_font(
+        order, {32: "space", **({65: "A"} if visible else {})},
+        {name: TTGlyphPen(None).glyph() for name in order}, 930, 250,
+        {"familyName": "Carrier", "styleName": "Regular", "uniqueFontIdentifier": "Carrier",
+         "fullName": "Carrier", "psName": "Carrier"})
 
 
 def base_zip(path, fonts, licenses=True):
@@ -1245,6 +1230,19 @@ def sh(args, env):
     整个 --check 挂死。挂死和「红」是两回事：挂死没人看得见，红才是判据。
     """
     return subprocess.run(["sh", *args], env=env, capture_output=True, text=True, timeout=120)
+
+
+@contextlib.contextmanager
+def sandbox():
+    """临时目录，交出来的已经是 `Path`。6 处 `with tempfile...: tmp = Path(tmp)` 收成一处。"""
+    with tempfile.TemporaryDirectory() as raw:
+        yield Path(raw)
+
+
+def assert_shell_syntax(script: Path) -> None:
+    """`sh -n` 一遍，报错带上文件名。本文件里 8 处各写一遍，改一次要改 8 处；收成 1 处。"""
+    result = sh(["-n", str(script)], os.environ)
+    assert result.returncode == 0, f"{script.name} 语法错误：{result.stderr.strip()}"
 
 
 # ---------------------------------------------------------------- 度量归一（真机验证的角标修复）
@@ -1501,8 +1499,7 @@ def blank_prune():
 
 @check
 def build_end_to_end():
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with sandbox() as tmp:
 
         def test_build(**kwargs):
             kwargs.setdefault("supplemental_font_sources", ())
@@ -1926,8 +1923,7 @@ def firefox_bridge():
         except ValueError:
             pass
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with sandbox() as tmp:
         shim, calls = tmp / "bin", tmp / "calls"
         shim.mkdir()
         (shim / "am").write_text(f'#!/bin/sh\necho "am $*" >> {calls}\n')
@@ -1961,8 +1957,6 @@ def skia_flutter_path():
 
     变异校验过：把 skia.sh 的插入点挪回族尾，下面第一条断言直接 FAIL。
     """
-    import sys as _sys
-    _sys.path.insert(0, str(ROOT / "tools"))
     import skia_paths
 
     our = "Selffont-MarukoGothicCJKsc.ttf"
@@ -2030,8 +2024,9 @@ def skia_flutter_path():
 
 
 @check
-def runtime_scripts():
-    assert sh(["-n", str(ROOT / "module/customize.sh")], os.environ).returncode == 0, "customize.sh 语法错误"
+def install_scripts():
+    """安装脚本与它投放的四份配置、Skia 那份、火狐桥（原 1,216 行的 `runtime_scripts` 之一）。"""
+    assert_shell_syntax(ROOT / "module/customize.sh")
     # ★ 2026-11-10：安装脚本原来只停用 MFGA 一个旧模块，另两个同源 id 不管。
     #   真机上两份同源模块同时挂 fonts_base.xml 会互相覆盖 —— 卡第一屏的典型成因。
     _csrc = (ROOT / "module/customize.sh").read_text(encoding="utf-8")
@@ -2039,8 +2034,7 @@ def runtime_scripts():
         assert _id in _csrc, f"安装脚本没停用同源旧模块 {_id}：两份同时挂会冲突"
     assert "OLD_MOD=/data/adb/modules/MFGA" not in _csrc, \
         "安装脚本还写死单一旧模块路径，必须遍历清单"
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with sandbox() as tmp:
         modpath = tmp / "module"
         (modpath / "system/fonts").mkdir(parents=True)
         for path in sorted((ROOT / "module").iterdir()):  # 模块目录照打包后的样子铺开
@@ -2256,7 +2250,7 @@ def runtime_scripts():
         # 管理器按钮 / web-fonts.sh：状态文件记选择、副本立刻刷新、更新时不被覆盖。
         web, action = modpath / "web-fonts.sh", modpath / "action.sh"
         for script in (web, action):
-            assert sh(["-n", str(script)], os.environ).returncode == 0, f"{script.name} 语法错误"
+            assert_shell_syntax(script)
         state = bridge_dir / "selffont-web-fonts.state"
         assert sh([str(web), "status"], env).stdout.strip().startswith("网页自带字体 = 压成主字体")
         assert sh([str(web), "wat"], env).returncode == 2, "未知参数应报用法错"
@@ -2304,17 +2298,24 @@ def runtime_scripts():
         assert result.returncode == 0 and "panic" in result.stdout and "删掉了" in result.stdout, result
         (modpath / "harness.sh").unlink()
 
-    # 开机守卫（2026-11-08 事故）：卡在**第一屏不动**、主人长按电源键强制重启
-    # （ro.boot.bootreason=2sec_reboot → AOSP bootstat.cpp 映射 cold,rtc,2sec）。
-    # 进程是阻塞不是崩溃，所以 pstore / dropbox / tombstone 全空，证据只剩 logcat。
-    # 这里验死三件真会致命的事：连续失败会自动停用、走到底会清零、日志有体积上界。
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+
+@check
+def boot_guard():
+    """开机守卫与守夜。2026-11-08 卡第一屏事故：进程阻塞不崩溃，证据只剩 logcat。验死三件事：
+    连续失败自动停用、走到底清零、日志有体积上界。"""
+    with sandbox() as tmp:
         data = tmp / "data"
         guard = ROOT / "module/post-fs-data.sh"
         night = ROOT / "module/service.sh"
-        assert sh(["-n", str(guard)], os.environ).returncode == 0, "post-fs-data.sh 语法错误"
-        assert sh(["-n", str(night)], os.environ).returncode == 0, "service.sh 语法错误"
+        assert_shell_syntax(guard)
+        assert_shell_syntax(night)
+
+        # 用**代码行**的锚点，不用注释里的字样：文件头那条 `SELFFONT_NO_LOGCAT=1`
+        # 是给主人看的说明，拿它比顺序会拿注释和代码比，比出来的结论没有意义。
+        guard_src = guard.read_text(encoding="utf-8")
+        disable_at = guard_src.index(': > "$MODDIR/disable"')
+        logcat_at = guard_src.index('${SELFFONT_NO_LOGCAT:-0}')
+        assert disable_at < logcat_at, "停用判断必须排在抓日志之前"
         moddir = tmp / "module"
         moddir.mkdir()
         # 窗口给极大值：这个夹具测的是「第 1/2/3 次开机」的计数与停用，
@@ -2939,11 +2940,18 @@ def runtime_scripts():
         assert "SELFFONT_BOOT_LOG_BYTES" in guard.read_text(encoding="utf-8"), \
             "开机日志没有体积上界"
         # 停用之后不许再抓日志（模块已不生效，抓了也没人看，只会继续占空间）。
+
+
+@check
+def device_tools():
+    """全机清理与崩溃定因。锁死三件事：①默认只读；②`--delete` 也必须留住真标记 disable；
+    ③别人的开机脚本一字节不动。"""
+    with sandbox() as tmp:
         # 全机清理工具（tools/sf-clean.sh）：主人 2026-11-08 原话「你们 ai 做的事总要别人
         # 擦屁股，所以我向你要全机清理命令」。这里锁死三件真会出事的行为——
         # ①默认只读；②`--delete` 也必须留住真标记 disable；③别人的开机脚本一个字节不动。
         clean = ROOT / "tools/sf-clean.sh"
-        assert sh(["-n", str(clean)], os.environ).returncode == 0, "sf-clean.sh 语法错误"
+        assert_shell_syntax(clean)
         root = tmp / "clean"
         for sub in ("adb/modules/selffont-bench", "adb/modules/other", "adb/sf-crash/20260101-000000",
                     "adb/ksu/log", "adb/post-fs-data.d", "adb/boot-completed.d",
@@ -3187,7 +3195,7 @@ def runtime_scripts():
         #   这里锁三件：①非 root 必须拒绝下结论；②一块证据都没有时必须判「判不出来」
         #   并逐条列出缺哪块；③造真证据时必须判出具体那一块。
         why = ROOT / "tools/sf-why.sh"
-        assert sh(["-n", str(why)], os.environ).returncode == 0, "sf-why.sh 语法错误"
+        assert_shell_syntax(why)
         # 只看代码行：文件头那句「刻意不用 2>/dev/null」是解释，拿它比会误判。
         why_code = [ln for ln in why.read_text(encoding="utf-8").splitlines()
                     if not ln.lstrip().startswith("#")]
@@ -3240,16 +3248,8 @@ def runtime_scripts():
         assert sh([str(rewritten), "--yes-delete-everything"], os.environ).returncode == 2, \
             "未知参数没有拒绝"
 
-        # 用**代码行**的锚点，不用注释里的字样：文件头那条 `SELFFONT_NO_LOGCAT=1`
-        # 是给主人看的说明，拿它比顺序会拿注释和代码比，比出来的结论没有意义。
-        guard_src = guard.read_text(encoding="utf-8")
-        disable_at = guard_src.index(': > "$MODDIR/disable"')
-        logcat_at = guard_src.index('${SELFFONT_NO_LOGCAT:-0}')
-        assert disable_at < logcat_at, "停用判断必须排在抓日志之前"
-
 
 # ---------------------------------------------------------------- 仓库自身的数据与常量
-
 
 
 @check
@@ -3262,18 +3262,17 @@ def garbage_scanner():
     """
     script = ROOT / "tools/check_garbage.sh"
     assert script.is_file(), "缺 tools/check_garbage.sh"
-    assert sh(["-n", str(script)], os.environ).returncode == 0, "check_garbage.sh 语法错误"
+    assert_shell_syntax(script)
     body = script.read_text()
     assert "id -u" in body and "exit 3" in body, "非 root 必须直接退出，不许继续打印（无）"
     device = ROOT / "tools/probe_device.sh"
     assert device.is_file(), "缺 tools/probe_device.sh（真机探针）"
-    assert sh(["-n", str(device)], os.environ).returncode == 0, "probe_device.sh 语法错误"
+    assert_shell_syntax(device)
     dbody = device.read_text()
     assert "id -u" in dbody and "不算数" in dbody, "真机探针必须自己标注非 root 的结论不可信"
     assert '--delete' in body, "必须保留 --delete 开关"
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+    with sandbox() as tmp:
         download = tmp / "storage/emulated/0/Download"
         module = tmp / "data/adb/modules/MFGA"
         service = tmp / "data/adb/service.d"
@@ -3422,7 +3421,6 @@ def dead_code():
         "#!/bin/sh\nEVAL_VAR=1\neval \"$(sed -n '1p' x)\"\n", encoding="utf-8")
     assert _dc.shell_write_only(probe / "e.sh") == [], \
         "有 eval 的文件仍被判定只写不读：那变量可能被 eval 进来的函数读，删了就是真 bug"
-
 
 
 @check
@@ -3888,10 +3886,6 @@ def module_hotswap():
 
         result = run_hs("on")
         assert result.returncode == 2, "on 这个子命令必须已经不存在（不许有第四版挂载实现）"
-
-
-
-
 
 
 def main() -> None:
