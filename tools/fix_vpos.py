@@ -69,34 +69,8 @@ def face_boxes() -> dict[int, tuple[int, int, int, int]]:
 _table_centre: float | None = None
 
 
-def table_centre() -> float | None:
-    """字面框表上的设计中线（满宽满高字墨心的中位数）；没有表返回 None。"""
-    global _table_centre
-    if _table_centre is None:
-        boxes = face_boxes()
-        if not boxes:
-            return None
-        centres = [(b[1] + b[3]) / 2 for b in boxes.values()
-                   if b[2] - b[0] >= MIN_WIDE and b[3] - b[1] >= MIN_TALL]
-        _table_centre = statistics.median(centres)
-    return _table_centre
 
 
-def corrected_box(box: tuple[int, int, int, int], centre: float,
-                  threshold: int = THRESHOLD) -> tuple[int, int, int, int]:
-    """把母版字面框按竖向修正规则挪一下，返回「修完之后应该在的」框。
-
-    `tools/cjk_vf.py` 的逐字对齐用的就是这张表；表本身是**未修正**母版量的，
-    所以要在这里套同一条规则，否则自版字体会把母版的竖向偏差原样抄过去
-    （实测：`平 −41.5`、`幵 −47.0`、`珥 −47.0`、`羽 −45.5`，与母版逐单位相同）。
-    """
-    x_min, y_min, x_max, y_max = box
-    if x_max - x_min < MIN_WIDE or y_max - y_min < MIN_TALL:
-        return box
-    dy = round(centre - (y_min + y_max) / 2)
-    if abs(dy) <= threshold:
-        return box
-    return (x_min, y_min + dy, x_max, y_max + dy)
 
 
 def rows_of(font: TTFont, boxes: dict | None = None) -> list[tuple[int, str, float, int]]:

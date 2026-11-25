@@ -170,9 +170,29 @@ def repo_mention_counts_raw(root: Path) -> dict[str, int]:
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue                            # 注释不算引用
-            for tok in _tokens(_strip_strings(stripped)):
+            # ★ 2026-11-26 实测漏判：**行尾**注释原来算引用。`def build_vf(...)` 上方那行
+            #   `REJECTS = []  # 每次 build_vf 重置` 让 build_vf 计数从 1 变 2，190 行死码
+            #   因此长期没被本扫描器发现（外部工具 shrink-anything 一扫描就点出来了）。
+            for tok in _tokens(_strip_strings(_strip_comment(stripped))):
                 counts[tok] = counts.get(tok, 0) + 1
     return counts
+
+
+def _strip_comment(line: str) -> str:
+    """去掉行尾注释（引号外第一个 `#` 起全部丢弃）。`#` 在字符串里不算注释。"""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            continue
+        if ch == "#":
+            return line[:i]
+    return line
+
 
 
 def _strip_strings(line: str) -> str:

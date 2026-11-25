@@ -3741,6 +3741,22 @@ def dead_code():
     assert _dc.shell_write_only(probe / "e.sh") == [], \
         "有 eval 的文件仍被判定只写不读：那变量可能被 eval 进来的函数读，删了就是真 bug"
 
+    # ★ 2026-11-26 实测漏判：**行尾注释**原来算「被引用」。
+    #   `tools/cjk_vf.py` 里 `REJECTS = []  # 每次 build_vf 重置` 这一行，让只被 def 定义、
+    #   毫无调用的 `build_vf()`（190 行）在扫描器眼里「出现过两次」，常年零检出；
+    #   外部工具 shrink-anything 一次扫描就把它列成「可直接删」。
+    #   判据：行尾注释里的名字必须不计入引用。
+    (probe / "tail_comment.py").write_text(
+        "def DEAD_FN():\n    return 1\n\n"
+        "KEEP = 2  # DEAD_FN 只在这条行尾注释里出现过\n"
+        "print(KEEP)\n", encoding="utf-8")
+    assert _dc.ast_name_counts(probe).get("DEAD_FN") == 1, \
+        _dc.ast_name_counts(probe).get("DEAD_FN")
+    assert _dc.repo_mention_counts(probe).get("DEAD_FN") == 1, \
+        (f"行尾注释仍被当成引用：DEAD_FN 计数 "
+         f"{_dc.repo_mention_counts(probe).get('DEAD_FN')}（应为 1，只有 def 那一行）")
+    assert _dc._strip_comment('x = "a#b"  # 注') == 'x = "a#b"  ', "字符串里的 # 被当成了注释起点"
+
 
 @check
 def supplemental_font_reference():
