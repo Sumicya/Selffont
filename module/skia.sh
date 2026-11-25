@@ -163,16 +163,31 @@ apply() {
             for (i = 2; i <= nb; i++) print buf[i]
             in_family = 0; nb = 0
         }
+        # ★ 2026-11-26 真机：ColorOS 的 fonts.xml 里有一整段**被注释掉**的
+        #   <family lang="zh-Hans"> 块（`<!-- ... -->`，OPLUS_FEATURE_FONT_FLIP 的两个分支只留一个）。
+        #   原扫描器不看注释，照样往注释块里的族插行 —— 插进去的 4 行**永远不会被解析**。
+        #   设备读数：6 处插入里后面 4 处落在注释块内（1374/1379/1385/1421），只有 1458/1500 两处真生效。
+        #   所以族扫描必须带注释状态：`<!--` 进、`-->` 出，同一行可多次进出。
+        function upd(s,   i, j) {
+            while (1) {
+                if (!incmt) { i = index(s, "<!--"); if (!i) break; incmt = 1; s = substr(s, i + 4); continue }
+                j = index(s, "-->"); if (!j) break; incmt = 0; s = substr(s, j + 3)
+            }
+            return incmt
+        }
         BEGIN {
             while ((getline row < rowsfile) > 0) rows = rows row "\n"
             close(rowsfile)
+            incmt = 0
         }
-        /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/ {
+        { commented = upd($0) }
+        /<family[ \t>]/ && !commented && $0 !~ /\/>[ \t]*$/ {
             flush()
             in_family = 1; nb = 1; buf[1] = $0
             next
         }
-        in_family { buf[++nb] = $0; if ($0 ~ /<\/family>/) flush(); next }
+        in_family && !commented { buf[++nb] = $0; if ($0 ~ /<\/family>/) flush(); next }
+        in_family { flush(); print; next }
         { print }
         END { flush() }
         ' "$SOURCE" > "$TARGET" 2>/dev/null

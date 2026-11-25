@@ -2306,6 +2306,61 @@ def install_scripts():
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
             "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"
+        # ★ 2026-11-26 真机读数（ColorOS 16）：设备那份 fonts.xml 里有一整段
+        #   **被注释掉**的 `<family lang="zh-Hans">`（OPLUS_FEATURE_FONT_FLIP 的两个分支只留一个）。
+        #   老扫描器不看注释，照样往注释块里插 ⇒ 真机 6 处插入里 4 处永远不被解析，
+        #   只有 zh-Hans 那份真实族后面的 2 处可能生效。这是「六处、字形却没变」的直接原因。
+        #   判据：注释块里一处都不许有，注释块外的真实族照插。
+        commented_stock = """<?xml version="1.0" encoding="utf-8"?>
+<familyset version="23">
+    <family name="sans-serif">
+        <font weight="400" style="normal">SysSans.ttf</font>
+    </family>
+    <!--
+    <family lang="zh-Hans">
+        <font weight="400" style="normal">SysSans-Hans.ttf</font>
+    </family>
+    <family lang="zh-Hant,zh-Bopo">
+        <font weight="400" style="normal">SysSans-Hant.ttf</font>
+    </family>
+    -->
+    <family lang="zh-Hans">
+        <font weight="400" style="normal">SysSans-Hans-Regular.ttf</font>
+    </family>
+    <family lang="ja">
+        <font weight="400" style="normal">NotoSansCJKjp-Regular.otc</font>
+    </family>
+</familyset>
+"""
+        (system / "system/etc/fonts.xml").write_text(commented_stock, encoding="utf-8")
+        (modpath / "system/etc/fonts.xml").unlink(missing_ok=True)
+        result_cmt = sh([str(modpath / "skia.sh"), "on"], env_on)
+        assert result_cmt.returncode == 0, result_cmt.stderr
+        cmt_out = (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8")
+        in_comment = []
+        _c = 0
+        for _no, _line in enumerate(cmt_out.splitlines(), 1):
+            _s = _line
+            while True:
+                if not _c:
+                    _i = _s.find("<!--")
+                    if _i < 0:
+                        break
+                    _c = 1
+                    _s = _s[_i + 4:]
+                    continue
+                _j = _s.find("-->")
+                if _j < 0:
+                    break
+                _c = 0
+                _s = _s[_j + 3:]
+            if "Any-Name.ttf" in _line and _c:
+                in_comment.append(_no)
+        assert not in_comment, \
+            f"往注释块里插了我们的行（Skia 解析不到，等于没插）：第 {in_comment} 行"
+        outside = [no for no, ln in enumerate(cmt_out.splitlines(), 1) if "Any-Name.ttf" in ln]
+        assert len(outside) == 2, \
+            f"注释块外只剩 2 个中文/日文族，应插 2 处，实际 {len(outside)} 处：{outside}"
 
         # 设备一份可替换配置都没有（Android 15 以下）→ 中止安装，不假装成功。
         for relative in ("system/etc/font_fallback.xml", "system/etc/font_fallback_cjkvf.xml",
