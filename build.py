@@ -2290,17 +2290,28 @@ def install_scripts():
             "我们也有的码位之外的生僻符号必须仍落设备字件（否则就是豆腐块）"
         assert _sp.choose(parsed, cmaps, 0x4E2D) == "Any-Name.ttf", \
             "汉字仍要由我们画（插在无名族族首）"
-        # 命名族 `sans-serif` **不插**：Skia 的逐字回退只遍历无名族（parser.cpp:311 把带 name
-        # 的族排除在 fFallbackNameToFamilyMap 之外），插进去对 Flutter 毫无作用。
-        # 这条以前写反了，是前三次真机「没变」的直接来源。
-        assert not any('name="sans-serif"' in ln or "sans-serif" in b.splitlines()[0]
-                       for b in ours for ln in [b.splitlines()[0]]), \
-            "不该插命名族 sans-serif：Skia 逐字回退看不到命名族"
+        # ★ 2026-11-26 真机第二轮（ColorOS 17）：命名族 `sans-serif` **必须插**。
+        #   以前的写法把「逐字回退只遍历无名族」推成「插命名族毫无作用」，漏了 Skia 的
+        #   onMatchFamilyStyleCharacter 第一轮：`find_family_style_character(familyName,
+        #   fNameToFamilyMap, …)`（SkFontMgr_android.cpp:350-372）——**名字相等的族先被问**，
+        #   命中就返回，根本走不到无名族那一轮。设备上 sans-serif 是空族，空族在第一轮等于
+        #   直接落空；只有它自己带字件，按名字请求的 Flutter 才可能拿到我们的字。
+        assert any('name="sans-serif"' in b.splitlines()[0] for b in ours), \
+            "命名族 sans-serif 必须插：Skia 第一轮按名字取族，空族等于没有"
+        for b in ours:
+            head = b.splitlines()[0]
+            if 'name="sans-serif"' not in head:
+                continue
+            body = [ln for ln in b.splitlines() if "<font" in ln]
+            assert body and "Any-Name.ttf" in body[0], \
+                "sans-serif 族的首条 <font> 必须是本包字件（第一轮只取族里匹配的 face）"
         # 夹具里够格的无名族有 3 个：开头那个**多字件**的无 lang 匿名族（2 字件，排在 zh 之前，
         # 就是真机上 MFGA [2] 那 9 个中文全字重的形状）＋ zh ＋ ja。
         # 旧插法只插中日韩那 2 处，会被开头那个吃掉 ⇒ Flutter 里一个字都不变。
-        assert len(ours) == 3, \
-            f"应插 3 处（挡路匿名族 + zh + ja），实际 {len(ours)}：少插就是被挡路族吃掉"
+        # 夹具里够格的有 4 个：命名族 sans-serif（第一轮就吃到）＋ 开头多字件匿名族（抢先）
+        # ＋ zh ＋ ja。2026-11-26 之前这里写 3，是因为不插命名族；真机证明那条推论漏了第 1 轮。
+        assert len(ours) == 4, \
+            f"应插 4 处（sans-serif + 挡路匿名族 + zh + ja），实际 {len(ours)}：少插就是被挡路族吃掉"
         assert f"已插 {len(ours)} 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
         assert "已替换 4 份字体配置" in result.stdout, "应报告替换数量：" + result.stdout
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
@@ -2359,8 +2370,9 @@ def install_scripts():
         assert not in_comment, \
             f"往注释块里插了我们的行（Skia 解析不到，等于没插）：第 {in_comment} 行"
         outside = [no for no, ln in enumerate(cmt_out.splitlines(), 1) if "Any-Name.ttf" in ln]
-        assert len(outside) == 2, \
-            f"注释块外只剩 2 个中文/日文族，应插 2 处，实际 {len(outside)} 处：{outside}"
+        # 注释块外：sans-serif（第 1 轮）＋ zh ＋ ja ＝ 3 处；块内那两套 zh 一处都不许有。
+        assert len(outside) == 3, \
+            f"注释块外应是 sans-serif + zh + ja 共 3 处，实际 {len(outside)} 处：{outside}"
 
         # 设备一份可替换配置都没有（Android 15 以下）→ 中止安装，不假装成功。
         for relative in ("system/etc/font_fallback.xml", "system/etc/font_fallback_cjkvf.xml",

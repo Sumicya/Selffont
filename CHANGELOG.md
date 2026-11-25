@@ -1,3 +1,26 @@
+## 2026-11-26　命名族 sans-serif 必须插：Skia 第 1 轮按名字取族
+
+真机（ColorOS 17 / Android 17）。Skia 的 `onMatchFamilyStyleCharacter` 匹配顺序
+（`SkFontMgr_android.cpp:350-415`，逐行读过）：
+
+1. `find_family_style_character(familyName, fNameToFamilyMap, …)` —— **名字相等的族先问**，命中即返回；
+2. `fFallbackNameToFamilyMap` 里 `fFallbackFor == familyName` 的族；
+3. `fFallbackNameToFamilyMap` 里 `fFallbackFor` 为空的族（无名族，我一直插的就是这里）；
+4. 名字不等的族；5. 剩下那些 fallbackFor。
+
+设备上 `<family name="sans-serif">` 是**空族**（起始标签紧接 `</family>`）。空族在第 1 轮
+等于直接落空，才轮到第 3 轮。而 ColorOS 17 的字体由四份配置共同决定
+（`fonts.xml` + `fonts_base.xml` + `fonts_ule.xml` + `font_fallback.xml`），Flutter 那条链
+拿到的族表里 sans-serif 有字件 ⇒ 第 1 轮就命中 ⇒ 我插在无名族的行**永远轮不到**。
+
+修法：`module/skia.sh` 的族判定加一条 `is_named_req()`，名字落在
+`sans-serif / sys-sans-en / op-sans-en` 的族一律在族首插我们的字件（空族也插）。
+
+- 夹具：空族 sans-serif 也插上了；命名族 + 多字件匿名族 + zh + ja 共 4 处。
+- `build.py` 断言反过来：**必须**有 sans-serif 那一处，且它族首是本包字件；总数 3 → 4；
+  注释块外 2 → 3。
+- 报警改口：插进 sans-serif / sys-sans-en / op-sans-en 是对的，只有插进别的命名族才报。
+
 ## 2026-11-26　注释块里的族：真机 6 处里有 3 处插进了 `<!-- -->`
 
 真机读数（ColorOS 16，`/system/etc/fonts.xml` 1,7xx 行、176 个族）：

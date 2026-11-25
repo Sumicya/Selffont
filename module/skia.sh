@@ -149,6 +149,20 @@ apply() {
             }
             return 0
         }
+        # ★ 2026-11-26 真机第二轮（ColorOS 17 / Android 17）：按名字请求的族是**空族**时，
+        #   Skia 的第一轮（名字相等）必然落空，才轮到无名族。可 ColorOS 17 的字体由四份配置
+        #   共同决定（fonts.xml + fonts_base.xml + fonts_ule.xml + font_fallback.xml），
+        #   Flutter 那条链拿到的族表里 sans-serif 有字件 ⇒ 第一轮就命中，我们的无名族行永远轮不到。
+        #   按 Skia 源码 onMatchFamilyStyleCharacter 的匹配顺序（SkFontMgr_android.cpp:350-415）：
+        #     1 名字相等的族 → 2 fallbackFor 相等的族 → 3 无名族 → 4 名字不等的族
+        #   所以必须让「按名字请求」的那几个族**自身**带我们的字件，才吃得到第 1 轮。
+        function is_named_req(tag,   n) {
+            if (!is_named(tag)) return 0
+            n = tag
+            sub(/^.*name="/, "", n); sub(/".*$/, "", n)
+            gsub(/[ \t]/, "", n); n = tolower(n)
+            return (n in REQ)
+        }
         # 一个 <family> 缓冲起来，到 </family> 才知道字件数，那时再决定插不插。
         function flush(   head, body, nf, i) {
             if (!in_family) return
@@ -157,6 +171,7 @@ apply() {
             for (i = 2; i <= nb; i++) if (buf[i] ~ /<font /) nf++
             emit = 0
             if (wanted(head)) emit = 1                       # 中日韩无名族：插
+            else if (is_named_req(head)) emit = 1            # 按名字请求的族（sans-serif 等）：插，吃第 1 轮
             else if (!is_named(head) && head !~ /lang="/ && nf >= 2) emit = 1  # 挡路的多字件匿名族：抢先
             print head
             if (emit) printf "%s", rows
@@ -179,6 +194,9 @@ apply() {
             while ((getline row < rowsfile) > 0) rows = rows row "\n"
             close(rowsfile)
             incmt = 0
+            split("sans-serif sys-sans-en op-sans-en", _r, " ")
+            for (i in _r) REQ[_r[i]] = 1
+            # 空族（一个 <font> 都没有）也照样插：空族的第 1 轮 = 直接落空，插进去正好补上。
         }
         { commented = upd($0) }
         /<family[ \t>]/ && !commented && $0 !~ /\/>[ \t]*$/ {
@@ -210,10 +228,13 @@ apply() {
         stray=$(awk '/<family[ \t>].*name="/{named=1; next} /<\/family>/{named=0; next}
                      named && index($0, marker){c++} END{print c+0}' marker="$marker" "$TARGET")
         if [ "${stray:-0}" -gt 0 ]; then
-            ui_print "!!! Skia：有 $stray 条插进了命名族（Skia 逐字回退看不到命名族），Flutter 不会变"
+            # ★ 2026-11-26 改口：插进**被按名字请求**的那几个命名族（sans-serif / sys-sans-en /
+            #   op-sans-en）是**对的**——Skia 第 1 轮就按名字取族，空族才等于没有。
+            #   只有插进别的命名族（serif、monospace 之类）才是白插，那种才报警。
+            ui_print "!!! Skia：有 $stray 条插进了非请求的命名族（只有 sans-serif 一族吃第 1 轮），Flutter 不会变"
         fi
         [ "$skip_ko" = 1 ] && note="，韩文族已跳过（本包无谚文，留给设备）" || note=""
-        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（中日韩无名族的族首$note）"
+        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（命名族 sans-serif + 中日韩无名族族首$note）"
         return 0
     fi
     rm -f "$TARGET"
