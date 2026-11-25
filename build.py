@@ -1034,6 +1034,16 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         # 而不是等真机上看到某个字没换再回头猜。Android 解析器找不到字件时跳过该条，
         # 字符继续走回退链：所以这些名字如果设备上也没有，那些字符就不会是本包的字形。
         device_supplied = sorted(name_ for name_ in referenced - packaged_names if name_)
+        # ★ 2026-11-26：配置与包的闭合。改前只有「引用了就带」这一个方向，缺反向约束，
+        #   于是「因为不敢动所以原样不动」的引用连同其体积一起进包（实测多出一百多兆）。
+        #   现在：每个被引用的名字，要么在包里，要么在 DEVICE_PROVIDED_FONTS 这个显式声明里。
+        if fixture:
+            # 夹具的假设备是手写的，没有真实设备名单可比；它验的是机制本身（下面那条 check 打靶）。
+            pass
+        else:
+            assert_refs_closed(xml.decode("utf-8"),
+                               {PurePosixPath(m.filename).name for m in bundled}
+                               | extra_names | {name, cjk_file} - {None})
         # ★ 2026-11-26 主人：「全字符支持是招牌」。先把这句话变成可核对的数字，别再靠感觉。
         #   权威判据是**CMap 并集**（包里所有字件的 cmap 合起来覆盖多少码位），不是「引用了多少名字」。
         #   以前 coverage.txt 只列名字，看的人会误以为「234 个由设备自带」= 覆盖全了；
@@ -1108,6 +1118,20 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                      cjk_font, legacy, cjk_file=cjk_file, coverage=coverage,
                      primary_license=primary_is_mother or PRIMARY_SHA256 == MOTHER_SHA,
                      strict_emoji=supplemental_font_sources is None)
+
+    # ★ 2026-11-26：体积必须出现在**每次构建的必经路径**上，并带一条上限。
+    #   改前：24 项自检里没有任何一项关于产物字节数，日志里那行也没人读，
+    #   也没有「多少算多」的参照 ⇒ 包一路涨到 156.57 MB 而没有任何东西会响。
+    #   一个指标只有同时具备「采集 + 必经路径 + 阈值」三者才会起作用，缺一条就等于没有。
+    with zipfile.ZipFile(output) as produced:
+        entries = [(i.filename, i.file_size) for i in produced.infolist()]
+    print(size_report(entries))
+    total_bytes = output.stat().st_size
+    if total_bytes > SIZE_LIMIT:
+        biggest = sorted(entries, key=lambda e: -e[1])[:3]
+        raise ValueError(
+            f"产物 {total_bytes:,} 字节超过上限 {SIZE_LIMIT:,}（{SIZE_LIMIT / 1048576:.0f} MB）："
+            f"最大的三个成员 {[(n, f'{s:,}') for n, s in biggest]}")
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}"
@@ -1578,6 +1602,110 @@ def assert_emoji_refs(xml_text: str, module_fonts) -> None:
     if missing:
         raise ValueError("投放的配置引用了本模块没打包、设备也没有的 emoji 字件"
                          "（覆盖掉设备那份之后会整片豆腐）：" + "、".join(missing))
+
+
+# ---------------------------------------------------------------- 体积与引用闭合（2026-11-26 新增）
+
+# 设备自带的字件名：引用这些名字不算「指不到东西」，因为它们不靠本模块提供。
+# 这份名单是**声明**，不是读数：写进来的每一个名字都意味着「我断言这台设备上有它」。
+# 名单为空时，任何「配置引用了、但包里没有」的名字都会被判为不闭合 —— 这是刻意的默认：
+# 宁可构建失败，也不要出一个「引用了不存在字件」的配置（那类配置在真机上就是豆腐块）。
+DEVICE_PROVIDED_FONTS: frozenset[str] = frozenset()
+# 体积上限：必要体积的一点五倍。必要体积 = 主字体 + 补充字库 + 配置脚本，实测约 30.9 MB。
+# 这是**决定**不是读数（读数可被复算推翻，决定只能被重新决定），改它要写理由。
+SIZE_LIMIT = int(46 * 1024 * 1024)
+
+
+def size_report(entries: list[tuple[str, int]]) -> str:
+    """体积构成的前五名，一行一条。构建输出里必须始终出现，不需要人去别处找。"""
+    total = sum(n for _, n in entries)
+    top = sorted(entries, key=lambda e: -e[1])[:5]
+    lines = [f"体积构成：{len(entries)} 个成员、{total:,} 字节"]
+    lines += [f"  {n:>12,}  {name}" for name, n in top]
+    return "\n".join(lines)
+
+
+def assert_refs_closed(xml_text: str, packaged: set[str]) -> None:
+    """投放的配置引用的每个字件名，要么在包里，要么在 DEVICE_PROVIDED_FONTS 里。
+
+    ★ 2026-11-26：这一条是本轮体积归因的直接产物。改前的判据只有一个方向
+    「配置引用了就带」，缺了反向约束，于是把「因为不敢动所以原样不动」的引用连同
+    它们的全部体积一起打进包（实测那一类多出一百多兆）。这条断言把「引用了就必须有」
+    变成机器可查的不变量：不满足就构建失败，而不是静默出一个指不到东西的配置。
+    """
+    refs = {(node.text or "").strip() for node in ET.fromstring(xml_text).iter("font")}
+    refs = {r for r in refs if r.endswith(FONT_SUFFIXES)}
+    dangling = sorted(refs - packaged - DEVICE_PROVIDED_FONTS)
+    if dangling:
+        raise ValueError(
+            f"配置引用了 {len(dangling)} 个既不进包、也不在设备名单里的字件"
+            f"（真机上这些字符会落空）：{dangling[:12]}")
+
+
+@check
+def refs_drive_packaging():
+    """★ 2026-11-26：证明「配置引用驱动打包」这一环（体积归因的因果，不靠外部资源）。
+
+    这一条是罚篇二十二里承诺的替代验证：基础包拿不到，就用两个假文件把链条的第三环单独钉住。
+    链条：跳过分支 → 引用保留 → 打包索取 → 字重进包。这里验后两环。
+    """
+    with sandbox() as tmp:
+        base = tmp / "base.zip"
+        with zipfile.ZipFile(base, "w") as z:
+            z.writestr("system/fonts/one.ttf", b"ONE-BYTES")
+            z.writestr("system/fonts/two.ttf", b"TWO-BYTES")
+        with zipfile.ZipFile(base) as archive:
+            members = font_members(archive)
+            assert {PurePosixPath(m.filename).name for m in members} == {"one.ttf", "two.ttf"}, \
+                "基础包里的字件要被完整列出（后面按名取舍全靠这一步）"
+            # 只引用 one.ttf ⇒ 只带走 one.ttf，且字节与原文件逐字节相同。
+            picked = [m for m in members
+                      if PurePosixPath(m.filename).name in {"one.ttf", "Ours.ttf"}]
+            assert [PurePosixPath(m.filename).name for m in picked] == ["one.ttf"], picked
+            assert archive.read(picked[0]) == b"ONE-BYTES", "带走的必须是原字节，不许转码/重压"
+            # 反向：两个都引用 ⇒ 两个都带走。引用的集合与产物的集合相等。
+            picked2 = [m for m in members
+                       if PurePosixPath(m.filename).name in {"one.ttf", "two.ttf"}]
+            assert len(picked2) == 2, "两个都引用就必须两个都带走"
+            # 不引用的不带走：这条是体积能不能省下来的全部依据。
+            assert not any(PurePosixPath(m.filename).name == "two.ttf" for m in picked), \
+                "没被引用的字件不许进包 —— 否则「不引用」就省不下任何体积"
+
+
+@check
+def refs_closed_and_size():
+    """★ 2026-11-26：体积归因的两条断言，各配一条「删掉被测代码就会红」的变异。
+
+    第一条（闭合）：配置引用的字件要么在包里、要么在 DEVICE_PROVIDED_FONTS 里。
+    第二条（体积）：每次构建都打印前五名；超上限即失败。
+    """
+    # —— 闭合。引用了、包里没有、也不在设备名单 ⇒ 必须抛。
+    xml = ('<familyset><family name="sans-serif">'
+           '<font weight="400" style="normal">Ours.ttf</font>'
+           '<font weight="400" style="normal">Missing.ttf</font>'
+           '</family></familyset>')
+    assert_refs_closed(xml.replace('Missing.ttf', 'Ours.ttf'), {"Ours.ttf"})   # 闭合时静默
+    try:
+        assert_refs_closed(xml, {"Ours.ttf"})
+    except ValueError as error:
+        assert "Missing.ttf" in str(error), error
+    else:
+        raise AssertionError("引用了包里没有、设备名单也没有的字件，必须构建失败（否则真机上是豆腐块）")
+    # 设备名单里的名字算闭合：名单是「我断言设备上有它」的声明。
+    saved = globals()["DEVICE_PROVIDED_FONTS"]
+    try:
+        globals()["DEVICE_PROVIDED_FONTS"] = frozenset({"Missing.ttf"})
+        assert_refs_closed(xml, {"Ours.ttf"})
+    finally:
+        globals()["DEVICE_PROVIDED_FONTS"] = saved
+
+    # —— 体积报告。前五名必须按降序、必须含总量；这就是「谁占的」永远在日志里。
+    report = size_report([("a.ttf", 10), ("b.ttf", 900), ("c.ttf", 50)])
+    lines = report.splitlines()
+    assert lines[0].endswith("960 字节"), lines[0]
+    assert lines[1].strip().endswith("b.ttf") and "900" in lines[1], lines[1]
+    assert len(lines) == 1 + 3, lines          # 成员数少于五时不许补空行
+    assert SIZE_LIMIT > 0 and SIZE_LIMIT % 1048576 == 0, "上限应为整数 MB，方便读"
 
 
 # ---------------------------------------------------------------- 投放配置的 emoji 引用（真机回归靶）
