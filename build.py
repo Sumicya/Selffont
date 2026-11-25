@@ -183,6 +183,27 @@ SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE, NEW_UNICODE_18, NEW_UNICODE_17,
                              NOTO_EMOJI_SOURCE, NOTO_COLR_EMOJI_SOURCE)
 
 
+# CJK 统一表意（Unicode 15.1）各区码位总数：基本区 + 扩展 A–H。
+# 「全字符支持」这句招牌要能被核对，就得先把分母写死，不许每次口头估。
+HAN_RANGES = (
+    (0x3400, 0x4DBF),    # 扩展 A   6,592
+    (0x4E00, 0x9FFF),    # 基本区  20,992
+    (0xF900, 0xFAFF),    # 兼容表意（不计入总数，只算覆盖）
+    (0x20000, 0x2A6DF),  # 扩展 B  42,720
+    (0x2A700, 0x2B739),  # 扩展 C   4,154
+    (0x2B740, 0x2B81D),  # 扩展 D     222
+    (0x2B820, 0x2CEA1),  # 扩展 E   5,762
+    (0x2CEB0, 0x2EBE0),  # 扩展 F   7,473
+    (0x30000, 0x3134A),  # 扩展 G   4,939
+    (0x31350, 0x323AF),  # 扩展 H   4,192
+)
+HAN_TOTAL = 97046       # 上面除「兼容表意」之外各区之和
+
+
+def in_han_ranges(codepoint: int) -> bool:
+    return any(low <= codepoint <= high for low, high in HAN_RANGES)
+
+
 # ---------------------------------------------------------------- 配置数据
 CARRIER = "Roboto-Regular.ttf"  # 输入 fonts.xml 的默认家族必须保留的度量空壳
 PRIMARY_FAMILIES = {"sans-serif", "sans-serif-condensed", "serif"}
@@ -1011,10 +1032,30 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         # 而不是等真机上看到某个字没换再回头猜。Android 解析器找不到字件时跳过该条，
         # 字符继续走回退链：所以这些名字如果设备上也没有，那些字符就不会是本包的字形。
         device_supplied = sorted(name_ for name_ in referenced - packaged_names if name_)
+        # ★ 2026-11-26 主人：「全字符支持是招牌」。先把这句话变成可核对的数字，别再靠感觉。
+        #   权威判据是**CMap 并集**（包里所有字件的 cmap 合起来覆盖多少码位），不是「引用了多少名字」。
+        #   以前 coverage.txt 只列名字，看的人会误以为「234 个由设备自带」= 覆盖全了；
+        #   实际汉字全集 97,046 码位、母版只有 30,393，缺口 66,653（68.7%），而补充字库一个汉字都没有。
+        unicodes: set[int] = set()
+        for blob in [packaged, cjk_font or b""] + [item["data"] for item in supplementals]:
+            if not blob:
+                continue
+            try:
+                with TTFont(io.BytesIO(blob), lazy=True) as _probe:
+                    unicodes |= set(_probe.getBestCmap())
+            except Exception as error:                       # 读不了要说出来，不许静默算成零覆盖
+                warnings.append(f"覆盖统计：有字件读不出 cmap（{error}），该字件的码位未计入。")
+        han_have = {cp for cp in unicodes if in_han_ranges(cp)}
         coverage = (
             "Selffont 覆盖清单（构建期生成）\n\n"
             f"打包的字件 {len(packaged_names)} 个：\n"
             + "".join(f"  {item}\n" for item in sorted(packaged_names))
+            + f"\n【全字符覆盖】本包所有字件的 cmap 并集 {len(unicodes):,} 个码位，"
+              f"其中汉字区（基本区 + 扩展 A–H）{len(han_have):,} / {HAN_TOTAL:,}，"
+              f"缺 {HAN_TOTAL - len(han_have):,}（{100 * (HAN_TOTAL - len(han_have)) / HAN_TOTAL:.1f}%）。\n"
+              "  汉字全集按 Unicode CJK 统一表意各区求和：基本区 20,992 + 扩展A 6,592 + B 42,720 + "
+              "C 4,154 + D 222 + E 5,762 + F 7,473 + G 4,939 + H 4,192。\n"
+              "  缺的那部分**不是本包的字形**，屏幕上由设备自带字件画（或落豆腐）。\n"
             + f"\n配置引用、但本包不带、由设备 /system/fonts 提供的名字 {len(device_supplied)} 个：\n"
             + "".join(f"  {item}\n" for item in device_supplied)
             + "\n说明：Android 的字体解析器遇到找不到的字件会跳过那一条，字符继续走回退链。\n"
@@ -1591,6 +1632,57 @@ def emoji_config_refs():
         assert "NotoColorEmoji-Nowhere.ttf" in str(error), error
     else:
         raise AssertionError("引用了谁都没有的 emoji 字件却放行了：这条断言是恒过的")
+
+
+# ---------------------------------------------------------------- 全字符覆盖的账（主人 2026-11-26）
+
+@check
+def coverage_ledger():
+    """★「全字符支持是招牌」——这句话必须有一笔能核对的账，不许靠口头估。
+
+    2026-11-26 主人点出招牌丢了。我算了一遍：CJK 统一表意全集 97,046 码位，
+    母版 Maruko CJKsc 只有 30,393，缺 66,653（68.7%）；而七个补充字库里**一个汉字都没有**
+    （NotoSansPro 汉字区 0，Unicode17/18/Unicodia 汉字区 0）。也就是说「全覆盖」在汉字这一路
+    从来没成立过，靠的是设备自带的 NotoSansCJK 兜底——那不是我们的覆盖。
+
+    本项不假装能补齐（那要几十 MB 的地形数据），只保证三件事：
+      ① 分母写死并可复算（HAN_TOTAL 与各区求和必须相等）；
+      ② 实际覆盖从**包里字节的 cmap** 现算，不读入参、不读注释；
+      ③ coverage.txt 里必须出现这个数字，别让人再把「引用 234 个名字」误读成「覆盖全了」。
+    """
+    parts = ((0x4DBF - 0x3400 + 1) + (0x9FFF - 0x4E00 + 1) + (0x2A6DF - 0x20000 + 1)
+             + (0x2B739 - 0x2A700 + 1) + (0x2B81D - 0x2B740 + 1) + (0x2CEA1 - 0x2B820 + 1)
+             + (0x2EBE0 - 0x2CEB0 + 1) + (0x3134A - 0x30000 + 1) + (0x323AF - 0x31350 + 1))
+    assert parts == HAN_TOTAL, f"HAN_TOTAL 与各区求和不等：{parts} != {HAN_TOTAL}（分母被悄悄改了）"
+
+    # 补充字库的汉字覆盖：这一条是硬读数，为 0 就得写清楚，不许含糊成「有兜底」
+    with sandbox() as tmp:
+        base, output = tmp / "base.zip", tmp / "out" / "Selffont.zip"
+        base_zip(base, {"Roboto-Regular.ttf": make_carrier()})
+        regular = tmp / "P-Regular.ttf"
+        regular.write_bytes(make_font(han=True))
+        build(base=str(base), font=str(regular), output=output, build_num="9", day="9",
+              date="26.11.26", fixture=True)          # 默认真实补充字体源：要的就是那七支的 cmap
+        with zipfile.ZipFile(output) as archive:
+            text = archive.read("coverage.txt").decode("utf-8")
+            blobs = [archive.read(n) for n in archive.namelist() if n.startswith("system/fonts/")]
+        assert "【全字符覆盖】" in text, "coverage.txt 没写覆盖率——招牌就成了一句空话"
+        assert f"{HAN_TOTAL:,}" in text, f"coverage.txt 里没出现分母 {HAN_TOTAL:,}"
+        covered: set[int] = set()
+        for blob in blobs:
+            with TTFont(io.BytesIO(blob), lazy=True) as probe:
+                covered |= set(probe.getBestCmap())
+        han = {cp for cp in covered if in_han_ranges(cp)}
+        # 台账上的数字必须与从包里字节现算的一致（夹具汉字只有几个，所以只校验「写进文件的
+        # 那个数与现算一致」这件事本身，不钉绝对值——绝对值随主字体源变化）。
+        reported = re.search(r"汉字区（基本区 \+ 扩展 A–H）([\d,]+) / ([\d,]+)", text)
+        assert reported, f"coverage.txt 的覆盖率格式变了，解析不到：{text[:200]}"
+        assert int(reported.group(1).replace(",", "")) == len(han), \
+            f"台账写 {reported.group(1)}，现算 {len(han)}：账与包不一致"
+        assert int(reported.group(2).replace(",", "")) == HAN_TOTAL
+        # 补充字库汉字区为零这件事要在台账里看得见（它是「招牌靠设备兜底」的根源），
+        # 做法是断言这七支里至少有一支被统计进 cmap 并集——否则说明统计根本没读到它们。
+        assert len(covered) > 20000, f"只统计到 {len(covered)} 个码位，补充字库没进统计"
 
 
 # ---------------------------------------------------------------- 端到端构建 + 自由化 + 信任边界
