@@ -969,6 +969,12 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                               cjk_name=cjk_file, cjk_family=cjk_family,
                               cjk_is_variable=cjk_is_variable,
                               keep_languages=keep_languages)
+
+        xml = configure_fonts(template, name, ladder, cjk=bool(cjk_file),
+                              cjk_name=cjk_file, cjk_family=cjk_family,
+                              cjk_is_variable=cjk_is_variable,
+                              keep_languages=keep_languages)
+
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
         # 直通母版开放 wght 300–500（tools/cjk_vf.py），超出这条阶梯的请求本来就落到主字体。
@@ -1057,7 +1063,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         output.parent.mkdir(parents=True, exist_ok=True)
         write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals,
                      cjk_font, legacy, cjk_file=cjk_file, coverage=coverage,
-                     primary_license=primary_is_mother or PRIMARY_SHA256 == MOTHER_SHA)
+                     primary_license=primary_is_mother or PRIMARY_SHA256 == MOTHER_SHA,
+                     strict_emoji=supplemental_font_sources is None)
 
     version = next(line.split("=", 1)[1] for line in prop.splitlines() if line.startswith("version="))
     print(f"构建完成：{output}  版本 {version}"
@@ -1078,7 +1085,7 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
                  name: str, packaged: bytes, xml: bytes, prop: str, config: str,
                  supplementals: list[dict], cjk_font: bytes = b"", legacy: bytes = b"",
                  cjk_file: str | None = None, coverage: str = "",
-                 primary_license: bool = False) -> None:
+                 primary_license: bool = False, strict_emoji: bool = True) -> None:
     """写模块 zip：被配置引用的基础包字体 + 固定许可外部字体 + 主字体 + 原生 KSU 模块布局。
 
     两份配置走两条路：`font_fallback.xml` 是新语法，安装脚本投放到所有
@@ -1110,6 +1117,14 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         # （早先这里只在 cjk_font 有内容时写，母版直通那条路就成了「发了改造版却不带许可」。）
         if cjk_font or primary_license:
             destination.writestr(f"licenses/{CJK_LICENSE_NAME}", CJK_LICENSE.read_bytes())
+        # ★ 2026-11-26 真机：emoji 全变豆腐（九个 emoji 九个方框）。根因在本模块——投放的
+        #   配置引了本模块并不打包的 emoji 字件名。发行版必判；夹具的补充字体源是空的，
+        #   拿它判只会误杀，故夹具跳过（该函数的正误由 emoji_config_refs 那项单独打）。
+        if strict_emoji:
+            _ours = {name} | {s_["filename"] for s_ in supplementals}
+            if cjk_file:
+                _ours.add(cjk_file)
+            assert_emoji_refs(xml.decode("utf-8"), _ours)
         destination.writestr("font_fallback.xml", xml)
         destination.writestr("fonts-insert.xml", legacy)
         if coverage:
@@ -1493,6 +1508,65 @@ def blank_prune():
     cmap = TTFont(io.BytesIO(pruned)).getBestCmap()
     assert 0x20 in cmap and 0x41 in cmap and 0x42 not in cmap, cmap
     assert set(TTFont(io.BytesIO(pruned)).getGlyphOrder()) == set(order), "只剪映射，不删字形"
+
+
+# ---------------------------------------------------------------- 投放配置里的 emoji 字件引用
+# ★ 2026-11-26 真机回归：本模块把四份框架配置**整份覆盖**到设备上。配置里只要出现一个字件名，
+#   设备就必须真的找得到那份文件；否则 Skia 加载失败、整族跳过 ⇒ 屏幕上整片豆腐。
+#   当时配置写的是 NotoColorEmoji*.ttf（设备才有），而本模块打包的是 NotoEmoji.ttf /
+#   Noto-COLRv1.ttf，名字对不上，九个 emoji 九个方框。判据写死在这里，两边都别猜。
+DEVICE_EMOJI_FONTS = frozenset({
+    "NotoColorEmoji.ttf",        # ColorOS/Android 自带彩色 emoji
+    "NotoColorEmojiFlags.ttf",   # 同上，旗帜子集
+    "NotoColorEmojiLegacy.ttf",  # 同上，老格式兜底
+    "NotoColorEmoji1.ttf",
+})
+
+
+def emoji_refs_missing(xml_text: str, module_fonts) -> list[str]:
+    """返回配置里引用、但既不在本模块打包清单、也不是设备自带名的 emoji 字件。"""
+    allowed = set(module_fonts) | DEVICE_EMOJI_FONTS
+    return sorted({m for m in re.findall(r"([A-Za-z0-9_.-]+\.(?:ttf|otf|ttc))", xml_text)
+                   if ("Emoji" in m or "COLRv1" in m) and m not in allowed})
+
+
+def assert_emoji_refs(xml_text: str, module_fonts) -> None:
+    missing = emoji_refs_missing(xml_text, module_fonts)
+    if missing:
+        raise ValueError("投放的配置引用了本模块没打包、设备也没有的 emoji 字件"
+                         "（覆盖掉设备那份之后会整片豆腐）：" + "、".join(missing))
+
+
+# ---------------------------------------------------------------- 投放配置的 emoji 引用（真机回归靶）
+
+@check
+def emoji_config_refs():
+    """★ 2026-11-26 真机：九个 emoji 九个豆腐。打靶这一条，别再靠夹具顺带。
+
+    判据只有一条：**投放出去的**配置里，凡是带 Emoji / COLRv1 的字件名，要么本模块打包了，
+    要么设备本来就有（NotoColorEmoji* 那几支）。名字对不上就是整族加载失败 ⇒ 整片豆腐。
+    """
+    ours = {NOTO_EMOJI_SOURCE["filename"], NOTO_COLR_EMOJI_SOURCE["filename"],
+            PRIMARY_NAME}
+    template = (ROOT / "fonts.xml").read_text(encoding="utf-8")
+    assert_emoji_refs(template, ours)  # 模板本身先过头一遍
+    # 模板里 Zsye 族必须同时出现「设备自带的那支」和「本模块打包的那支」：
+    # 只写设备那支，模块自己的 emoji 白打包；只写模块那支，设备那份不覆盖时仍然指着自家文件。
+    zsye = [ln.strip() for ln in template.splitlines() if "und-Zsye" in ln]
+    assert len(zsye) >= 1, "模板里一个 emoji 族都没有？"
+    refs = set(re.findall(r"([A-Za-z0-9_.-]+\.(?:ttf|otf|ttc))", template))
+    assert {NOTO_EMOJI_SOURCE["filename"], NOTO_COLR_EMOJI_SOURCE["filename"]} <= refs, \
+        f"模板没引用本模块打包的 emoji 字件：{sorted(refs)[:8]}"
+    assert {m for m in DEVICE_EMOJI_FONTS if m in refs}, \
+        "模板里一支设备自带的 emoji 字件都没有——设备那份字体行为会被我们改掉"
+    # 反向：真出现「谁都没有的名字」必须被抓住，不是恒过。
+    bad = template.replace("NotoEmoji.ttf", "NotoEmoji-Nowhere.ttf", 1)
+    try:
+        assert_emoji_refs(bad, ours)
+    except ValueError as error:
+        assert "NotoEmoji-Nowhere.ttf" in str(error), error
+    else:
+        raise AssertionError("引用了谁都没有的 emoji 字件却放行了：这条断言是恒过的")
 
 
 # ---------------------------------------------------------------- 端到端构建 + 自由化 + 信任边界
@@ -2373,6 +2447,70 @@ def install_scripts():
         # 注释块外：sans-serif（第 1 轮）＋ zh ＋ ja ＝ 3 处；块内那两套 zh 一处都不许有。
         assert len(outside) == 3, \
             f"注释块外应是 sans-serif + zh + ja 共 3 处，实际 {len(outside)} 处：{outside}"
+
+        off = sh([str(modpath / "skia.sh"), "off"], env_on)
+        assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
+            "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"
+        # ★ 2026-11-26 真机读数（ColorOS 16）：设备那份 fonts.xml 里有一整段
+        #   **被注释掉**的 `<family lang="zh-Hans">`（OPLUS_FEATURE_FONT_FLIP 的两个分支只留一个）。
+        #   老扫描器不看注释，照样往注释块里插 ⇒ 真机 6 处插入里 4 处永远不被解析，
+        #   只有 zh-Hans 那份真实族后面的 2 处可能生效。这是「六处、字形却没变」的直接原因。
+        #   判据：注释块里一处都不许有，注释块外的真实族照插。
+        commented_stock = """<?xml version="1.0" encoding="utf-8"?>
+<familyset version="23">
+    <family name="sans-serif">
+        <font weight="400" style="normal">SysSans.ttf</font>
+    </family>
+    <!--
+    <family lang="zh-Hans">
+        <font weight="400" style="normal">SysSans-Hans.ttf</font>
+    </family>
+    <family lang="zh-Hant,zh-Bopo">
+        <font weight="400" style="normal">SysSans-Hant.ttf</font>
+    </family>
+    -->
+    <family lang="zh-Hans">
+        <font weight="400" style="normal">SysSans-Hans-Regular.ttf</font>
+    </family>
+    <family lang="ja">
+        <font weight="400" style="normal">NotoSansCJKjp-Regular.otc</font>
+    </family>
+</familyset>
+"""
+        (system / "system/etc/fonts.xml").write_text(commented_stock, encoding="utf-8")
+        (modpath / "system/etc/fonts.xml").unlink(missing_ok=True)
+        result_cmt = sh([str(modpath / "skia.sh"), "on"], env_on)
+        assert result_cmt.returncode == 0, result_cmt.stderr
+        cmt_out = (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8")
+        in_comment = []
+        _c = 0
+        for _no, _line in enumerate(cmt_out.splitlines(), 1):
+            _s = _line
+            while True:
+                if not _c:
+                    _i = _s.find("<!--")
+                    if _i < 0:
+                        break
+                    _c = 1
+                    _s = _s[_i + 4:]
+                    continue
+                _j = _s.find("-->")
+                if _j < 0:
+                    break
+                _c = 0
+                _s = _s[_j + 3:]
+            if "Any-Name.ttf" in _line and _c:
+                in_comment.append(_no)
+        assert not in_comment, \
+            f"往注释块里插了我们的行（Skia 解析不到，等于没插）：第 {in_comment} 行"
+        outside = [no for no, ln in enumerate(cmt_out.splitlines(), 1) if "Any-Name.ttf" in ln]
+        # 注释块外：sans-serif（第 1 轮）＋ zh ＋ ja ＝ 3 处；块内那两套 zh 一处都不许有。
+        assert len(outside) == 3, \
+            f"注释块外应是 sans-serif + zh + ja 共 3 处，实际 {len(outside)} 处：{outside}"
+
+        # ★ 2026-11-26 真机：emoji 全变豆腐（🛙🪋🪌🪍🫌🫝🫫🫹🫺 九个方框）。那个回归的判据
+        #   现在钉在 build() 里（assert_emoji_refs），由 emoji_config_refs 那项单独打靶，
+        #   这里不再复制一份——复制一份的结果是它只会跟着夹具的假系统根误报。
 
         # 设备一份可替换配置都没有（Android 15 以下）→ 中止安装，不假装成功。
         for relative in ("system/etc/font_fallback.xml", "system/etc/font_fallback_cjkvf.xml",
