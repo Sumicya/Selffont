@@ -91,6 +91,18 @@ apply() {
         ui_print "Skia /system/etc/fonts.xml：设备没有这份文件，无处可插"
         return 0
     fi
+    # ★ 2026-11-25 真机读数暴露的幂等 bug：我们把插好的内容**写回 MFGA 自己的目录**，
+    #   下一轮又以那份为输入 ⇒ 每次 apply 都再插一遍。真机上攒到了 30 处，
+    #   同一个族里出现两三条并列的同一字件（39/40、1382/1383/1384 就是这种形状）。
+    #   修法：插入前先把「我们自己插入的那些行」全部剔掉，再插一次。这样无论
+    #   apply 跑多少遍，结果都等于「干净输入 + 一套插入行」。
+    #   判据用插入行里的字件名，不写死 Selffont（自检夹具有别的名字）。
+    _marker=$(sed -n 's|.*>\([^<]*\)</font>.*|\1|p' "$INSERT" | head -n 1)
+    _clean=""
+    if [ -n "$_marker" ] && grep -qF "$_marker" "$SOURCE" 2>/dev/null; then
+        _clean="$MODDIR/.fonts-input.clean"
+        grep -vF "$_marker" "$SOURCE" > "$_clean" 2>/dev/null && SOURCE=$_clean
+    fi
     mkdir -p "$MODDIR/system/etc"
     # 韩文保护。本包 cmap 里谚文 0 个，而 Skia 对每族只查一个 face：我们一旦占了族首，
     # 设备的 NotoSansCJKkr / NotoSansKR 就再也轮不到，韩文整片落豆腐。实测判据见

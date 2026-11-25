@@ -2208,6 +2208,21 @@ def install_scripts():
         assert rival_fonts.read_text(encoding="utf-8") == \
             (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8"), \
             "两份必须内容一致，否则谁赢挂载结果不同"
+        # ★ 2026-11-25 真机读数：设备上攒到 30 处，同一族里两三条并列的同一字件
+        #   （39/40、1382/1383/1384 就是这种形状）。根因是写回 MFGA 之后，下一轮又把
+        #   那份当输入 ⇒ 每次 apply 再插一遍。真机刷一次长一批，永远刷不干净。
+        #   判据：再跑一遍，两份里我们的行数都必须**不变**。
+        before = len(inserted)
+        again = sh([str(modpath / "skia.sh"), "on"], env_rival)
+        assert again.returncode == 0, again.stderr
+        after_rival = [ln for ln in rival_fonts.read_text(encoding="utf-8").splitlines()
+                       if "Any-Name.ttf" in ln]
+        after_own = [ln for ln in (modpath / "system/etc/fonts.xml")
+                     .read_text(encoding="utf-8").splitlines() if "Any-Name.ttf" in ln]
+        assert len(after_rival) == before, \
+            f"apply 不幂等：MFGA 那份从 {before} 处涨到 {len(after_rival)} 处——写回后被当成新输入"
+        assert len(after_own) == before, \
+            f"apply 不幂等：本模块那份从 {before} 处涨到 {len(after_own)} 处"
         on = sh([str(modpath / "skia.sh"), "on"], env_on)
         assert on.returncode == 0, on.stderr
         # Skia 只读 /system/etc/fonts.xml（SkFontMgr_android_parser.cpp 写死）；插入而不替换：
