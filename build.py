@@ -4369,18 +4369,18 @@ def review_marks():
 
     # 六种造假各造一次，必须全部变红（宁可这个自检自己挂，也不许造假蒙过去）
     cases = {
-        "手改标记": marked.replace("〔200〕", "〔150〕", 1),
+        "手改标记": marked.replace("〖200〗", "〖150〗", 1),
         "删一个汉字（间隔变 99）": marked[:marked.index("汉", 10)] + marked[marked.index("汉", 10) + 1:],
         "末尾漏标 240 字": marked + "汉字" * 120,
         "极短稿只有 1 枚标记（不足一万）": mk.insert("汉字" * 150),
         "无标记裸稿": "汉字" * 90,
-        "删掉首枚标记": marked.replace("〔100〕", "", 1),
+        "删掉首枚标记": marked.replace("〖100〗", "", 1),
         "标记数虚报（去掉一半）": mk.MARK.sub("", marked[: len(marked) // 2]) + marked[len(marked) // 2:],
     }
     for label, text in cases.items():
         bad_ok, bad_problems, _ = mk.check(text)
         assert not bad_ok, f"造假没被抓：{label}"
-    assert "本篇汉字 10200" in line and "末枚〔10200〕" in line, line
+    assert "本篇汉字 10200" in line and "末枚〖10200〗" in line, line
 
 
 if __name__ == "__main__":

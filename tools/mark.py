@@ -6,7 +6,7 @@
 
 用法：
     python3 tools/mark.py insert <稿子.txt> [--out <带标记.txt>]
-        读出正文，按**实测**汉字数每满 100 插 `〔100〕` `〔200〕` …，写出带标记稿。
+        读出正文，按**实测**汉字数每满 100 插 `〖100〗` `〖200〗` …，写出带标记稿。
     python3 tools/mark.py check <带标记.txt>
         验证：汉字总数 ≥10000、标记数 ≥100、首标前恰好 100 汉字、相邻两标之间恒 100、
         末标之后为余数。全部通过才退出 0，并打印末行该写的那一句。
@@ -23,7 +23,9 @@ import re
 import sys
 
 HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
-MARK = re.compile(r"〔(\d+)〕")
+# 标号符号：规范原文是 `〖N〗`（主人 2026-11-26 再次明确）。本机曾写成 `〔N〕`，
+# 两份写法都认——否则历史稿件的标记会被判成「没有标记」，那是工具在冤枉正文。
+MARK = re.compile(r"[〔〖](\d+)[〕〗]")
 PER = 100
 
 
@@ -49,7 +51,7 @@ def insert(text: str) -> str:
         if HAN.match(ch):
             count += 1
             if count % PER == 0:
-                out.append(f"〔{count}〕")
+                out.append(f"〖{count}〗")
     return "".join(out)
 
 
@@ -84,7 +86,7 @@ def check(text: str) -> tuple[bool, list[str], str]:
         problems.append(f"末枚之后还有 {tail} 汉字 ≥100，漏标了 {tail // PER} 枚")
 
     line = (f"本篇汉字 {total}；" + ("" if total >= 10000 else "不足一万字＝没交；") +
-            f"末枚〔{marks[-1][1] if marks else 0}〕；"
+            f"末枚〖{marks[-1][1] if marks else 0}〗；"
             f"末枚之后余 {tail}；口径＝只数汉字（U+3400–4DBF／4E00–9FFF／F900–FAFF），不数标点与数字，"
             f"标记由 tools/mark.py 实测插入")
     return (not problems), problems, line
