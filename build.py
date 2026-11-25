@@ -1563,24 +1563,26 @@ def emoji_config_refs():
         # ★ CI 实证：Zsye 族再写一份这两个名字，build() 的「补充字体恰好引用一次」直接拒绝出包
         #   （run 45603844994 就挂在这里）。所以模板里 Zsye 只写设备自带名。
         assert count == 1, f"{filename} 在配置里应恰好引用一次，实际 {count} 次"
-    # 生效的 emoji 族（非 ignore）只许引**本模块打包**的字件：只有它们在安装后必然存在于
-    # /system/fonts。引设备名等于赌设备上有那份文件——这次九个豆腐就是赌输了的结果。
+    # ★ 2026-11-26 第二次真机：上一版把我们的两支 emoji 字件塞进 und-Zsye 族、并把默认区
+    #   那两个匿名族删掉，结果**卡开机**。判据改成下面三条，方向是「少动」：
+    #   ① 配置里引用的每个 emoji 字件，要么本模块打包了，要么是设备自带名（否则覆盖后指向空文件）；
+    #   ② 本模块打包的 emoji 字件必须落在**默认区匿名族**里——全字符覆盖靠的是默认回退链，
+    #      塞进 und-Zsye 只影响 emoji 语言区，删掉默认区那一份等于丢覆盖；
+    #   ③ und-Zsye 语言区里**不许**出现本模块打包的 emoji 字件：那一处曾同时触发
+    #      「补充字件恰好引用一次」拒包（CI 45603844994）与这次卡开机，改它没有收益。
+    root = ET.fromstring(configured)
+    anonymous = [node.text.strip() for family in root.findall("family")
+                 if not family.get("name") and not family.get("lang") and not family.get("variant")
+                 for node in family.findall("font")]
+    for filename in (NOTO_EMOJI_SOURCE["filename"], NOTO_COLR_EMOJI_SOURCE["filename"]):
+        assert filename in anonymous, \
+            f"{filename} 必须在默认区匿名族里（全字符覆盖靠默认回退链）：{filename not in anonymous}"
     zsye = [node.text.strip() for family in root.findall("family")
             if family.get("lang") == "und-Zsye" and not family.get("ignore")
             for node in family.findall("font")]
-    assert zsye, "配置里一个生效的 emoji 族都没有（emoji 会落到谁身上说不清）"
-    assert not [name_ for name_ in zsye if name_ not in ours], \
-        f"生效的 emoji 族引了本模块没打包的名字（设备上没有就是整片豆腐）：{zsye}"
-    assert NOTO_COLR_EMOJI_SOURCE["filename"] in zsye, \
-        f"彩色 emoji 字件必须进生效的 emoji 族：{zsye}"
-    # 顺序也要钉：本地实测那九个码位只有 COLRv1 那支有（NotoEmoji.ttf 一个都没有），
-    # 它在族里排第二就等于没写——Skia 每族只取第一个命中的 face。
-    first_zsye = next(family for family in root.findall("family")
-                      if family.get("lang") == "und-Zsye" and not family.get("ignore"))
-    first_font = (first_zsye.findall("font")[0].text or "").strip()
-    assert first_font == NOTO_COLR_EMOJI_SOURCE["filename"], \
-        f"emoji 族首必须是 {NOTO_COLR_EMOJI_SOURCE['filename']}，实际 {first_font}"
-    # ignore 的族引设备名可以（解析器直接跳过），但生效族不许——上面两条就是这条判据。
+    packed = {NOTO_EMOJI_SOURCE["filename"], NOTO_COLR_EMOJI_SOURCE["filename"]}
+    assert not [name_ for name_ in zsye if name_ in packed], \
+        f"und-Zsye 语言区不许引本模块的 emoji 字件（曾拒包＋卡开机）：{zsye}"
     # 反向：真出现「谁都没有的名字」必须被抓住，不是恒过。
     bad = configured.replace("NotoColorEmoji.ttf", "NotoColorEmoji-Nowhere.ttf", 1)
     try:
