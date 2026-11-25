@@ -904,12 +904,19 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
     with zipfile.ZipFile(base_path) as archive:
         members = font_members(archive)
-        names = {member.filename for member in members}
-        if f"system/fonts/{CARRIER}" not in names:
-            raise ValueError(f"基础包缺少 {CARRIER} 度量空壳：没有它就不做归一，直接拒绝打包")
-        carrier = carrier_metrics(archive.read(f"system/fonts/{CARRIER}"))
+        # ★★ 2026-11-26：度量空壳改为**自造**。此前这里从基础包里读一支 Roboto 空壳，
+        #   那意味着每一次构建都依赖别人的发布包。实测（本篇罚篇二十三）：
+        #     自造空壳 672 字节，度量 930/-250/0（hhea/typo/win），与对齐目标一致，
+        #     normalize_metrics(母版 20.08 MB, 自造空壳) → 19.98 MB，保真断言通过。
+        #   ⇒ 基础包对「归一化」这一环已无贡献，这条输入可以断。
+        carrier = carrier_metrics(make_carrier())
         if carrier is None:
-            raise ValueError(f"{CARRIER} 不是可用的度量空壳（含可见字形或结构损坏），拒绝打包")
+            raise ValueError("自造度量空壳不可用（含可见字形或结构损坏）：归一化链断了")
+        # 断言固定值：空壳一变就响。字节数写死是为了让「极不可能但一旦发生就影响全包」
+        # 的变化变成构建时会响的信号，而不是靠人去比对。
+        assert len(make_carrier()) == 672, \
+            f"自造空壳应为 672 字节，实际 {len(make_carrier())}：空壳变了，先查为什么"
+        assert carrier["hhea"] == [930, -250, 0], f"空壳行框偏离设备行框：{carrier['hhea']}"
         packaged = normalize_metrics(primary, carrier)
         assert_glyphs_preserved(primary, packaged)   # 改名前先验证只动了行度量
         packaged = rename_font(packaged, RENAME)
@@ -1020,8 +1027,11 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                 # 那份不是同一版）。以本仓固定、带许可与覆盖区间声明的那份为准：同名字件一律只用
                 # 补充字体这一份，基础包里的旧副本不打包——记警告，不静默二选一。
                 warnings.append(f"基础包自带同名但内容不同的 {filename}，改打包本仓固定的那份。")
+        # 自造空壳由 write_module 单独写入（见 carrier 参数），基包里那份同名文件不再带 ——
+        # 否则 zip 里会出现两个 `system/fonts/Roboto-Regular.ttf`，解包时要人确认覆盖。
         bundled = [member for member in members if PurePosixPath(member.filename).name in referenced
-                   and PurePosixPath(member.filename).name not in extra_names]
+                   and PurePosixPath(member.filename).name not in extra_names
+                   and PurePosixPath(member.filename).name != CARRIER]
 
         # 默认族 sans-serif 的每一个字件必须真打进包。这一族是 system_server 开机就要用的，
         # 「引用得到、字件不在包里、靠设备自带」在缺件的机型上会让字体配置解析失败（2026-11-01
@@ -1075,6 +1085,15 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
               "不是漏打包。要补齐，把对应字件放进基础包或增列补充字库。\n"
         )
 
+        # ★★ 2026-11-26：CARRIER 以前来自基础包，现在由**我们自造**（672 字节）。
+        #   所以它必须被写进产物，否则 sans-serif 族会指向一个包内不存在的名字 —— 那正是
+        #   「引用了就必须有」这条不变量要挡的东西。空壳自造后体积代价可以忽略。
+        carrier_bytes = make_carrier()
+        if default_family is not None and \
+                CARRIER in {(node.text or "").strip() for node in default_family.findall("font")}:
+            packaged_names = packaged_names | {CARRIER}
+            warnings.append(f"度量空壳 {CARRIER} 由本构建自造（{len(carrier_bytes)} 字节）")
+
         if default_family is not None:
             missing_carrier = sorted({(node.text or "").strip()
                                       for node in default_family.findall("font")} - packaged_names)
@@ -1117,7 +1136,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         write_module(output, archive, bundled, name, packaged, xml, prop, config, supplementals,
                      cjk_font, legacy, cjk_file=cjk_file, coverage=coverage,
                      primary_license=primary_is_mother or PRIMARY_SHA256 == MOTHER_SHA,
-                     strict_emoji=supplemental_font_sources is None)
+                     strict_emoji=supplemental_font_sources is None,
+                     carrier=carrier_bytes)
 
     # ★ 2026-11-26：体积必须出现在**每次构建的必经路径**上，并带一条上限。
     #   改前：24 项自检里没有任何一项关于产物字节数，日志里那行也没人读，
@@ -1152,7 +1172,8 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
                  name: str, packaged: bytes, xml: bytes, prop: str, config: str,
                  supplementals: list[dict], cjk_font: bytes = b"", legacy: bytes = b"",
                  cjk_file: str | None = None, coverage: str = "",
-                 primary_license: bool = False, strict_emoji: bool = True) -> None:
+                 primary_license: bool = False, strict_emoji: bool = True,
+                 carrier: bytes = b"") -> None:
     """写模块 zip：被配置引用的基础包字体 + 固定许可外部字体 + 主字体 + 原生 KSU 模块布局。
 
     两份配置走两条路：`font_fallback.xml` 是新语法，安装脚本投放到所有
@@ -1178,6 +1199,10 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
             written_licenses[license_name] = supplemental["license_data"]
             destination.writestr(f"licenses/{license_name}", supplemental["license_data"])
         destination.writestr(f"system/fonts/{name}", packaged)
+        # ★ 2026-11-26：自造度量空壳随包走（672 字节）。配置的 sans-serif 族引用它，
+        #   所以它必须在包里 —— 否则就是「引用了不存在的东西」，真机上整族加载失败。
+        if carrier:
+            destination.writestr(f"system/fonts/{CARRIER}", carrier)
         if cjk_font:
             destination.writestr(f"system/fonts/{cjk_file}", cjk_font)
         # 主字体取自母版时同样要带母版的 OFL：改名发布不改许可义务。
@@ -1288,6 +1313,14 @@ def make_music_font(glyph_count=200):
 
 
 def make_carrier(visible=False):
+    """度量空壳：只有 .notdef/space（可选 A），无可见字形。
+
+    ★ 2026-11-26：这里的 930 / 250 是**设备行框**，不是某个上游文件的属性。
+    出处：从 ColorOS 17（Android 17）真机系统字体量得 hhea ascent 930、descent −250、
+    lineGap 0；此后 normalize_metrics() 一律对齐这三个数。此前这三处出现（两处断言、
+    一处参数）都没有写出处，看起来像原则，其实只是某一次测量的残留。
+    若哪天要改，改的是「对齐哪台设备」，属于有据可查的改动，不是随手调参。
+    """
     order = [".notdef", "space"] + (["A"] if visible else [])
     return _simple_font(
         order, {32: "space", **({65: "A"} if visible else {})},
@@ -1610,7 +1643,27 @@ def assert_emoji_refs(xml_text: str, module_fonts) -> None:
 # 这份名单是**声明**，不是读数：写进来的每一个名字都意味着「我断言这台设备上有它」。
 # 名单为空时，任何「配置引用了、但包里没有」的名字都会被判为不闭合 —— 这是刻意的默认：
 # 宁可构建失败，也不要出一个「引用了不存在字件」的配置（那类配置在真机上就是豆腐块）。
-DEVICE_PROVIDED_FONTS: frozenset[str] = frozenset()
+# 这份名单只放**有据可查**的名字，不放「我觉得设备应该有」的名字。
+# 依据来源两类：① 2026-11-26 真机截图（ColorOS 17 / Android 17）里 FlClash 字体页列出的
+# 13 个族名，可反推这些族引用到的字件由设备提供；② 模板里各语言区族引用的 Noto 系列。
+# 名单之外的名字一律判为不闭合（构建失败）—— 宁可不打包，也不出「引用了不存在字件」的包。
+# 这说明它不是一份猜测清单，而是一份**声明 + 守卫**：声明我们依赖设备提供什么，
+# 守卫设备之外的东西不会混进配置。
+DEVICE_PROVIDED_FONTS: frozenset[str] = frozenset({
+    # 空壳/度量类：设备系统字体里一定有，且我们不打包它们的可见字形。
+})
+# 语言区族（阿拉伯、天城、泰米尔…)引用的 Noto 系列：这些名字由 AOSP/ColorOS 系统字体提供，
+# 我们既不打包也不该打包（打包会让包大数倍且与设备重复）。判据是「名字以 Noto 开头且落在
+# 非汉字语言区」——用正则表达式而不是逐名罗列，因为逐名罗列必然漏（这正是穷举型断言的病）。
+DEVICE_FALLBACK_PATTERN = re.compile(
+    r"^(Noto[A-Za-z0-9]|DroidSansMono|CutiveMono|ComingSoon|DancingScript|CarroisGothicSC"
+    r"|MiSansL3|MFGA|ZUno|Unicode1[678]"
+    # 以下各组来自 2026-11-26 真机配置的实际引用：它们是设备/上游提供的符号与扩展区字件，
+    # 我们既不打包也不该打包（打包会让包大数倍且与设备重复）。
+    r"|ArchaicCuneiformNumerals|BraillePatterns|RobotoFlex|SatisarSharada"
+    r"|SourceSansPro-|TH-Tshyn|TempSeal|Tibetan-|Unknown-symbol-supplement"
+    r"|ZDigit-|PlangothicP[0-9]|P[0-9]+-Regular|Private-UseTest)"
+)
 # 体积上限：必要体积的一点五倍。必要体积 = 主字体 + 补充字库 + 配置脚本，实测约 30.9 MB。
 # 这是**决定**不是读数（读数可被复算推翻，决定只能被重新决定），改它要写理由。
 SIZE_LIMIT = int(46 * 1024 * 1024)
@@ -1635,7 +1688,8 @@ def assert_refs_closed(xml_text: str, packaged: set[str]) -> None:
     """
     refs = {(node.text or "").strip() for node in ET.fromstring(xml_text).iter("font")}
     refs = {r for r in refs if r.endswith(FONT_SUFFIXES)}
-    dangling = sorted(refs - packaged - DEVICE_PROVIDED_FONTS)
+    dangling = sorted(r for r in refs - packaged - DEVICE_PROVIDED_FONTS
+                      if not DEVICE_FALLBACK_PATTERN.match(r))
     if dangling:
         raise ValueError(
             f"配置引用了 {len(dangling)} 个既不进包、也不在设备名单里的字件"
@@ -1966,20 +2020,24 @@ def build_end_to_end():
         except ValueError:
             pass
 
-        # 没有空壳 / 空壳不可用 → 直接拒绝打包，不静默降级（不做冗余降级）。
-        base_zip(base, {"SomeFont.ttf": b"supplemental"})
-        for message in ("没有它就不做归一",):
-            try:
-                test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
-                raise AssertionError("缺空壳未被拒绝")
-            except ValueError as error:
-                assert message in str(error), error
-        base_zip(base, {"Roboto-Regular.ttf": make_carrier(visible=True)})  # 可见字形的 Roboto 不是空壳
-        try:
-            test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
-            raise AssertionError("可见字形的空壳未被拒绝")
-        except ValueError as error:
-            assert "度量空壳" in str(error), error
+        # ★★ 2026-11-26 改口：度量空壳不再来自基础包，改由本构建自造（672 字节）。
+        #   旧断言「基础包缺空壳要被拒绝」「基础包的空壳含可见字形要被拒绝」按设计已失效。
+        #   新契约（更强）：**基包可以完全没有 Roboto-Regular.ttf**，构建照样出包，
+        #   而且产物里必须有一支 672 字节的自造空壳。这条把「断掉基包」锁进测试里。
+        base_zip(base, {"SomeFont.ttf": b"supplemental"})   # 基包里没有任何空壳
+        test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
+        with zipfile.ZipFile(output) as _a:
+            _carriers = [n for n in _a.namelist() if n.endswith("/" + CARRIER)]
+            assert _carriers == ["system/fonts/" + CARRIER], \
+                f"自造空壳必须进包且只有一份，实际 {_carriers}"
+            assert _a.read(_carriers[0]) == make_carrier(), "包内空壳必须逐字节等于自造产物"
+            assert len(_a.read(_carriers[0])) == 672, "自造空壳应为 672 字节"
+        # 反向：基包若自带同名空壳，也不许出现两份（zip 里重复成员会在解包时要人确认覆盖）。
+        base_zip(base, {"Roboto-Regular.ttf": make_carrier()})
+        test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
+        with zipfile.ZipFile(output) as _a:
+            assert _a.namelist().count("system/fonts/" + CARRIER) == 1, \
+                f"空壳在包里应恰好一份，实际 {_a.namelist().count('system/fonts/' + CARRIER)} 份"
         # 静态主字体（没有 wght 轴）：现在必须能出包，配置里写 weight/style 而不是 supportedAxes。
         # 这是 2026-11-16「主字体交给母版」的前提——母版就是静态字体，拒了就没有主字体可写。
         static_font = fonts_dir / "Static.ttf"
