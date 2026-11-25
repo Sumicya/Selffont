@@ -1680,6 +1680,14 @@ def assert_emoji_refs(xml_text: str, module_fonts) -> None:
 # 守卫设备之外的东西不会混进配置。
 DEVICE_PROVIDED_FONTS: frozenset[str] = frozenset({
     # 空壳/度量类：设备系统字体里一定有，且我们不打包它们的可见字形。
+    # ★ 2026-11-07 补：Roboto-Regular.ttf。它是 AOSP 基线字体（platform_frameworks_base
+    #   data/fonts 里始终存在），ColorOS 17 真机 /system/fonts 下亦有。本包把它当度量空壳
+    #   （CARRIER，:210）引用在默认家族里，但 bundled 按 name != CARRIER 把它排除、不进包；
+    #   它又不匹配 DEVICE_FALLBACK_PATTERN（那里只有 RobotoFlex，没有 Roboto-Regular）。
+    #   于是 assert_refs_closed 判它 dangling，构建失败 —— CI 自 assert_refs_closed 加入起
+    #   连续三次 failure（run 45691802093 / 45693300722 / 45695020396）全因这一条。
+    #   依据：AOSP 基线 + 真机存在，属「有据可查」，不是「我觉得设备应该有」。
+    "Roboto-Regular.ttf",
 })
 # 语言区族（阿拉伯、天城、泰米尔…)引用的 Noto 系列：这些名字由 AOSP/ColorOS 系统字体提供，
 # 我们既不打包也不该打包（打包会让包大数倍且与设备重复）。判据是「名字以 Noto 开头且落在
