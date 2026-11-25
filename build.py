@@ -657,10 +657,27 @@ def swap_fonts(family: ET.Element, font_name: str, ladder: list[dict],
     不丢覆盖：单字件族在文件里排在 Noto 同语言族之前，同语言缺字仍先落主字体。
 
     `keep_languages`：这一族带的语言里有本包**一个码位都没有**的那种（现在只有 ko，母版
-    谚文 0 个）。这种族整族换掉＝那门语言全落豆腐。判据在调用侧从字体 cmap 现读，不写死。
+    谚文 0 个）。这种族整族换成主字体＝那门语言全落豆腐，所以不换。
+    判据在调用侧从字体 cmap 现读，不写死。
+
+    ★ 2026-11-07 纠正（罚篇二十四）：上面那句「不换」原来写成了 `return`，即整族原样不动。
+    后果实测：ko 族里的九档静态 `100.ttf…900.ttf` 一个不落地留下，而 `bundled` 是按配置里
+    出现过的名字索取字件的，于是九个静态档整份进包 —— 156.57 MB 里 125.67 MB 出自这里。
+    「保留语言」与「保留旧静态字件」本是两件事，被我写成了一件：
+
+      · 要保留的是**语言回退**：设备自带 NotoSansCJK（ttc）本来就在包里之外，删不掉；
+      · 要清掉的是**本包自己引用的旧数字静态档**：那九个名字指向的字件体积巨大、本包一个
+        谚文码位都没有，纯属白带。
+
+    所以改成：仍然清掉 OLD_PRIMARY 与空壳，但**不再补主字体字件**。族若因此变空，整族删掉
+    ——空族在 Minikin 里就是一族空指针，留着只会拖慢逐族打分；而该语言的回退由设备同语言的
+    其它族（Noto ttc）按 lang 分继续承担，等于回到「本包不管这门语言」的状态。
     """
     if any(part.split("-")[0].strip().lower() in keep_languages
            for part in (family.get("lang") or "").split(",") if part.strip()):
+        for node in list(family.findall("font")):
+            if (node.text or "").strip() in OLD_PRIMARY | {CARRIER}:
+                family.remove(node)
         return
     for node in list(family.findall("font")):
         if (node.text or "").strip() in OLD_PRIMARY | {CARRIER}:
@@ -722,6 +739,11 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
             continue  # 度量家族保留空壳：主字体走匿名回退，这里只提供行度量
         elif locale and is_cjk_locale(lang) and not variant:
             swap_fonts(family, font_name, ladder, keep_languages)  # CJK 语言区：清空的族换主字体单字件，混有其他字件的族不动
+            # 保留语言（keep_languages）的族清完旧数字静态档后可能一个 font 都不剩。
+            # 空族留着只会让 Minikin 多打分一轮，且容易让人以为「这门语言归本包管」。
+            # 删掉即回到「本包不碰这门语言」，回退交给设备的同语言族。
+            if not family.findall("font"):
+                root.remove(family)
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
             replace_fonts(family, font_name, ladder)  # 语言区只换字件，lang/variant 属性原样保留
     # 母版直通族：单独一个 family，**带 zh 语言标签**，排在所有 CJK 语言区族之前。
@@ -1450,6 +1472,13 @@ def fonts_xml():
         files = [(node.text or "").strip() for node in family.findall("font")]
         assert files and "V.ttf" not in files, \
             f'lang="ko" 的族被换成了主字体字件（本包谚文 0 个，韩文会全落豆腐）：{files[:3]}'
+        # ★ 2026-11-07（罚篇二十四）：上面那条只证明「没换成主字体」，**放过了另一半**——
+        #   九档静态 `100.ttf…900.ttf` 原样留着。而 bundled 按配置里出现过的名字索取字件，
+        #   于是九个静态档整份进包：156.57 MB 里 125.67 MB 出自这里。两条判据缺一不可：
+        #     · 不许塞我方字件（否则韩文落豆腐）
+        #     · 不许留旧数字静态档（否则包体翻五倍，且本包谚文 0 码位，带了也画不出）
+        assert not (set(files) & OLD_PRIMARY), \
+            f'lang="ko" 的族仍引用旧数字静态档（体积归因就在这里）：{sorted(set(files) & OLD_PRIMARY)}'
     # 反向：不传 keep_languages 时照旧换（证明上一条不是恒真）。看 zh 族就行——
     # 它和 ko 走同一条 swap_fonts 分支；ko 那族在模板里已被前面几轮改过，不能当基准。
     plain = [(family.get("lang"), [(node.text or "").strip() for node in family.findall("font")])
