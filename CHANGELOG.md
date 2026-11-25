@@ -1,3 +1,72 @@
+## 2026-11-25 · 真因：Flutter 那条路我们连续三次插错了族——插的是命名族，Skia 只认无名族
+
+**结论**：前三次「已插」的验证全部基于一个**我自己编出来的**匹配层。上游源码里没有那一层。
+
+### 判据出处（逐条可核）
+
+| # | 源码事实 | 出处 | 我们错在哪 |
+|---|---|---|---|
+| 1 | 逐字回退**只**遍历 `fFallbackNameToFamilyMap`，且 `if familyName != family->fFallbackFor: continue` | `SkFontMgr_android.cpp:348-352` | 以为族名 `name="sans-serif"` 会参与比对 |
+| 2 | 族带 `name=` 时置 `fIsFallbackFont = false`，**不进** fallback 表 | `SkFontMgr_android_parser.cpp:305-312` | 把 `sans-serif` 当成有效候选层 |
+| 3 | 第二轮迭代传**空族名** `SkString()` | `SkFontMgr_android.cpp:385` | 完全不知道这一层存在 |
+| 4 | `fFallbackFor` 只由 `<font fallbackFor="…">` 设置；AOSP 真实配置里 `fallbackFor="sans-serif"` 出现 **0 次** | `parser.cpp:256-273` + `data/fonts/fonts.xml` | 以为靠文件顺序就能被 `sans-serif` 命中 |
+| 5 | 每族只取**一个** face（`matchAStyle`），命中不了就跳下一**族** | `SkFontMgr_android.cpp:353` | 以为同族多字件都能被问到 |
+
+`tools/skia_paths.py` 把「命名族精确匹配」写成第一层——**那一层在 `onMatchFamilyStyleCharacter()` 里不存在**。于是复算器每次都自证「族首 100%」，三次据此出包，三次真机都没变。
+
+### 真机第三次为什么还是没变
+
+插的位置对（zh 无名族族首）仍不够：`find_family_style_character` 按 fallback 表的**文件顺序**扫，第一族命中就 return。MFGA 那份 1,824 行配置里：
+
+| 位置 | 族 | 字件 | 后果 |
+|---|---|---|---|
+| `[1]` | `<family>`（无 name 无 lang） | `Roboto-Regular.ttf` ×1 | **单字件，不许插**（插了会把该族唯一 face 换掉，ASCII 落空） |
+| `[2]` | `<family>`（无 name 无 lang） | `100.ttf`…`900.ttf` ×9 | **同一套中文全字重，排在 zh`[10]` 之前 ⇒ 我们先被它挡住** |
+| `[10]` | `<family lang="zh,zh-Hans,zh-Hant">` | 200…700.ttf ×9 | 前两版插在这里，轮不到 |
+
+### 改法
+
+插两处无名族族首：
+- **中日韩无名族**（`lang` 含 zh / ja）；
+- **排在它们之前的、多字件的无 lang 匿名族**（挡路者，抢在它前面）。
+
+两条硬约束（`--check` 有断言，变异已验红）：
+- **单字件的无 lang 匿名族不许插**：每族只取一个 face，插进去会把该族唯一 face 换掉，ASCII 直接落空（变异 `nf>=2 → nf>=1` 报「生僻符号必须仍落设备字件」）；
+- 插进去后**生僻符号必须仍落 Unicode16/17/18 那几族**（我们不认识的码位照常豆腐）。
+
+### 改前改后（同一份 MFGA 1,824 行配置，`wc -c` 出的字节数）
+
+| | 改前 | 改后 |
+|---|---|---|
+| 汉字 3 探针由本包画 | **0/3** | **3/3** |
+| 插入处数 | 0 | **8** |
+| 族数 | 193（无名 181） | 193（无名 181）——只插不删 |
+
+复算：
+
+```sh
+cd /home/user/Selffont
+gh api "repos/Numbersf/MakeFontsGreatAgain/contents/fonts.xml" \
+    -H "Accept: application/vnd.github.raw" > /tmp/mfga_fonts.xml
+mkdir -p /tmp/f/module/system/etc /tmp/f/modules /tmp/f/sys/system/etc
+cp module/skia.sh /tmp/f/module/; printf 'version=t\n' > /tmp/f/module/module.prop
+printf '    <font weight="400" style="normal">Selffont-MarukoGothicCJKsc.ttf</font>\n' \
+    > /tmp/f/module/fonts-insert.xml
+cp /tmp/mfga_fonts.xml /tmp/f/sys/system/etc/fonts.xml
+SELFFONT_SYSTEM_ROOT=/tmp/f/sys SELFFONT_SKIA_STATE=/tmp/f/st \
+    SELFFONT_MODULES=/tmp/f/modules sh /tmp/f/module/skia.sh on
+grep -c Selffont-Maruko /tmp/f/module/system/etc/fonts.xml   # 8
+.venv/bin/python tools/skia_paths.py --selftest              # selftest ok（六条判据全对源码）
+```
+
+### 变异验证（三条都真红，红的理由各不相同）
+
+| 变异 | 结果 |
+|---|---|
+| 挡路族不插（回到只插中日韩族） | `FAIL install_scripts: 应插 3 处（挡路匿名族 + zh + ja），实际 2` |
+| 允许单字件族（`nf>=2`→`nf>=1`） | `FAIL install_scripts: 我们也有的码位之外的生僻符号必须仍落设备字件` |
+| 插到族尾 | `FAIL install_scripts: 本包字件必须插在族首，实际第 3/3 行` |
+
 ## 2026-11-25 · 重构：`runtime_scripts` 1,216 行拆成 3 项，`build.py` 3,966 → 3,960 行
 
 **结论**：一项检查变三项，判据一条没少，代码少 6 行。

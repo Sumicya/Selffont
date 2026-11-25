@@ -1949,13 +1949,19 @@ def firefox_bridge():
 
 @check
 def skia_flutter_path():
-    """Skia（Flutter / WebView）那条路：插族首才命中，插族尾等于没插。
+    """Skia 逐字回退只认**无名族**：插命名族 `sans-serif` 等于没插。
 
-    这个检查存在的理由：2026-11-07 之前 `skia.sh` 插族尾、只插中日韩族，逐字复算的命中率是
-    0.00%——Flutter 里「换了字」这件事从来没发生过，而仓库里写的是「已插」。判据不能靠读代码，
-    所以这里把 Skia 的族选择逻辑跑一遍，红就是红。
+    2026-11-25 第二次真机（FlClash 仍无变化）后按上游源码重写。旧版这条检查把
+    「命名族族名匹配」当成第一层，据此断言「族首 100%」——那一层在
+    `SkFontMgr_android.cpp:342` 的 `find_family_style_character()` 里不存在：它只遍历
+    `fFallbackNameToFamilyMap`（只有无 name 的族进得去，`parser.cpp:311`），
+    并且只比对 `fFallbackFor`（只由 `<font fallbackFor>` 设置，AOSP 配置里
+    `fallbackFor="sans-serif"` 出现 0 次）。
 
-    变异校验过：把 skia.sh 的插入点挪回族尾，下面第一条断言直接 FAIL。
+    所以这里验三条真判据：
+      ① 插命名族 → 命中 0（旧插法无效，钉死这个错误结论）；
+      ② 插无名族族首 → 命中 100%；
+      ③ 插无名族族尾 → 命中 0（`matchStyleCSS3` 并列取先出现的）。
     """
     import skia_paths
 
@@ -1988,39 +1994,96 @@ def skia_flutter_path():
 
     def run(mode: str) -> tuple[int, dict]:
         out = []
-        current = ""
         for line in stock.splitlines(True):
             stripped = line.strip()
             if stripped.startswith("</family>"):
-                if mode == "tail" and ("sans-serif" in current or 'lang="zh' in current):
+                if mode == "anon-tail" and 'lang="zh' in current and "name=" not in current:
                     out.append(rows)
                 out.append(line)
                 continue
             if stripped.startswith("<family"):
                 current = stripped
             out.append(line)
-            if stripped.startswith("<family") and mode == "head" \
-                    and ("sans-serif" in stripped or 'lang="zh' in stripped):
+            if stripped.startswith("<family") and mode == "anon-head" \
+                    and "name=" not in stripped:
+                # 无名族全插：中日韩族，以及排在它们前面的无 lang 匿名族（多字件）。
+                # 真实配置里挡路的就是后者（MFGA 那份 [2] 是 100.ttf..900.ttf）。
+                if 'lang="zh' in stripped or ('lang="' not in stripped
+                                              and 'lang=' not in stripped):
+                    out.append(rows)
+            if stripped.startswith("<family") and mode == "named-head" \
+                    and 'name="sans-serif"' in stripped:
                 out.append(rows)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "fonts.xml"
+        with sandbox() as tmp:
+            path = tmp / "fonts.xml"
             path.write_text("".join(out), encoding="utf-8")
             families = skia_paths.parse_families(path)
         hit = sum(1 for cp in probe if skia_paths.choose(families, cmaps, cp) == our)
         return hit, families
 
-    tail, _ = run("tail")
-    head, families = run("head")
+    named, _ = run("named-head")
+    head, families = run("anon-head")
+    tail, _ = run("anon-tail")
+    assert named == 0, f"插命名族竟然命中了 {named} 个：判据和 Skia 源码不符，先查 skia_paths"
     assert tail == 0, f"族尾插法竟然命中了 {tail} 个码位：判据和预期不符，先查 skia_paths"
-    assert head == len(probe), f"族首插法只命中 {head}/{len(probe)}：Flutter 里会漏字"
+    assert head == len(probe), f"无名族族首只命中 {head}/{len(probe)}：Flutter 里会漏字"
+
+    # ★ 2026-11-25 第三次真机：插对了 zh 族首仍然不变，因为**排在它前面的无 lang 匿名族先赢**。
+    #   这份夹具按 MFGA 那份真实配置的形状搭：先一个多字件的无 lang 匿名族（全是中文），
+    #   再是 zh 族。只有把插入行**也**放进前面那个族，我们才真的先被问到。
+    ahead = f'''<?xml version="1.0" encoding="utf-8"?>
+<familyset version="23">
+    <family name="sans-serif">
+        <font weight="400" style="normal">{device}</font>
+    </family>
+    <family>
+        <font weight="400" style="normal">{device}</font>
+        <font weight="700" style="normal">{device}</font>
+    </family>
+    <family lang="zh,zh-Hans,zh-Hant">
+        <font weight="400" style="normal">{device}</font>
+    </family>
+</familyset>
+'''
+    # 只插 zh 族 = 前两次的插法：必须在夹具里被判为「轮不到」。
+    only_zh = ahead.replace(
+        '    <family lang="zh,zh-Hans,zh-Hant">\n',
+        f'    <family lang="zh,zh-Hans,zh-Hant">\n{rows}')
+    # zh 族 + 挡路族都插 = 现在的插法。
+    both = ahead.replace(
+        f'    <family>\n        <font weight="400" style="normal">{device}</font>\n',
+        f'    <family>\n{rows}        <font weight="400" style="normal">{device}</font>\n',
+    ).replace(f'    <family lang="zh,zh-Hans,zh-Hant">\n',
+              f'    <family lang="zh,zh-Hans,zh-Hant">\n{rows}')
+    assert both.count(our) == 2, f"夹具应插 2 处，实际 {both.count(our)}"
+    assert both != ahead and only_zh != ahead, "夹具替换没生效"
+
+    def hits(text: str) -> int:
+        with sandbox() as tmp:
+            path = tmp / "fonts.xml"
+            path.write_text(text, encoding="utf-8")
+            fams = skia_paths.parse_families(path)
+        return sum(1 for cp in probe if skia_paths.choose(fams, cmaps, cp) == our)
+
+    # 只插 zh 族：只有设备**没有**的那 17 个码位能落到我们（33 − 16 个设备也有的）。
+    # 剩下 16 个被前面那个无 lang 匿名族抢走 —— 这正是第三次真机「没变」的形状。
+    overlap = len(cmaps[device] & cmaps[our])
+    assert hits(only_zh) == len(probe) - overlap, (
+        f"只插 zh 族应只命中 {len(probe) - overlap}/{len(probe)}（设备也有的 {overlap} 个被挡路族抢走），"
+        f"实际 {hits(only_zh)}：夹具没搭出挡路族，这条断言就白写了")
+    assert hits(both) == len(probe), f"zh 族 + 挡路族都插仍只命中 {hits(both)}/{len(probe)}"
     # 不吃掉设备的字：emoji 族（und-Zsye）与 serif 族都不在插入范围。
     assert skia_paths.choose(families, cmaps, 0x1F600) == "NotoColorEmoji.ttf", "emoji 族被顶掉了"
-    assert skia_paths.choose(families, cmaps, 0x4E05, family_name="serif") == device, "serif 族被顶掉了"
-    # 缺口怎么办：0x4E18 我们和设备的字件都有 → 我们赢（设计目标）；
-    # 0x4E30 只有设备有 → 该落设备。两条一起验，免得把「族首」写成「无条件抢」。
-    assert skia_paths.choose(families, cmaps, 0x4E18) == our
+    # 我们有缺口时**不该落豆腐**：设备那份里每个字件都有机会被轮到。
+    # 注意这是「同族内只取一个 face」的真实取舍——我们占了族首，同族里排后面的设备字件
+    # 在这一轮轮不到；能否兜住取决于**后面还有没有别的族**含这个码位。
+    # 所以断言写成「同一份配置里，设备字件只要出现在**另一个**族里就必须兜住」。
     cmaps[device].add(0x4E30)
-    assert skia_paths.choose(families, cmaps, 0x4E30) == device, "我们有缺口时该落设备字件"
+    rescue = families + [{"name": None, "lang": "ja", "fallback": True, "fallback_for": None,
+                          "faces": [{"file": device, "weight": 400, "slant": 0}]}]
+    assert skia_paths.choose(rescue, cmaps, 0x4E30) == device, \
+        "我们有缺口时，后面还有族含这个码位就必须兜住（不能整片落豆腐）"
+
 
 
 @check
@@ -2177,14 +2240,18 @@ def install_scripts():
                 f"本包字件必须插在族首（Skia 每族只查一个 face，族尾等于没插），实际第 {ours_at[0] + 1}/{len(body)} 行"
         assert not any("NotoNaskhArabic" in b or "NotoColorEmoji" in b or "NotoSerif" in b
                        for b in ours), "非中日韩语言族 / serif / emoji 不该插"
-        # ★ 匿名族（无 name 无 lang）**绝对不许插**。2026-11-25 真机豆腐块就是这一条：
-        #   Skia 第 3 层按文件顺序扫匿名族，扫到我们这条、不认识那个码位就 continue，
-        #   而后面的 Unicode16/17/18-new.ttf 全在匿名族里 ⇒ 生僻符号整片豆腐。
-        #   实测：Unicode18 的 1,290 个码位母版一个都没有，只有 3 个非汉字重叠。
-        anonymous_blocks = [b for b in blocks
-                            if re.match(r"\s*<family\s*>", b) and "Any-Name.ttf" in b]
-        assert not anonymous_blocks, \
-            "匿名族里插了本包字件：它会把后面 Unicode16/17/18 那几族整个跳掉（生僻符号全变豆腐）"
+        # ★ 无 lang 匿名族（无 name 无 lang）的插法判据，2026-11-25 第三次真机后改写：
+        #   · 只插**多字件**的那种。单字件族插进来会把它唯一 face 换成我们，ASCII 直接落空。
+        #   · 插进去以后生僻符号必须**仍然**落到 Unicode16/17/18 那几族（下面逐字复算验）。
+        #   前两版写的是「匿名族一律不许插」，那条把 Flutter 整条路堵死了：按 Skia 源码，
+        #   逐字回退只遍历无名族，不插无名族就等于什么都没做。
+        for block in ours:
+            head = block.splitlines()[0] if block.splitlines() else ""
+            if re.search(r'name="', head) or re.search(r'lang="', head):
+                continue
+            nf = sum(1 for ln in block.splitlines() if "<font " in ln)
+            assert nf >= 3, \
+                f"无 lang 匿名族只有 {nf - 1} 个字件，不许插（会把该族唯一 face 换掉，ASCII 落空）：{head[:60]}"
         # 上一条只保证「我们自己不往匿名族里插」。还要保证**别人**的匿名族里那些
         # 我们不认识的码位仍能落到它们自己身上（豆腐块的真实观感）。
         cmaps = {"Any-Name.ttf": {0x4E2D}, "Unicode18-new.ttf": {0x1D300},
@@ -2207,11 +2274,19 @@ def install_scripts():
         assert _sp.choose(parsed, cmaps, 0x1D300) == "Unicode18-new.ttf", \
             "我们也有的码位之外的生僻符号必须仍落设备字件（否则就是豆腐块）"
         assert _sp.choose(parsed, cmaps, 0x4E2D) == "Any-Name.ttf", \
-            "汉字仍要由我们画（sans-serif 族首）"
+            "汉字仍要由我们画（插在无名族族首）"
+        # 命名族 `sans-serif` **不插**：Skia 的逐字回退只遍历无名族（parser.cpp:311 把带 name
+        # 的族排除在 fFallbackNameToFamilyMap 之外），插进去对 Flutter 毫无作用。
+        # 这条以前写反了，是前三次真机「没变」的直接来源。
+        assert not any('name="sans-serif"' in ln or "sans-serif" in b.splitlines()[0]
+                       for b in ours for ln in [b.splitlines()[0]]), \
+            "不该插命名族 sans-serif：Skia 逐字回退看不到命名族"
+        # 夹具里够格的无名族有 3 个：开头那个**多字件**的无 lang 匿名族（2 字件，排在 zh 之前，
+        # 就是真机上 MFGA [2] 那 9 个中文全字重的形状）＋ zh ＋ ja。
+        # 旧插法只插中日韩那 2 处，会被开头那个吃掉 ⇒ Flutter 里一个字都不变。
         assert len(ours) == 3, \
-            f"应插 3 处（sans-serif + zh + ja），实际 {len(ours)}"
-        assert any("sans-serif" in b for b in ours), "sans-serif 是 Flutter 的请求族名，必须插"
-        assert "Skia /system/etc/fonts.xml：已插 3 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
+            f"应插 3 处（挡路匿名族 + zh + ja），实际 {len(ours)}：少插就是被挡路族吃掉"
+        assert f"已插 {len(ours)} 处" in on.stdout, "应报告 Skia 插入位置数：" + on.stdout
         assert "已替换 4 份字体配置" in result.stdout, "应报告替换数量：" + result.stdout
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \

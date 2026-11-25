@@ -101,21 +101,33 @@ apply() {
         skip_ko=1
     fi
     awk -v rowsfile="$INSERT" -v skipko="$skip_ko" '
-        # 这一族该不该插：命名族 `sans-serif`、带中日韩 lang 的族、无 name 无 lang 的匿名默认族。
-        # emoji（und-Zsye）/ serif / 阿拉伯等一族都不碰——每族只查一个 face，插进去会顶掉它们。
+        # Skia 逐字回退的真实代码路径（SkFontMgr_android.cpp，2026-11-25 逐行核对）：
+        #   onMatchFamilyStyleCharacter()                    :374
+        #       for current in { familyName, SkString() }    :385  ← 先 sans-serif，再空族名
+        #           find_family_style_character(current, …)  :342
+        #               for i in fallbackNameToFamilyMap:    :348  ← 只遍历**无名族**，按文件顺序
+        #                   if current != family->fFallbackFor: continue   :350
+        #                   if langTag 不匹配: continue                   :355
+        #                   if face->unicharToGlyph(c) != 0: return face  :367
+        #
+        # 三条硬结论（前三版全错在这）：
+        #  ① 带 name= 的族**不进**这张表（parser.cpp:311 置 fIsFallbackFont=false），
+        #     所以往 <family name="sans-serif"> 里插对逐字回退毫无作用。
+        #  ② 请求族名 sans-serif 那轮，只有 fFallbackFor=="sans-serif" 的族会中，
+        #     而 fFallbackFor 只由 <font fallbackFor="…"> 设置，AOSP 配置里出现 0 次 ⇒ 该轮必空。
+        #  ③ 真正生效的是空族名那轮：扫**所有**无 lang 匿名族（lang 过滤只在 langTag 非空时拦），
+        #     谁在前面谁先被问。MFGA 那份配置里 zh 族是 [10]，而 [2] 是 100.ttf..900.ttf
+        #     同一套中文全字重 ⇒ 我们插在 [10] 族首也轮不到。
+        #
+        # 所以插入点是：中日韩无名族的族首（覆盖 zh/ja 请求）＋ 排在它们之前的、
+        # **多字件**的无 lang 匿名族族首（抢在挡路者前面）。单字件的无 lang 匿名族不许插：
+        # 每族只取一个 face，插进去会把该族唯一 face 换掉，ASCII 直接落空。
+        function is_named(tag) { return tag ~ /name="/ }
+        function is_anon_lang(tag) { return !is_named(tag) && tag ~ /lang="/ }
         function wanted(tag,   s, n, a, i, v) {
-            if (tag ~ /name="sans-serif"/) return 1
-            if (!match(tag, /lang="[^"]*"/)) {
-                # ★ 2026-11-25 真机：MFGA 界面出现豆腐块，豆腐是生僻符号。
-                #   根因是**这一行**（上一版就在这里插）：匿名族（无 name 无 lang）插族首，
-                #   Skia 第 3 层按文件顺序扫匿名族，扫到我们这条、`unicharToGlyph` 不认识
-                #   那个符号 → continue 到下一族 —— 而 Unicode16/17/18-new.ttf 全在后面的匿
-                #   名族里，于是那些符号整片落豆腐。实测：Unicode18 的 1,290 个码位母版
-                #   一个都没有（只有 3 个非汉字码位重叠）。
-                #   所以匿名族一律不插。无族名请求改由 sans-serif 那条覆盖。
-                return 0
-            }
-            s = substr(tag, RSTART + 6, RLENGTH - 7)
+            if (!is_anon_lang(tag)) return 0
+            s = substr(tag, index(tag, "lang=\"") + 6)
+            s = substr(s, 1, index(s, "\"") - 1)
             n = split(s, a, ",")
             for (i = 1; i <= n; i++) {
                 v = a[i]; sub(/-.*$/, "", v); gsub(/[ \t]/, "", v)
@@ -125,16 +137,32 @@ apply() {
             }
             return 0
         }
+        # 一个 <family> 缓冲起来，到 </family> 才知道字件数，那时再决定插不插。
+        function flush(   head, body, nf, i) {
+            if (!in_family) return
+            head = buf[1]
+            nf = 0
+            for (i = 2; i <= nb; i++) if (buf[i] ~ /<font /) nf++
+            emit = 0
+            if (wanted(head)) emit = 1                       # 中日韩无名族：插
+            else if (!is_named(head) && head !~ /lang="/ && nf >= 2) emit = 1  # 挡路的多字件匿名族：抢先
+            print head
+            if (emit) printf "%s", rows
+            for (i = 2; i <= nb; i++) print buf[i]
+            in_family = 0; nb = 0
+        }
         BEGIN {
             while ((getline row < rowsfile) > 0) rows = rows row "\n"
             close(rowsfile)
         }
-        # 插在 <family …> 之后的第一行（族首）。Skia 对每个族只取一个 face 且并列取先出现的，
-        # 所以只有族首能让我们的字件被选中；插族尾等于没插（旧版实测 0.00%）。
-        {
-            print
-            if ($0 ~ /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/ && wanted($0)) printf "%s", rows
+        /<family[ \t>]/ && $0 !~ /\/>[ \t]*$/ {
+            flush()
+            in_family = 1; nb = 1; buf[1] = $0
+            next
         }
+        in_family { buf[++nb] = $0; if ($0 ~ /<\/family>/) flush(); next }
+        { print }
+        END { flush() }
         ' "$SOURCE" > "$TARGET" 2>/dev/null
     # 输入是别家模块那份时，把同一份内容写回它自己的目录：挂载顺序决定谁的文件生效，
     # 我们控制不了顺序，那就让**两份内容一样**——谁赢都带着我们的行。
@@ -148,9 +176,17 @@ apply() {
     marker=$(sed -n 's|.*>\([^<]*\)</font>.*|\1|p' "$INSERT" | head -n 1)
     touched=$(grep -c -F "$marker" "$TARGET" 2>/dev/null || true)
     [ -n "$touched" ] || touched=0
-    if [ "${touched:-0}" -gt 0 ]; then
+    # 判据不能只数「插了几条」——前三版都数出来了、真机还是没变。必须验**插在哪**：
+    # Skia 的逐字回退只看无名族（`fFallbackFor` 相等），插在命名族里等于没插。
+    # 所以再数一遍「紧跟在带 name= 的 <family> 后面的那条」，必须为 0。
+    if [ "$touched" -gt 0 ]; then
+        stray=$(awk '/<family[ \t>].*name="/{named=1; next} /<\/family>/{named=0; next}
+                     named && index($0, marker){c++} END{print c+0}' marker="$marker" "$TARGET")
+        if [ "${stray:-0}" -gt 0 ]; then
+            ui_print "!!! Skia：有 $stray 条插进了命名族（Skia 逐字回退看不到命名族），Flutter 不会变"
+        fi
         [ "$skip_ko" = 1 ] && note="，韩文族已跳过（本包无谚文，留给设备）" || note=""
-        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（sans-serif / 中日韩族 / 匿名默认族的族首$note）"
+        ui_print "Skia /system/etc/fonts.xml：已插 $touched 处（中日韩无名族的族首$note）"
         return 0
     fi
     rm -f "$TARGET"
