@@ -101,8 +101,6 @@ def stray_rings(g, max_share=0.02, min_gap=0.5, max_gap=40.0):
     ars = [area(r) for r in rs]
     kill = []
     for i, r in enumerate(rs):
-        if len(r) > 9:
-            continue
         others = [j for j in range(len(rs)) if j != i]
         oa = sum(ars[j] for j in others)
         if oa <= 0 or ars[i] / oa > max_share:
@@ -110,6 +108,20 @@ def stray_rings(g, max_share=0.02, min_gap=0.5, max_gap=40.0):
         rb = bbox(r)
         w, h = rb[2] - rb[0], rb[3] - rb[1]
         if not (30 <= w <= 80 and 30 <= h <= 80):
+            continue
+        # ★ 分支二（2026-11-27，主人指出「谚」左下角那颗）：整条轮廓落在字身框外
+        #   （基线以下 / 顶线以上 / 左右框外）。正常汉字笔画不会**完全**落在字身框外
+        #    yet 只有 30–80 单位大。这一类不能套用分支一的「点数 8–9」和「空隙 0.5–40」：
+        #   它们往往贴着主笔画末端（bbox 相交 → 空隙 0），且收笔自交环多两个点（10–11 点）。
+        #   「谚」U+8C1A 的 r6 就是：11 点、52×49、y[-52,-3]、空隙 0.0、占比 0.79%。
+        #   全库扫描这一分支另命中 14 个同类（㓰  㮣  墫 巽 挀  瑨 甆 謜 钾 锂 鶌），
+        #   与分支一的 5 个零重叠；非汉字码位（如 U+2592/2593 的 shade 符号也落在基线下）
+        #   由 main() 的 cjk() 过滤挡住，不处理。
+        if rb[3] < 0 or rb[1] > 880 or rb[2] < 0 or rb[0] > 1000:
+            kill.append(i)
+            continue
+        # 分支一（原判据）：游离在字形外的小圈。
+        if len(r) > 9:
             continue
         # 到最近的**单个**轮廓，不是到并集
         nearest = min(gap(rb, bbox(rs[j])) for j in others)
