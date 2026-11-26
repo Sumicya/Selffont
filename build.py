@@ -1,35 +1,10 @@
 #!/usr/bin/env python3
-"""Selffont 打包器：一个主字体 + 基础包 + 固定许可补充字体 → KernelSU 模块 zip;--check 跑内建自检。
+"""Selffont 打包器：主字体 + 补充字库 → KernelSU 模块 zip。`python3 build.py --check` 跑内建自检。
 
-  pip install -r requirements.txt
-  python3 build.py --check                       # 自检：无框架，assert 直跑，不下载不打包
-  python3 build.py [--font X.ttf] [--base Y.zip] [--output O.zip]
-                   [--build 总序号] [--day 当日序号] [--date YY.M.D] [--query-ci]
-
-版本号按全局规范：yy.m.d.当日序号.总序号（五段，展示不含 v），versionCode = 总序号。号源只有
-一处：CI 运行数。总序号 = `build.yml` 本次运行的 `run_number` 原值，不做基线相减；当日序号
-（当日 = `run_started_at` 转 UTC+8）用差值锚定法算：取当日现存 `build.yml` 运行的最小
-`run_number`，与当日现存产物 `selffont-yy.m.d.d0.r0` 反推出的 `r0 - d0 + 1`，两者取小作当日
-首条运行号 `R_first`（都没有就取当前 `run_number`），当日序号 = 当前 `run_number - R_first + 1`。
-失败运行同样占号，`pull_request` 运行永不计入。`--query-ci` 用 `gh api` 现场读数并打印 head
-SHA、run_id、run_number、R_first、当日序号与最终版本；取不到数直接抛错，不编数、不留降级。
-本地手工打包仍可传 --date/--day/--build（不传 --day 按四段处理，这是手工覆盖专用的简化
-路径，跟 CI 的自动取数退化是两回事）。
-
-自由化：--font/--base 都收本地文件或 URL，没有平台闸门；家族名、可变轴、行度量
-全部现场从字体里读。主字体现在是母版（静态、只有 400 一档），配置写 weight，不写 supportedAxes
-（那是可变字体才有的写法）。可变字体仍可作 --font 传入，那时才走 supportedAxes 路径。
-
-对主字体的安装副本只做三件事（安装副本因此改名，便于和母版本名区分）：
-1. 竖直行度量对齐基础包里的 Roboto 空壳——真机验证过的角标偏低/切下沿修复；
-2. 剪除映射到空白字形的码位——上游声称覆盖但字形空白，会吞掉回退链；
-3. 内部家族名改成 RENAME——母版与安装副本必须不同名，否则管理器与 Gecko 分不清哪份在跑
-   （母版 OFL 未声明保留字体名，改名不是许可要求，是识别要求）。
-轮廓、cmap 归属、可变轴有构建期守卫，动一个字节就报错。
-
-不做「别名字件」：2026-10-05 真机实测（OnePlus / ColorOS 16），Gecko 的字体清单不含未写进
-系统配置的字件，别名字件在网页里解析不到（20 个空格宽度 = 默认链，别名值 0.5em 未出现）；
-而 Gecko 每条回退链都由本模块前置主字体，命中与不命中最终都渲染主字体——既不可见也无收益，删。
+用法：python3 build.py [--font X] [--base Y] [--output O] [--build N] [--day D] [--date YY.M.D] [--query-ci]
+版本五段 yy.m.d.当日号.总序号，号源是 CI run_number；取不到数就抛，不编数。
+安装副本只动三件事：hhea 跟源件、typo 写成与 hhea 同一套、usWin 盖墨迹；剪空白映射；改名为 RENAME。
+轮廓 / cmap / 轴有守卫。
 """
 import argparse
 import contextlib
@@ -62,7 +37,6 @@ sys.path.insert(0, str(ROOT / "tools"))
 import skia_paths  # noqa: E402  （复算器：按 Skia 源码的五层顺序判每个码位落到哪个字件）
 
 # ---------------------------------------------------------------- 默认来源（哈希只是提示）
-# 2026-11-16 主人令「文渊下掉，主字体交给母版」：默认源从文渊换成母版。
 # 母版取件走与 CI 同一套（build.yml 的 MOTHER_SHA256，ref 钉 97e9dd4），字节一致才算数。
 PRIMARY_URL = ("https://github.com/max32002/maruko-gothic/raw/97e9dd4/"
                "CJK%20SC/MarukoGothicCJKsc-Regular.ttf")
@@ -79,7 +53,6 @@ BASE_SHA256 = "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b"
 
 # MFGA 17.0.1 删除了不可再分发的 Symbola-13.otf。Google Fonts 的 Noto Music（OFL-1.1）
 # 在 U+1D100..U+1D1FF 补回约 200 个原先仅由 Symbola 提供的可见音符字形。使用不可变 Git blob
-# URL 与 SHA-256，字体和对应许可证只在构建时下载、随模块打包，不把 TTF/OTF 放进仓库。
 NOTO_MUSIC_SOURCE = {
     "filename": "NotoMusic-Regular.ttf",
     "url": "https://api.github.com/repos/google/fonts/git/blobs/7f1d616dd5efee190bb631231cf5f35fa8b8ab95",
@@ -96,10 +69,6 @@ NOTO_MUSIC_SOURCE = {
 }
 # 覆盖补齐走上游（MakeFontsGreatAgain）的路子：不自己画字，把公开字库按 Unicode 版本
 # 分件投放，由 fonts.xml 补字区按顺序兜底。基底停在 Unicode 14 之前，
-# 下面这些码位在主字体里 0 覆盖（2026-10-26 实测），必须靠这一支。
-#
-# 许可证一律沿用各自的 OFL：New Unicode Replenish 与 Unicodia 用 MFGA 的 fonts/LICENSE-OFL
-# （同一份文本同时注明 Noto 作者与 Mercury13），Noto 系用 Google Fonts 的 OFL。
 NEW_UNICODE_LICENSE = {
     "license_url": "https://api.github.com/repos/Numbersf/MakeFontsGreatAgain/git/blobs/2db76e6951b37fca03fbb33815e2076611b3ffe0",
     "license_filename": "NewUnicode-OFL.txt",
@@ -222,11 +191,6 @@ PRIMARY_FAMILIES = {"sans-serif", "sans-serif-condensed", "serif"}
 METRIC_FAMILIES = {"sans-serif", "sans-serif-condensed"}
 # 主字体接管的命名家族只剩 serif：它本来放旧数字主字件（100.ttf…900.ttf），那些字件不打包，不换就
 # 是一族指不到东西的引用。sans-serif / sans-serif-condensed 走 METRIC_FAMILIES 留度量空壳。
-# monospace / serif-monospace / casual / cursive / sans-serif-smallcaps 本来各有自己的字体
-# （DroidSansMono / CutiveMono / ComingSoon / DancingScript / CarroisGothicSC，五个字件 2026-10-07
-# 真机确认都在 /system/fonts）——本来是什么字体就保持什么字体，整族换成主字体是本模块自己改的，
-# 不是恢复谁。这五族本来就没有中文，缺字照旧往语言区 / 默认区的主字体落，覆盖不靠接管它们。
-# 火狐名单同一规则（见 NATIVE_FIRST），两边一致。
 OLD_PRIMARY = {f"{weight}.ttf" for weight in range(100, 1000, 100)}  # 输入配置里的旧数字主字体
 # 母版直通件进包时挂的语言区：母版是汉字字体，只认汉字场景（简/繁），
 # 不认 ja / ko —— 假名、谚文不归它，日文里的汉字也该跟系统走主字体的字形。
@@ -241,16 +205,11 @@ CJK_LANGS = {"zh", "ja", "ko"}  # 语言区里主字体要接管的 BCP-47 主�
 UNWANTED_FONTS = re.compile(r"misans", re.I)
 # 火狐名单里谁排最前，按这个泛型在系统里本来是什么字体（fonts.xml 的命名家族）定：
 # monospace=DroidSansMono.ttf / cursive=DancingScript-Regular.ttf / casual=ComingSoon.ttf
-# （Android 的 fantasy 对应 casual）。本来是什么字体就保持什么字体，主字体只紧随其后兜 CJK。
-# 不在表里的泛型（sans-serif / serif / emoji）系统里本来就是主字体，主字体排最前是恢复火狐的篡改。
 NATIVE_FIRST = {"monospace": "Droid Sans Mono", "cursive": "Dancing Script", "fantasy": "Coming Soon"}
 WEIGHTS = range(100, 1000, 100)
 BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp", "Mn"}  # 合法空白：空格/控制/非间距组合符
 # 韩文填空符：U+115F 初声填空／U+1160 中声填空。这两码位的正确字形就是空白
 # （占 jamo 槽位用），但 Unicode 类别是 Lo、不在 BLANK_CATEGORIES 里，于是
-# prune_blank_mappings 曾把它们的映射当「声称覆盖却空白」剪掉（母版有、包内无，
-# 实测 U+115F；主人 2026-11-27 令修）。剪掉会让 Skia 替填空符找回退，方向反了；
-# 保留映射——空白就是它的正确墨迹。
 FILLER_CODEPOINTS = {0x115F, 0x1160, 0xFFA0}  # 2026-11-27 加半宽韩文填空（434 部分空白候选）
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
@@ -485,8 +444,6 @@ def weight_ladder(axes: dict) -> list[dict]:
 
 # 汉字的码位范围。**只放汉字**：早先这里还带着 (0x2A80, 0x2FDF)（康熙部首/IDS）和
 # (0x3000, 0x312F)（汉字标点、假名、注音），于是 `〱` `〲`（竖排假名叠点，墨迹顶到 937）
-# 被当成汉字去卡 930 的行框，整个构建被判「行框会切墨迹」。它们不是汉字，它们该由
-# `usWinAscent`（跟真实墨迹走）管，不是由汉字的行框管。
 HAN_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2FA1F))
 
 
@@ -734,7 +691,6 @@ def is_cjk_locale(tag: str | None) -> bool:
     """
     # `und-Nkoo`（N'Ko 文）的主语言子标签是 `und`，但旧写法拿整个 tag 做子串比较，
     # `"und-Nkoo" in {"zh","ja","ko"}` 恒假、而拆出来之前 `"ko" in "und-Nkoo"` 恒真——
-    # 2026-11-07 实测它把 N'Ko 族当成了韩文族。现在严格按 BCP-47 主语言子标签比。
     return any(part.strip().split("-")[0].lower() in CJK_LANGS
                for part in (tag or "").split(",") if part.strip())
 
@@ -780,25 +736,12 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
             swap_fonts(family, font_name, ladder, keep_languages)  # CJK 语言区：清空的族换主字体单字件，混有其他字件的族不动
             # 保留语言（keep_languages）的族清完旧数字静态档后可能一个 font 都不剩。
             # 空族留着只会让 Minikin 多打分一轮，且容易让人以为「这门语言归本包管」。
-            # 删掉即回到「本包不碰这门语言」，回退交给设备的同语言族。
             if not family.findall("font"):
                 root.remove(family)
         elif name in PRIMARY_FAMILIES or files & OLD_PRIMARY:
             replace_fonts(family, font_name, ladder)  # 语言区只换字件，lang/variant 属性原样保留
     # 母版直通族：单独一个 family，**带 zh 语言标签**，排在所有 CJK 语言区族之前。
     # 它是可变字体，字件节点必须带 supportedAxes；混写静态字件会让 ColorOS 卡第一屏，
-    # 所以它只放自己一个字件（纯族，形状与 swap_fonts 产出的主字体族一致）。
-    #
-    # 为什么非带 lang 不可：Minikin 的 getFamilyForChar 逐族打分，不是「语言区整段优先」，
-    # 也不是「默认区按文件顺序取第一个有码位的」——
-    #   score = 覆盖分 << 29 | 语言分 << 1 | 变体分          （calcFamilyScore）
-    # 覆盖分只有「第 0 族且命中」拿满分，其余有码位的一律 1 分，所以**多个族都覆盖同一码位时，
-    # 由语言分决定胜负，分数相同才按文件顺序取靠前的**。不带 lang 的匿名族语言分恒为 0，
-    # 会被任何 lang 匹配上的 zh 族（语言分 ≥1，语言+文字双匹配拿 4）压掉。
-    # 自 dafc875 起的配置正是这样：第 1 族（匿名，我们）对 法 覆盖=1、语言=0，
-    # 第 10/11/121/122 族（lang=zh…，现已换成主字体）覆盖=1、语言=4 → 中文全落主字体。
-    # 补上 lang 并抢在它们前面之后，两族同分，按顺序取靠前的那个 —— 我们。
-    # 缺字（全角标点、假名、扩展区…）语言分再高也拿不到覆盖分，照旧落语言区里的主字体。
     index = list(root).index(default) + 1
     if cjk:
         cjk_locale_at = [i for i, family in enumerate(root)
@@ -807,16 +750,8 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
             index = min([index, *cjk_locale_at])  # 抢在第一个 CJK 语言区族之前：同分时顺序取胜
         own = ET.Element("family")
         own.set("lang", PASSTHROUGH_LANG)
-        # ★★ 2026-11-10 主人实查出的头号嫌犯：这里原来无条件写 own.set("name", cjk_family)，
         #   造出 `<family lang="zh-Hans,zh-Hant" name="Maruko Gothic CJKsc">` 这种混合节点。
         #   原厂 fonts.xml 全部 192 个 <family> 里，同时含 name 与 lang 的是 **0 个**：
-        #   AOSP FontListParser 里带 name 走 readNamedFamily()，**不进入**语言回退链；
-        #   只有不带 name 的才走 readFamily() 进默认列表（fonts.xml 头注也这么写）。
-        #   一个本该出现在中文回退链里的族被写成「命名族」，中文就落不到它身上 ——
-        #   这一条与真机「启用基准件必卡第一屏」高度吻合，且 2026-10-28 正常开机版的配置
-        #   正是「无 name 的匿名语言族」。
-        #   字件写法也不能看 cjk_family 有没有值，要看字件自己有没有 fvar 表：
-        #   原来的 cjk_family 只在直通时才有值，于是任何可变字件被传进来都会误走静态分支。
         if cjk_is_variable:
             # 可变字件：写 supportedAxes，不写 weight（运行时按 wght 实例化）。
             node = ET.SubElement(own, "font", style="normal", supportedAxes=CJK_AXES)
@@ -834,7 +769,6 @@ def configure_fonts(template: bytes, font_name: str, ladder: list[dict],
             root.remove(family)
     # 输出文件的根节点只能是不带属性的 <familyset>（AOSP font_fallback.xml 头注：
     # 「No attributes are allowed to familyset node」，官方生成器也不写任何属性）；
-    # 模板从 fonts.xml 带来的 version 属性在这里去掉——带属性可能整份配置被拒。
     root.attrib.pop("version", None)
     ET.indent(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
@@ -942,12 +876,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                          build_num, day=day, date=date)
     output = Path(output) if output else default_output(prop)
     if base is None:
-        # ★ 2026-11-27：BASE_URL（MFGA-SELFUSE release）已被主人判来源不明、永久弃用。
         #   不传 --base 时**不再 fetch 它**。CI 的出包步骤不传 --base，一旦字体缓存里
         #   没有 base.zip（或 SHA 不符），就会去下载这个永久不可用的 URL 并 TLS EOF
-        #   退出 —— run 45698525799（Roboto 修复已合入仍 failure）即死在这里，
-        #   与断言无关。改为现场自造只含度量空壳的基包：构建从基包只读两样
-        #   （Roboto 空壳做度量对齐、LICENSES.md 做归属文本），自造件两样都齐。
         derived = cache / "derived-base.zip"
         base_zip(derived, {CARRIER: make_carrier()})
         base_path = derived
@@ -959,7 +889,6 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
     # 母版直通且没显式给 --font：主字体就是母版本人，不再去默认源下一份一模一样的字节。
     # 安装名仍用 PRIMARY_NAME（Selffont-…），不沿用母版原名：设备 /system/fonts 里可能本来就有
-    # 一个同名文件，同名会让「哪份在跑」彻底说不清。
     primary_is_mother = font is None and bool(passthrough_mother)
     if primary_is_mother:
         primary = Path(passthrough_mother).read_bytes()
@@ -977,11 +906,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
     with zipfile.ZipFile(base_path) as archive:
         members = font_members(archive)
-        # ★★ 2026-11-26：度量空壳改为**自造**。此前这里从基础包里读一支 Roboto 空壳，
         #   那意味着每一次构建都依赖别人的发布包。实测（本篇罚篇二十三）：
         #     自造空壳 672 字节，度量 930/-250/0（hhea/typo/win），与对齐目标一致，
-        #     normalize_metrics(母版 20.08 MB, 自造空壳) → 19.98 MB，保真断言通过。
-        #   ⇒ 基础包对「归一化」这一环已无贡献，这条输入可以断。
         carrier = carrier_metrics(make_carrier())
         if carrier is None:
             raise ValueError("自造度量空壳不可用（含可见字形或结构损坏）：归一化链断了")
@@ -997,11 +923,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         if pruned:
             warnings.append(f"剪除空壳映射 {pruned} 个（上游声称覆盖但字形空白），这些字落到回退链。")
 
-        # 母版直通：一份独立 family 排在主字体之前（自研汉字管线 2026-11-22 已下线）。
         # build_vf 会逐字 pop 掉传进来的字典（三万字全按 Python 对象摊开要 500 MB 以上），
         # 所以字数要先记下来。
-        # 母版直通：不改任何轮廓，把母版字节原样放进包里，只做挂载与配置。
-        # 用途是量基准——五条判据对着它比，任何改动都跟它差多少一目了然。
         passthrough_name = None
         if passthrough_mother:
             mother_path = Path(passthrough_mother)
@@ -1011,11 +934,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             passthrough_name = mother_path.name
             with TTFont(io.BytesIO(cjk_font), lazy=True) as _m:
                 glyph_count = len(_m.getGlyphOrder())
-            # ★ 2026-11-10 主人实查出的二号嫌犯：主字体与自研 VF 进包前都过
             #   normalize_metrics() 对齐设备空壳行框（930/-250/0）并剪空白映射，
             #   唯独直通母版原样塞进去 —— 而它还被 fix_hpos/fix_vpos 平移过坐标。
-            #   全包唯一一个「行框与设备不一致」的字件，第一屏渲染就可能踩到未测分支。
-            #   轮廓一律不动（assert_glyphs_preserved 守着），只动 hhea/OS/2 与空白映射。
             _raw_mother = cjk_font
             cjk_font = normalize_metrics(cjk_font, carrier, characters="")
             assert_glyphs_preserved(_raw_mother, cjk_font)
@@ -1026,7 +946,6 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             digest = hashlib.sha256(cjk_font).hexdigest()[:7]
             # 基准件必须与发行件**不同 id**：同一个 id 就只能靠抬 versionCode 去压发行件，
             # 抬上去之后发行件的总序号（现在是三位数）在管理器眼里永远是「降级」，
-            # 刷过基准件的机器再也装不回正规包，除非卸载。2026-11-01 那次 90 万序号就是这么来的。
             if module_id:
                 prop = re.sub(r"^id=.*$", lambda _m: f"id={module_id}", prop, flags=re.M)
             prop = re.sub(r"^name=.*$", lambda _m: "name=Selffont 母版直通（水平/竖向定位修正）", prop, flags=re.M)
@@ -1073,14 +992,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                               cjk_is_variable=cjk_is_variable,
                               keep_languages=keep_languages)
 
-        xml = configure_fonts(template, name, ladder, cjk=bool(cjk_file),
-                              cjk_name=cjk_file, cjk_family=cjk_family,
-                              cjk_is_variable=cjk_is_variable,
-                              keep_languages=keep_languages)
-
         # Skia 只认 /system/etc/fonts.xml：Flutter / WebView / 厂商小组件走这条路。
         # 只出插入行，由安装脚本插进设备自己那份（整份替换会丢掉 OPPO Sans 等 OEM 字件）。
-        # 直通母版开放 wght 300–500（tools/cjk_vf.py），超出这条阶梯的请求本来就落到主字体。
         cjk_ladder = weight_ladder({"wght": (300, 400, 500)})
         faces = ([(cjk_file, cjk_ladder)] if cjk_file else []) + [(name, ladder)]
         legacy = legacy_rows(faces)
@@ -1098,7 +1011,6 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             if member and hashlib.sha256(archive.read(member)).hexdigest() != extra["sha256"]:
                 # 基础包自带同名文件但版本不同（实测 MFGA 基础包里的 NotoSansPro.otf 与本仓固定的
                 # 那份不是同一版）。以本仓固定、带许可与覆盖区间声明的那份为准：同名字件一律只用
-                # 补充字体这一份，基础包里的旧副本不打包——记警告，不静默二选一。
                 warnings.append(f"基础包自带同名但内容不同的 {filename}，改打包本仓固定的那份。")
         # 自造空壳由 write_module 单独写入（见 carrier 参数），基包里那份同名文件不再带 ——
         # 否则 zip 里会出现两个 `system/fonts/Roboto-Regular.ttf`，解包时要人确认覆盖。
@@ -1107,17 +1019,13 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                    and PurePosixPath(member.filename).name != CARRIER]
 
         # 默认族 sans-serif 的每一个字件必须真打进包。这一族是 system_server 开机就要用的，
-        # 「引用得到、字件不在包里、靠设备自带」在缺件的机型上会让字体配置解析失败（2026-11-01
         # 进安全模式）。宁可打包失败，也不要出一个引用了空名字的配置。
         default_family = xml_root.find("family[@name='sans-serif']")
         packaged_names = ({PurePosixPath(m.filename).name for m in bundled} | extra_names
                           | {name, cjk_file} - {None})
         # 覆盖清单：配置引用了 139 个名字，包里只带得走设备也认得的那些。清单落进模块，
         # 是为了让「覆盖不全」变成一份可读的名单——缺的是哪个名字、由谁提供，一目了然，
-        # 而不是等真机上看到某个字没换再回头猜。Android 解析器找不到字件时跳过该条，
-        # 字符继续走回退链：所以这些名字如果设备上也没有，那些字符就不会是本包的字形。
         device_supplied = sorted(name_ for name_ in referenced - packaged_names if name_)
-        # ★ 2026-11-26：配置与包的闭合。改前只有「引用了就带」这一个方向，缺反向约束，
         #   于是「因为不敢动所以原样不动」的引用连同其体积一起进包（实测多出一百多兆）。
         #   现在：每个被引用的名字，要么在包里，要么在 DEVICE_PROVIDED_FONTS 这个显式声明里。
         if fixture:
@@ -1127,10 +1035,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             assert_refs_closed(xml.decode("utf-8"),
                                {PurePosixPath(m.filename).name for m in bundled}
                                | extra_names | {name, cjk_file} - {None})
-        # ★ 2026-11-26 主人：「全字符支持是招牌」。先把这句话变成可核对的数字，别再靠感觉。
         #   权威判据是**CMap 并集**（包里所有字件的 cmap 合起来覆盖多少码位），不是「引用了多少名字」。
         #   以前 coverage.txt 只列名字，看的人会误以为「234 个由设备自带」= 覆盖全了；
-        #   实际汉字全集 97,046 码位、母版只有 30,393，缺口 66,653（68.7%），而补充字库一个汉字都没有。
         unicodes: set[int] = set()
         for blob in [packaged, cjk_font or b""] + [item["data"] for item in supplementals]:
             if not blob:
@@ -1158,7 +1064,6 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
               "不是漏打包。要补齐，把对应字件放进基础包或增列补充字库。\n"
         )
 
-        # ★★ 2026-11-26：CARRIER 以前来自基础包，现在由**我们自造**（672 字节）。
         #   所以它必须被写进产物，否则 sans-serif 族会指向一个包内不存在的名字 —— 那正是
         #   「引用了就必须有」这条不变量要挡的东西。空壳自造后体积代价可以忽略。
         carrier_bytes = make_carrier()
@@ -1176,7 +1081,6 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
 
         # 火狐 pref 尾链：火狐的逐字回退不读 fonts.xml，逐字兜底时全清单乱序扫描，选中的字体和系统
         # 不同（花体/生僻字符两副面孔）。把补充字库的内部家族名按 fonts.xml 顺序追加到每条名单末尾，
-        # 让它和系统走同一条链。火狐只认字件内部名（优先 typographic），现场从基础包读取。
         families, done = [], set()
         for node in xml_root.iter("font"):
             fname = (node.text or "").strip()
@@ -1212,10 +1116,8 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
                      strict_emoji=supplemental_font_sources is None,
                      carrier=carrier_bytes)
 
-    # ★ 2026-11-26：体积必须出现在**每次构建的必经路径**上，并带一条上限。
     #   改前：24 项自检里没有任何一项关于产物字节数，日志里那行也没人读，
     #   也没有「多少算多」的参照 ⇒ 包一路涨到 156.57 MB 而没有任何东西会响。
-    #   一个指标只有同时具备「采集 + 必经路径 + 阈值」三者才会起作用，缺一条就等于没有。
     with zipfile.ZipFile(output) as produced:
         entries = [(i.filename, i.file_size) for i in produced.infolist()]
     print(size_report(entries))
@@ -1260,7 +1162,6 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
             destination.writestr(member.filename, archive.read(member))
         # 同名字件只有一份，且固定用补充字体这一份（bundled 已在调用侧排掉同名的基础包副本）。
         # 许可文本同样只写一次：多个补充字体共用同一份 OFL（实测三个来源都叫 NewUnicode-OFL.txt），
-        # 重复写会让 zip 里出现同名条目，解包时要人确认覆盖，CI 直接卡死。同名但内容不同就报错。
         written_licenses: dict[str, bytes] = {}
         for supplemental in supplementals:
             destination.writestr(f"system/fonts/{supplemental['filename']}", supplemental["data"])
@@ -1282,7 +1183,6 @@ def write_module(output: Path, archive: zipfile.ZipFile, bundled: list[zipfile.Z
         # （早先这里只在 cjk_font 有内容时写，母版直通那条路就成了「发了改造版却不带许可」。）
         if cjk_font or primary_license:
             destination.writestr(f"licenses/{CJK_LICENSE_NAME}", CJK_LICENSE.read_bytes())
-        # ★ 2026-11-26 真机：emoji 全变豆腐（九个 emoji 九个方框）。根因在本模块——投放的
         #   配置引了本模块并不打包的 emoji 字件名。发行版必判；夹具的补充字体源是空的，
         #   拿它判只会误杀，故夹具跳过（该函数的正误由 emoji_config_refs 那项单独打）。
         if strict_emoji:
@@ -1521,7 +1421,6 @@ def fonts_xml():
     template = (ROOT / "fonts.xml").read_bytes()
     # 本包一个码位都没有的语言（现在只有 ko：母版谚文 0/11,184），它的语言族不许被换成主字体。
     # 换掉＝Skia 和 minikin 都会拿我们的字去画韩文，画不出来就是豆腐块。
-    # 变异（实测）：删掉 swap_fonts 里那三行判断，这条立刻 FAIL，读数是 lang="ko" 的族变成 ["V.ttf"]。
     ko_root = ET.fromstring(configure_fonts(template, "V.ttf", ladder, cjk=True, cjk_name="C.ttf",
                                             keep_languages=frozenset({"ko"})))
     ko_families = [family for family in ko_root.findall("family")
@@ -1531,11 +1430,8 @@ def fonts_xml():
         files = [(node.text or "").strip() for node in family.findall("font")]
         assert files and "V.ttf" not in files, \
             f'lang="ko" 的族被换成了主字体字件（本包谚文 0 个，韩文会全落豆腐）：{files[:3]}'
-        # ★ 2026-11-07（罚篇二十四）：上面那条只证明「没换成主字体」，**放过了另一半**——
         #   九档静态 `100.ttf…900.ttf` 原样留着。而 bundled 按配置里出现过的名字索取字件，
         #   于是九个静态档整份进包：156.57 MB 里 125.67 MB 出自这里。两条判据缺一不可：
-        #     · 不许塞我方字件（否则韩文落豆腐）
-        #     · 不许留旧数字静态档（否则包体翻五倍，且本包谚文 0 码位，带了也画不出）
         assert not (set(files) & OLD_PRIMARY), \
             f'lang="ko" 的族仍引用旧数字静态档（体积归因就在这里）：{sorted(set(files) & OLD_PRIMARY)}'
     # 反向：不传 keep_languages 时照旧换（证明上一条不是恒真）。看 zh 族就行——
@@ -1560,8 +1456,6 @@ def fonts_xml():
 
     # 母版直通族：必须带 zh 语言标签，且排在所有 CJK 语言区族之前。Minikin 给每个族打分
     # （覆盖分 << 29 | 语言分 << 1 | 变体分，见 configure_fonts 的注释），同一码位多个族都有时
-    # 覆盖分打平，胜负全看语言分；语言分也打平才按文件顺序取靠前的。不带 lang 的匿名族
-    # 语言分恒为 0 —— 这就是「包回退到主字体」的成因，改回匿名族会让这条断言先炸。
     cjk_root = ET.fromstring(configure_fonts(template, "V.ttf", ladder, cjk=True, cjk_name="C.ttf"))
     cjk_families = list(cjk_root)
     cjk_own = [family for family in cjk_families
@@ -1579,7 +1473,6 @@ def fonts_xml():
 
     # 语言区（locale fallback family）：缺字时按「完整 BCP-47 标签 → 仅语言 → 顺序」匹配，
     # 语言区优先于默认区顺序（AOSP font_fallback.xml 头注）。整族删掉会让中文场景的缺字
-    # 落到语言区里的厂商字体（Noto CJK 等），所以原来只放旧主字体的 CJK 语言区换成主字体单字件。
     def locales(document):
         return {tuple(sorted(family.attrib.items())): [(n.text or "").strip() for n in family.findall("font")]
                 for family in document.findall("family") if family.get("lang") or family.get("variant")}
@@ -1623,7 +1516,6 @@ def fonts_xml():
     assert {name for name, nodes in ours_named.items()
             if any(text == "V.ttf" for text in nodes)} == {"serif"}, \
         "被主字体接管的命名族应只有 serif（它本来放旧数字主字件，不换就是一族空引用）"
-    # 这五族本来各有自己的字体（2026-10-07 真机确认五个字件都在 /system/fonts）：
     # 本来是什么字体就保持什么字体。期望值独立写死，不从 PRIMARY_FAMILIES 推——否则改常量
     # 就自动改期望，断言成了同义反复（变异测试实测过：那样写抓不到回归）。
     for name, native in (("monospace", "DroidSansMono.ttf"), ("serif-monospace", "CutiveMono.ttf"),
@@ -1699,10 +1591,7 @@ def blank_prune():
 
 
 # ---------------------------------------------------------------- 投放配置里的 emoji 字件引用
-# ★ 2026-11-26 真机回归：本模块把四份框架配置**整份覆盖**到设备上。配置里只要出现一个字件名，
 #   设备就必须真的找得到那份文件；否则 Skia 加载失败、整族跳过 ⇒ 屏幕上整片豆腐。
-#   当时配置写的是 NotoColorEmoji*.ttf（设备才有），而本模块打包的是 NotoEmoji.ttf /
-#   Noto-COLRv1.ttf，名字对不上，九个 emoji 九个方框。判据写死在这里，两边都别猜。
 DEVICE_EMOJI_FONTS = frozenset({
     "NotoColorEmoji.ttf",        # ColorOS/Android 自带彩色 emoji
     "NotoColorEmojiFlags.ttf",   # 同上，旗帜子集
@@ -1729,28 +1618,13 @@ def assert_emoji_refs(xml_text: str, module_fonts) -> None:
 
 # 设备自带的字件名：引用这些名字不算「指不到东西」，因为它们不靠本模块提供。
 # 这份名单是**声明**，不是读数：写进来的每一个名字都意味着「我断言这台设备上有它」。
-# 名单为空时，任何「配置引用了、但包里没有」的名字都会被判为不闭合 —— 这是刻意的默认：
-# 宁可构建失败，也不要出一个「引用了不存在字件」的配置（那类配置在真机上就是豆腐块）。
-# 这份名单只放**有据可查**的名字，不放「我觉得设备应该有」的名字。
-# 依据来源两类：① 2026-11-26 真机截图（ColorOS 17 / Android 17）里 FlClash 字体页列出的
-# 13 个族名，可反推这些族引用到的字件由设备提供；② 模板里各语言区族引用的 Noto 系列。
-# 名单之外的名字一律判为不闭合（构建失败）—— 宁可不打包，也不出「引用了不存在字件」的包。
-# 这说明它不是一份猜测清单，而是一份**声明 + 守卫**：声明我们依赖设备提供什么，
-# 守卫设备之外的东西不会混进配置。
 DEVICE_PROVIDED_FONTS: frozenset[str] = frozenset({
     # 空壳/度量类：设备系统字体里一定有，且我们不打包它们的可见字形。
-    # ★ 2026-11-07 补：Roboto-Regular.ttf。它是 AOSP 基线字体（platform_frameworks_base
     #   data/fonts 里始终存在），ColorOS 17 真机 /system/fonts 下亦有。本包把它当度量空壳
-    #   （CARRIER，:210）引用在默认家族里，但 bundled 按 name != CARRIER 把它排除、不进包；
-    #   它又不匹配 DEVICE_FALLBACK_PATTERN（那里只有 RobotoFlex，没有 Roboto-Regular）。
-    #   于是 assert_refs_closed 判它 dangling，构建失败 —— CI 自 assert_refs_closed 加入起
-    #   连续三次 failure（run 45691802093 / 45693300722 / 45695020396）全因这一条。
-    #   依据：AOSP 基线 + 真机存在，属「有据可查」，不是「我觉得设备应该有」。
     "Roboto-Regular.ttf",
 })
 # 语言区族（阿拉伯、天城、泰米尔…)引用的 Noto 系列：这些名字由 AOSP/ColorOS 系统字体提供，
 # 我们既不打包也不该打包（打包会让包大数倍且与设备重复）。判据是「名字以 Noto 开头且落在
-# 非汉字语言区」——用正则表达式而不是逐名罗列，因为逐名罗列必然漏（这正是穷举型断言的病）。
 DEVICE_FALLBACK_PATTERN = re.compile(
     r"^(Noto[A-Za-z0-9]|DroidSansMono|CutiveMono|ComingSoon|DancingScript|CarroisGothicSC"
     r"|MiSansL3|MFGA|ZUno|Unicode1[678]"
@@ -1884,13 +1758,8 @@ def emoji_config_refs():
         # ★ CI 实证：Zsye 族再写一份这两个名字，build() 的「补充字体恰好引用一次」直接拒绝出包
         #   （run 45603844994 就挂在这里）。所以模板里 Zsye 只写设备自带名。
         assert count == 1, f"{filename} 在配置里应恰好引用一次，实际 {count} 次"
-    # ★ 2026-11-26 第二次真机：上一版把我们的两支 emoji 字件塞进 und-Zsye 族、并把默认区
     #   那两个匿名族删掉，结果**卡开机**。判据改成下面三条，方向是「少动」：
     #   ① 配置里引用的每个 emoji 字件，要么本模块打包了，要么是设备自带名（否则覆盖后指向空文件）；
-    #   ② 本模块打包的 emoji 字件必须落在**默认区匿名族**里——全字符覆盖靠的是默认回退链，
-    #      塞进 und-Zsye 只影响 emoji 语言区，删掉默认区那一份等于丢覆盖；
-    #   ③ und-Zsye 语言区里**不许**出现本模块打包的 emoji 字件：那一处曾同时触发
-    #      「补充字件恰好引用一次」拒包（CI 45603844994）与这次卡开机，改它没有收益。
     root = ET.fromstring(configured)
     anonymous = [node.text.strip() for family in root.findall("family")
                  if not family.get("name") and not family.get("lang") and not family.get("variant")
@@ -2123,10 +1992,8 @@ def build_end_to_end():
         except ValueError:
             pass
 
-        # ★★ 2026-11-26 改口：度量空壳不再来自基础包，改由本构建自造（672 字节）。
         #   旧断言「基础包缺空壳要被拒绝」「基础包的空壳含可见字形要被拒绝」按设计已失效。
         #   新契约（更强）：**基包可以完全没有 Roboto-Regular.ttf**，构建照样出包，
-        #   而且产物里必须有一支 672 字节的自造空壳。这条把「断掉基包」锁进测试里。
         base_zip(base, {"SomeFont.ttf": b"supplemental"})   # 基包里没有任何空壳
         test_build(base=str(base), font=str(regular), output=output, build_num="9", day="2", date="26.9.30")
         with zipfile.ZipFile(output) as _a:
@@ -2297,13 +2164,8 @@ def ci_version_numbering():
               "run_started_at": f"2026-10-27T0{n % 10}:10:00+00:00"} for n in (206, 207, 208, 209)]
     assert _cl.pinned_anchor(_rows, now) == 206, \
         f"清理侧没钉住当日首条：{_cl.pinned_anchor(_rows, now)}（应 206），取号器就没有依据"
-    # ★ 只验证 pinned_anchor() 的返回值是不够的：删运行那段的 `if row["id"] == anchor_id`
     #   被删掉时，pinned_anchor() 照样返回正确值，自检照样绿 —— 变异测试抓不到就是假测试。
     #   所以直接检查「删除决策」这一层：钉住的那条必须不出现在待删清单里。
-    # ★ 2026-11-10 主人打回：上一版这里读 cleanup.py 的源码、断言里面出现某个字符串 ——
-    #   那是「把实现抄一遍再和自己比对」，属伪断言（Fable 5.2：work isn't grading itself）。
-    #   改成构造输入、调用纯函数 keep_runs()、断言输出：同日 6 条运行 + 首条为锚点，
-    #   保留总数必须恒为 5，且锚点在保留集合里，锚点之外最旧的那条在待删集合里。
     _z = datetime(2026, 10, 27, 9, 30, tzinfo=CLOCK)
     def _row(n, minutes):
         return {"id": n, "run_number": n, "event": "push", "status": "completed",
@@ -2500,12 +2362,8 @@ def skia_flutter_path():
         hit = sum(1 for cp in probe if skia_paths.choose(families, cmaps, cp) == our)
         return hit, families
 
-    # ★★ 2026-11-26 第二次重写。这一整项以前是照「逐字回退只遍历无名族」建的：
     #   断言「插命名族命中 0 个」、断言「只插 zh 族会漏字」、断言「zh + 挡路族都要插」。
     #   那套模型漏了 onMatchFamilyStyleCharacter 的**第一层**：按名字精确匹配
-    #   fNameToFamilyMap（SkFontMgr_android.cpp:371，命中即返回）。所以三个命中数一起变了，
-    #   而旧断言一直是绿的 —— 绿的对不上现场，就是假测试。
-    #   新模型只有一条结论：插入 sans-serif 族首，命中全部我方覆盖的码位；族尾命中 0。
     named, families = run("named-head")
     assert named == len(probe), \
         f"插命名族族首只命中 {named}/{len(probe)}：第一层按名字匹配，必须全中（先查 skia_paths）"
@@ -2525,7 +2383,6 @@ def skia_flutter_path():
         "我方有缺口时，后面只要有族含这个码位就必须兜住（不能整片落豆腐）"
     # 同族内不会「分工」：每族只取一个面，我方在族首时，**同族后面**那条设备字件轮不到；
     # 兜底靠的是别的族（这里 stock 开头那个无 name 匿名族）。这条是上一版说错的地方：
-    # 我曾写成「同族的下一条会接住」，源码里每族只 matchAStyle 一次，接不住。
     _got = skia_paths.choose(families, cmaps, 0x4E30)
     assert _got == device, f"0x4E30 应由**另一个族**的设备字件接住，实际 {_got}"
     # 直接钉住机制：把 sans-serif 族做成**只有我方一条**且我方没有该码位，
@@ -2575,7 +2432,6 @@ def install_scripts():
             '    <font weight="400" style="normal">Any-Name.ttf</font>\n', encoding="utf-8")
         (modpath / "system/fonts/Any-Name.ttf").write_bytes(b"font")
         system = tmp / "sysroot"
-        # ★ 2026-11-26：夹具的假设备必须自洽。改前的夹具只写了 fonts.xml，却从不造它引用的
         #   字件；新脚本会先验「目标族里至少一个字件可读」，于是夹具里每个族都是空的，
         #   脚本正确地拒绝插入，而旧断言会误报成「脚本坏了」。这就是拿手写形状自证的老毛病。
         (system / "system/fonts").mkdir(parents=True, exist_ok=True)
@@ -2588,8 +2444,6 @@ def install_scripts():
             (system / "system/fonts" / _name).write_bytes(b"font")
         # AOSP 读 /system/etc/font_fallback.xml；ColorOS 读 /system_ext/etc/fonts_base.xml 与
         # fonts_ule.xml（设备日志实证）。库存 fonts.xml 一律不碰。
-        # 设备自己那份：ColorOS 味——OPPO Sans 打头、中日韩语言族、非中日韩语言族、emoji 族、
-        # 注释、以及一条自闭合族。整份替换会把这些 OEM 字件全删掉，所以只许插不许换。
         stock_legacy = """<?xml version="1.0" encoding="utf-8"?>
 <familyset version="23">
     <!-- first font is default -->
@@ -2641,16 +2495,12 @@ def install_scripts():
             target = modpath / relative
             assert target.read_text() == "<familyset modern/>", f"{relative} 应放新语法"
         # 默认**插**：/system/etc/fonts.xml 是 Skia（Flutter / WebView）唯一读的配置。
-        # 2026-11-07 之前默认 off，依据是「插到最前会让 Flutter 大片没字」——那条归因引的是
         # minikin 的 calcCoverageScore，而 AOSP 生产路径读的是 font_fallback.xml
-        # （SystemFonts.java:56/:309），fonts.xml 只由 getSystemFontConfigFromLegacyXml()
-        # （:57/:342）在测试里读。判据换成 tools/skia_paths.py 对 Skia 判定的逐字复算。
         assert (modpath / "system/etc/fonts.xml").exists(), \
             "默认就该插 Skia 配置：不然 Flutter 那条路等于没换字"
         assert "族=sans-serif+Roboto" in result.stdout, \
             "安装时应报告双族插入：" + result.stdout
         env_on = dict(env, SELFFONT_SKIA_STATE=str(tmp / "skia.state"))
-        # 开关状态跨版本残留：2026-11-25 真机，主人在旧版点过 off，升级到默认 on 的版本后
         # `/data/adb/selffont-skia.state` 还在，mode=off 被照读 ⇒ 新默认值对老用户永远无效。
         # 判据：状态文件里记的版本和 module.prop 的 version 不一致 ⇒ 当作没表过态，回默认 on。
         state_file = tmp / "skia.state"
@@ -2667,7 +2517,6 @@ def install_scripts():
         sh([str(modpath / "skia.sh"), "off"], env_on)
         assert "mode=off" in state_file.read_text() and f"ver={_version}" in state_file.read_text(), \
             "write_state 必须把当前版本记进状态文件：" + state_file.read_text()
-        # ★ 2026-11-26 曾删掉写回，理由是「同源旧模块会被停用」。438 真机打脸：
         #   GGAT_10007 不是同源、不会被停用，KSU overlay 把它的 fonts.xml 叠在我们上面，
         #   我们模块那份永远看不见。谁有这份文件就写回谁。
         rival = tmp / "modules/GGAT_10007/system/etc"
@@ -2733,12 +2582,6 @@ def install_scripts():
         ours = [b for b in blocks if "Any-Name.ttf" in b]
         # 插法判据只看 Skia 源码，不看 minikin：`onMatchFamilyStyleCharacter` 第一层只查请求的
         # 那一个族（Flutter 请求 sans-serif，platform_android.cc GetDefaultFontFamilies），
-        # `find_family_style_character` 每族只取一个 face，`matchStyleCSS3` 并列取先出现的。
-        # => 族尾永远轮不到；族首才被选中。逐字复算（tools/skia_paths.py）：
-        #     族尾 0.00% / 族首 100%（w100–w900 全档）
-        # 夹具那几族里只有 sans-serif、zh、ja 该插（ko 没有）。匿名默认族 / serif /
-        # und-Arab / und-Zsye 都不插——匿名族插了会让后面的 Unicode16/17/18 整片豆腐。
-        # 插的是族首：本包字件行必须在该族**第一条** <font> 之前。
         for block in ours:
             body = [ln for ln in block.splitlines() if "<font" in ln]
             assert body, f"该族没有任何 <font> 行：{block[:80]}"
@@ -2748,11 +2591,8 @@ def install_scripts():
                 f"本包字件必须插在族首（Skia 每族只查一个 face，族尾等于没插），实际第 {ours_at[0] + 1}/{len(body)} 行"
         assert not any("NotoNaskhArabic" in b or "NotoColorEmoji" in b or "NotoSerif" in b
                        for b in ours), "非中日韩语言族 / serif / emoji 不该插"
-        # ★ 无 lang 匿名族（无 name 无 lang）的插法判据，2026-11-25 第三次真机后改写：
         #   · 只插**多字件**的那种。单字件族插进来会把它唯一 face 换成我们，ASCII 直接落空。
         #   · 插进去以后生僻符号必须**仍然**落到 Unicode16/17/18 那几族（下面逐字复算验）。
-        #   前两版写的是「匿名族一律不许插」，那条把 Flutter 整条路堵死了：按 Skia 源码，
-        #   逐字回退只遍历无名族，不插无名族就等于什么都没做。
         for block in ours:
             head = block.splitlines()[0] if block.splitlines() else ""
             if re.search(r'name="', head) or re.search(r'lang="', head):
@@ -2781,9 +2621,7 @@ def install_scripts():
         parsed = _sp.parse_families(modpath / "system/etc/fonts.xml")
         assert _sp.choose(parsed, cmaps, 0x1D300) == "Unicode18-new.ttf", \
             "我们也有的码位之外的生僻符号必须仍落设备字件（否则就是豆腐块）"
-        # ★ 2026-11-26 改口（第三版）：汉字也必须由**我们**画，但落点变了。
         #   旧版靠「插在无名族族首」吃到，而真机证明第一轮（按名字请求的族）先执行，
-        #   无名族只在第一轮落空时才轮到。落点＝sans-serif＋Roboto 双族族首（2026-11-27：
         #   FlClash 按名要 Roboto 绕开 sans-serif），钉住新落点不是放宽。
         assert _sp.choose(parsed, cmaps, 0x4E2D) == "Any-Name.ttf", \
             "汉字必须由本包字件画（sans-serif 族首）"
@@ -2806,11 +2644,8 @@ def install_scripts():
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
             "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"
-        # ★ 2026-11-26 真机读数（ColorOS 16）：设备那份 fonts.xml 里有一整段
         #   **被注释掉**的 `<family lang="zh-Hans">`（OPLUS_FEATURE_FONT_FLIP 的两个分支只留一个）。
         #   老扫描器不看注释，照样往注释块里插 ⇒ 真机 6 处插入里 4 处永远不被解析，
-        #   只有 zh-Hans 那份真实族后面的 2 处可能生效。这是「六处、字形却没变」的直接原因。
-        #   判据：注释块里一处都不许有，注释块外的真实族照插。
         commented_stock = """<?xml version="1.0" encoding="utf-8"?>
 <familyset version="23">
     <family name="sans-serif">
@@ -2866,11 +2701,8 @@ def install_scripts():
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
             "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"
-        # ★ 2026-11-26 真机读数（ColorOS 16）：设备那份 fonts.xml 里有一整段
         #   **被注释掉**的 `<family lang="zh-Hans">`（OPLUS_FEATURE_FONT_FLIP 的两个分支只留一个）。
         #   老扫描器不看注释，照样往注释块里插 ⇒ 真机 6 处插入里 4 处永远不被解析，
-        #   只有 zh-Hans 那份真实族后面的 2 处可能生效。这是「六处、字形却没变」的直接原因。
-        #   判据：注释块里一处都不许有，注释块外的真实族照插。
         commented_stock = """<?xml version="1.0" encoding="utf-8"?>
 <familyset version="23">
     <family name="sans-serif">
@@ -2922,7 +2754,6 @@ def install_scripts():
         # 注释块外：sans-serif ＋ 补上的 Roboto。块内那两套 zh 一处都不许有。
         assert len(outside) == 2, \
             f"注释块外应是 sans-serif＋Roboto 2 处，实际 {len(outside)} 处：{outside}"
-        # ★ 2026-11-26 真机：emoji 全变豆腐（🛙🪋🪌🪍🫌🫝🫫🫹🫺 九个方框）。那个回归的判据
         #   现在钉在 build() 里（assert_emoji_refs），由 emoji_config_refs 那项单独打靶，
         #   这里不再复制一份——复制一份的结果是它只会跟着夹具的假系统根误报。
 
@@ -3029,7 +2860,6 @@ def boot_guard():
         moddir.mkdir()
         # 窗口给极大值：这个夹具测的是「第 1/2/3 次开机」的计数与停用，
         # 不是快速重启保护。默认 300 在沙箱里（uptime 百来秒）会被判成「活过了」
-        # 而反复清零，夹具就测歪了。
         env = {**os.environ, "MODDIR": str(moddir), "SELFFONT_DATA": str(data),
                "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "2",
                "SELFFONT_FAST_REBOOT_WINDOW": "999999999"}
@@ -3042,12 +2872,8 @@ def boot_guard():
             boot_seq["n"] += 1
             return sh([str(guard)], dict(env, SELFFONT_BOOT_ID=str(300000 + boot_seq["n"])))
 
-        # ★ 2026-11-08 真机第五次输出：post-fs-data.d/sf-guard.sh 与 /data/adb/selffont
         #   目录时间戳都是 17:12，目录里却**一个账都没有**——脚本被 init source 进去之后
         #   在写第一行之前就走了（根因：`${0%/*}` 在 source 时拿到的是父进程路径）。
-        #   两件必须锁死：
-        #   ① 一进来就写一行「守卫进来了」：没这行就分不清「没跑」和「跑了但写不进去」；
-        #   ② MODDIR 不许从 $0 猜；夹具故意不给它，必须能从模块目录自己认出来。
         gsrc = guard.read_text(encoding="utf-8")
         assert "守卫进来了" in gsrc, "守卫没有第一行硬证据：又分不清「没跑」和「跑了没写进去」"
         gcode = [ln for ln in gsrc.splitlines() if not ln.lstrip().startswith("#")]
@@ -3069,18 +2895,14 @@ def boot_guard():
         assert (mods / "selffont-bench/disable").exists(), \
             "认出了 MODDIR 却没停用：自动跳过失效，主人还是要手动进安全模式"
 
-        # ★ 守卫有两条触发路径：打包进模块（KernelSU 自己 source）+ 手工放进
         #   /data/adb/post-fs-data.d/（init 直接执行）。两条同时在，一次开机计数涨 2，
         #   阈值 2 就会让**每次正常开机**都在第 2 次自己打 disable。
-        #   这里在同一秒内跑两次，计数必须只涨 1；日志里要写明「本次不重复计数」。
         dup = tmp / "dup"
         (dup / "d").mkdir(parents=True)
         (dup / "m").mkdir(parents=True)
         ed = {k: v for k, v in os.environ.items() if k != "MODDIR"}
         # 这个夹具测的是「同一次开机去重」，不是快速重启保护。
         # 窗口必须给一个**极大值**让「快速重启」恒成立、不触发清零；
-        # 给 0 会反过来每次都清零（uptime 恒大于 0），给默认 300 又会被沙箱的
-        # 百来秒 uptime 判成「活过了」——三种都不对，只有极大值才是中性。
         ed.update({"SELFFONT_DATA": str(dup / "d"), "SELFFONT_MODULES": str(dup / "m"),
                    "SELFFONT_NO_LOGCAT": "1", "SELFFONT_MAX_BOOT_FAIL": "99",
                    "SELFFONT_BOOT_ID": "100000", "SELFFONT_FAST_REBOOT_WINDOW": "999999999"})
@@ -3090,10 +2912,8 @@ def boot_guard():
         assert cnt == "1", f"同一次开机被算了 {cnt} 次：两份脚本同时在时每开机计数涨 2，好机器也会被停用"
         assert "本次开机已计过数" in (dup / "d" / "guard.log").read_text(encoding="utf-8"), \
             "去重生效了却没在日志里写明：下次又一个看不懂的空账"
-        # ★ 反过来的一半更要命：**下一次开机必须照常计数**。
         #   第一版拿 /proc/uptime 的秒数当判据，两次开机都可能在第 3 秒跑到这里，
         #   uptime 一样 → 第二次被当成「同一次开机」跳过计数，
-        #   恰恰在「反复卡机」那个场景下把守卫废掉。改用每次开机唯一的 btime。
         ed2 = dict(ed, SELFFONT_BOOT_ID="200000")
         sh([str(guard)], ed2)
         assert (dup / "d" / "boot-count").read_text().strip() == "2", \
@@ -3105,11 +2925,7 @@ def boot_guard():
             assert (data / "boot-count").read_text().strip() == want
             assert not (moddir / "disable").exists(), f"第 {want} 次就停用了（阈值是 2，太早）"
         # 第 3 次：越过阈值，必须自己打 disable。这是「主人不必再进安全模式」的那一步。
-        # ★ 2026-11-10 第 0 号 bug 的端到端反例（主人逐行核出来的）：
         #   「n > MAX」只在卡住过一次之后的那次开机成立 —— 也就是唯一需要扫描的那次。
-        #   旧版把 scan_boot_log 写在 exit 0 之后，于是自动停用那次永远扫不到上一轮日志。
-        #   夹具：先让 boot.log 有内容、guard.log 清空，再触发停用，断言同一份 guard.log
-        #   里「已自动停用」与「上一轮日志扫描」两行**都在**。少任何一行都说明顺序错了。
         (data / "boot.log").write_text("11-09 18:01:50.000 E Watchdog: WATCHDOG KILLING SYSTEM PROCESS\n",
                                        encoding="utf-8")
         (data / "guard.log").write_text("", encoding="utf-8")
@@ -3120,7 +2936,6 @@ def boot_guard():
         assert "上一轮日志扫描" in _g, \
             ("第 0 号 bug 回归：触发自动停用的那次开机走不到扫描 —— "
              "观测必须排在会 exit 的处置之前\n" + _g[-800:])
-        # ★ 顺序断言要能单独观测：上面那条「两行都在」在处置块挪回扫描之前时**仍然会过**
         #   （两行确实都在日志里，只是顺序反了），所以必须直接比行号。
         #   实测：处置块挪回前面时，这条立刻变红。
         _lines = _g.splitlines()
@@ -3161,10 +2976,8 @@ def boot_guard():
         assert stuck.returncode == 0, stuck
         assert (data / "boot-count").read_text().strip() == "1", "卡住时计数被清掉了"
 
-        # ★ 2026-11-08 真机：boot.log 有 1707 行，看着挺充实，但卡住那几分钟
         #   一行都没有。原因两处：① `-s 白名单` 只抓 8 个 tag，桌面每 5 秒重载字体
         #   把 180 秒窗口填满，ActivityManager/Watchdog 的报错挤不进来；
-        #   ② 抓不到时静默退出，事后说不清是「没跑」还是「没 logd」。
         gc = [ln for ln in gsrc.splitlines() if not ln.lstrip().startswith("#")]
         logcat_lines = [ln for ln in gc if "logcat" in ln]
         assert logcat_lines, "找不到 logcat 抓取"
@@ -3174,8 +2987,6 @@ def boot_guard():
             "没有用黑名单排除刷屏标签"
         # 只查字面句会被自己改文案坑（这次就是：句子改成 $_sock 就误红）。
         # 结构断言：**没 logd 时的那行日志**必须在，且真机默认路径必须是 /dev/socket/logdw。
-        # 文案改过两次（「等了 15 秒没有…」→「$_sock 不存在…」），所以断言结构而不是整句：
-        # 只要「logd 没起来」这件事被写进 guard.log 就行。
         assert "logd 没起来" in gsrc and "本次没抓到" in gsrc, \
             "抓不到日志时静默退出：说不清是没跑还是 logd 没起来"
         assert "_sock=${SELFFONT_LOGD_SOCKET:-/dev/socket/logdw}" in gsrc, \
@@ -3208,13 +3019,8 @@ def boot_guard():
         assert (nd / "d" / "boot-count").read_text().strip() == "1", \
             "没等到 sys.boot_completed 却把计数清了：下次开机就分不清上次卡没卡"
 
-        # ★ 2026-11-09 自查（不看真机，自己找出来的）三处：
         #   ① ⑫ 的去重用 `for seen in $SHOWN`，路径带空格会被拆词，去重整个失效。
         #      真机 Download 里就有 `Nagram/Saved Attachments` 这种名字。
-        #   ② MAX / MAX_BYTES / WAIT / SECONDS 四个环境变量裸取，给非数字时
-        #      `[ -gt ]` 报 Illegal number 返回 2，if 判假 —— 守卫**永远不停用**，
-        #      而且日志里一个字都不提。
-        #   ③ sf-why.sh 只要 boot.log 存在就算「读到证据」，哪怕七个关键词全是 0。
         cleanup_src = (ROOT / "tools/sf-clean.sh").read_text(encoding="utf-8")
         # 只看代码行：注释里那句复盘会被字符串匹配误判成功。
         cleanup_code = [ln for ln in cleanup_src.splitlines() if not ln.lstrip().startswith("#")]
@@ -3227,7 +3033,6 @@ def boot_guard():
             for var in ("MAX", "MAX_BYTES", "_cap", "_limit_s", "WAIT"):
                 # 判据不能用「出现过 ${VAR}」——把兜底那行删掉后 ${VAR} 也就不在了，
                 # 检查会被**整个跳过**（我自己撞过一次：删掉兜底，检查仍然绿）。
-                # 改成看赋值本身：只要这个变量被赋过默认值，就必须有 case 兜底。
                 if f"{var}=${{" in txt or f"{var}=$" in txt:
                     assert f'case "${var}" in' in txt, \
                         f"{name} 的 {var} 裸取：非数字时 [ -gt ] 报错并判假，守卫静默失效"
@@ -3237,22 +3042,15 @@ def boot_guard():
         assert any('if [ "$total" -gt 0 ]' in ln for ln in why_code), \
             "sf-why 又把空 boot.log 当成证据：文件在、七个关键词全是 0，也算「读到了」"
 
-        # ★ 2026-11-09 真机实测后的两条硬要求：
         #   ① 阈值默认必须是 1。真机卡住是「开机 81 秒自己重启」的自循环，
         #      阈值 2 要白挨约 4 分钟；主人要求「检测 1 次就 ban」。
-        #   ② 判据必须是 -gt。-ge 会让**第 1 次开机**就停用，好机器也被关
-        #      —— 我自己改错过一次，夹具当场打回。
         assert "MAX=${SELFFONT_MAX_BOOT_FAIL:-1}" in gsrc, \
             "阈值默认不是 1：主人要的是一次就停，卡住时每轮约 81 秒"
         assert 'if [ "$n" -gt "$MAX" ]' in gsrc, \
             "判据不是 -gt：改成 -ge 会让第一次开机就自己停用（好机器也被关）"
         assert "SELFFONT_FAST_REBOOT_WINDOW" in gsrc, "没有快速重启窗口：意外断电会误杀模块"
-        # ★ 2026-11-09 真机第二轮（17:30:35）打回来的：守卫自己报「上限 2097152 字节」，
         #   只跑 2.8 秒 / 10485 行就断，七个关键词里 ActivityManager/Watchdog/minikin/
         #   FontManager 全是 0。根因是**两处默认值分叉**：MAX_BYTES 我改成了 8 MiB，
-        #   但真正限制「本次抓多少」的 _cap 还写着 2097152；2097152/200 = 10485，
-        #   和真机行数一模一样。上次的断言只查字符串「SELFFONT_BOOT_LOG_BYTES 存在」，
-        #   所以这种分叉照样通过——现在必须逐个默认值相等。
         import re as _re
         cap_defaults = _re.findall(r"_cap=\$\{SELFFONT_BOOT_LOG_BYTES:-([0-9]+)\}", gsrc)
         max_defaults = _re.findall(r"MAX_BYTES=\$\{SELFFONT_BOOT_LOG_BYTES:-([0-9]+)\}", gsrc)
@@ -3261,7 +3059,6 @@ def boot_guard():
         assert cap_defaults[0] == max_defaults[0], (
             f"抓取上限两处默认值分叉：_cap={cap_defaults[0]} / MAX_BYTES={max_defaults[0]}"
             "——真机就是这么只抓到 2.8 秒 / 10485 行（2097152/200）的")
-        # 2026-11-09 真机第三轮：8 MiB 预算只写出 4.79 MiB 就断，因为断的是**行数**
         # （41943 = 8388608 ÷ 200），而实测每行只有 119.6 字节。行数必须由字节预算推出来，
         # 且不许再加「最小行数」下限，否则两层封顶再次脱钩。
         assert "_lines=$(( _cap / 50 ))" in gsrc, \
@@ -3310,17 +3107,12 @@ def boot_guard():
         b_cap = (capd / "d/boot.log").stat().st_size
         # 关键：断的是**字节**，不是行数。真机 8 MiB 那轮只写出 4.79 MiB
         # （41943 = 8388608÷200）就是按行数断的。这里要求顶到 2 MiB 的 95% 以上。
-        # 上下都要卡：只卡下限抓不到「按行数断」的反向错误——按行数算会**超出**字节预算
-        # （半行都不许超，awk 超了就 exit，最多多出一行的余量）。
         assert 2097152 * 0.95 <= b_cap <= 2097152 + 200, \
             (f"给了 2 MiB 却写出 {b_cap} 字节（{b_cap/2097152*100:.0f}%）："
              "封顶不是按实际字节算的（按行数算会写到 5 MB 外）")
 
-        # ★ 2026-11-09 真机第四轮（18:01:59）：24 MiB 只用了 8.07 MiB、180 秒只跑了 56.8 秒。
         #   守卫只写「实际跑了 56.8 秒」，**说不清为什么停**——和写死「180 秒到」同一类错。
         #   停止原因必须由 logcat 自己的退出码说出来：
-        #     0 = logcat 自己结束（logd 断开/系统开始关机）  124 = 到时间上限
-        #     141 = 撞体积上限（awk 先退出）                143 = 被 SIGTERM
         assert "logcat.err" in gsrc, "logcat 的 stderr 没落盘：停了以后查不出为什么停"
         assert ".lc-rc" in gsrc, "没有记录 logcat 退出码：分不清「到时限」和「logd 断开」"
         for code, meaning in (("0", "logd 断开"), ("124", "到时间上限"), ("141", "撞体积上限")):
@@ -3371,10 +3163,8 @@ def boot_guard():
         # ★ 2026-11-09：logcat.err 必须**每次开机重写**。跨开机追加会越滚越大，
         #   而每次开机只关心这一轮为什么停。
         assert ': > "$DATA/logcat.err"' in gsrc, "logcat.err 没有每次开机重写：会跨开机无限累积"
-        # ★ 心跳（2026-11-09 改按字节，§8 禁 sleep）：真机 logcat 在第 54 秒自己断
         #   （那是系统开始关机），只靠「实际跑了 N 秒」看不出断的那一刻写到哪儿了。
         #   现在每满 1 MiB 由**同一个 awk** 写一行「N 字节 / N 行 / 最后一条时间戳」，
-        #   不另起子进程、不 sleep；撞上限时显式写 TRUNCATED（Balanov/uncut 判据）。
         assert "抓日志心跳" in gsrc, "没有抓取心跳：分不清「一直在抓」和「早就断了、只是没退出」"
         assert "SELFFONT_HEARTBEAT_BYTES" in gsrc, "心跳粒度不可调"
         assert "TRUNCATED" in gsrc, "撞上限不显式报：截断被静默吞掉（违 uncut 判据）"
@@ -3385,14 +3175,8 @@ def boot_guard():
         # 原来只查「sleep 10」这个字面量，变异体写成 `sleep 10` 才红、写别的就漏（自己撞过）。
         _sleeps = [ln.strip() for ln in gcode_no_comment if "sleep" in ln]
         assert not _sleeps, f"post-fs-data.sh 里有 sleep（§8 禁）：{_sleeps}"
-        # ★ 2026-11-09 CI 连续 10 条红的根因（build #362–#366 / selfrounds #39–#43）：
         #   POSIX 说 `length($0)` 数**字符**，只有 C locale 下才数字节。
         #   沙箱是 mawk（单字节实现）碰巧按字节算，本地假绿；GitHub Actions 的 gawk 在
-        #   LANG=C.UTF-8 下数字符（同一行 148 字节 / 88 字符 = 1.68 倍），
-        #   「上限 2 MiB」写成 168% 的字节，字节断言当场炸。
-        #   真机同样是 UTF-8 环境：不修就是封顶失效、/data 被写满。
-        # awk 调用跨好几行（管道 + -v 参数 + 程序体），按**整段**判：
-        # 从出现 `awk` 的那行到程序体里 `length($0)`，中间必须有 LC_ALL=C。
         _gcode_text = "\n".join(gcode_no_comment)
         _m = re.search(r"^.*awk.*?length\(\$0\)", _gcode_text, re.S | re.M)
         assert _m, "找不到按字节计的 awk（`n += length($0) + 1`）"
@@ -3441,9 +3225,7 @@ def boot_guard():
         assert "TRUNCATED" in htt, "guard.log 里没有截断记录"
         assert "上一轮的旧错误" not in (hbd / "d/logcat.err").read_text(encoding="utf-8"), \
             "logcat.err 跨开机累积：上一轮的错误还在，这一轮的查不出来"
-        # ★ service.sh：等待必须放进后台子进程。init 收尾时会回收 service.d 的前台进程，
         #   前台等待循环被杀了就永远清不掉 boot-count —— 与 post-fs-data 的死分支叠加，
-        #   正常用一天重启一次模块就自杀（2026-11-09 主人打回）。
         nsrc = night.read_text(encoding="utf-8")
         ncode = [ln for ln in nsrc.splitlines() if not ln.lstrip().startswith("#")]
         assert any(ln.strip() == ") &" for ln in ncode), \
@@ -3455,10 +3237,8 @@ def boot_guard():
         assert not any("sleep" in ln for ln in ncode), \
             f"守夜里还有 sleep：{[ln.strip() for ln in ncode if 'sleep' in ln]}"
         assert "WAIT" in nsrc and "timeout" in nsrc, "resetprop -w 没有超时封顶：等不到会永久挂一个子进程"
-        # ★ 2026-11-09 教训：上一轮的现场不是「分析完」才没的，是被清账命令 rm 掉的。
         #   那次 guard.log 停在「logcat 自己结束」，而「谁发起重启」的证据就在 boot.log 里。
         #   所以开机必须**自动扫上一轮日志**：结论进 guard.log，原文留成 boot.log.prev，
-        #   新一轮从空文件开始（混在一份里就说不清哪行属于哪次开机）。
         assert "scan_boot_log" in gsrc, "没有把扫描逻辑函数化：自动扫和手动扫会分成两套判据"
         assert "boot.log.prev" in gsrc, "上一轮原文没留档：清账一删就再没有现场"
         scd = tmp / "scantest"
@@ -3496,7 +3276,6 @@ def boot_guard():
         assert "未找到任何关机/重启信号" not in _zs, "统计命中却报未找到：给了假现场"
         # 真机原句是「receiving signal 15」和「signal number=15」，模式写 received 会漏。
         # 单独验 signal 那条：只放真机原句「receiving signal 15」，
-        # 别的模式一条都不该命中，所以「命中 1」必须出现在 signal 那一行。
         sd2 = tmp / "sig15"
         (sd2 / "d").mkdir(parents=True)
         (sd2 / "m/selffont-bench").mkdir(parents=True)
@@ -3511,12 +3290,8 @@ def boot_guard():
                if "signal 15|" in ln]
         assert s15 and s15[0].endswith("命中 1"), \
             f"signal 15 那条模式没命中真机原句「receiving signal 15」：{s15}"
-        # ★ 2026-11-10：旧版只取匹配行最后 8 行（果）。现在必须摘「第一条关机/重启信号
         #   前 80 行 → 后 10 行」的第一现场（因），并在日志里写明窗口起点行号。
-        # ★ 2026-11-10：缓冲区必须覆盖 events 与 kernel（漏了它们就查不出谁发起关机 /
         #   卡在开机哪一步）。这里直接读抓取命令行，检查参数里有全部/含 events 与 kernel。
-        # 注意读**仓库源文件**而不是打包副本：这条断言要能抓住「有人把参数改回去」，
-        # 读副本时变异仓库不会反映到副本上，断言会假绿（我第一版就这么假绿过）。
         _gsrc = (ROOT / "module/post-fs-data.sh").read_text(encoding="utf-8")
         # 必须精确断言**赋值那一行**：源文件里 `-b all` 还出现在探测命令里，
         # 只查「全文有没有 -b all」会被探测那句蒙过去（我第一版就这么假绿过一次）。
@@ -3540,7 +3315,6 @@ def boot_guard():
             "新一轮 boot.log 不是空的：新旧两轮混在一份里，说不清哪行属于哪次开机"
         # 手动扫描脚本必须与守卫共用**同一份**判据（scan_boot_log），不许另写一套；
         # 并且输出不许走 /dev/stdout、/dev/tty、/proc/self/fd/1 —— 这三样在 Android 的
-        # root shell 下会「探测能写、实际写不进去」，整段扫描一行都出不来（撞过三次）。
         scan = ROOT / "tools/sf-scan.sh"
         ssrc = scan.read_text(encoding="utf-8")
         scode = [ln for ln in ssrc.splitlines() if not ln.lstrip().startswith("#")]
@@ -3582,12 +3356,8 @@ def boot_guard():
             time.sleep(0.2)
         assert "上限 1 秒 / 25165824 字节" in glog2.read_text(encoding="utf-8"), \
             "默认上限不是 24 MiB：2 MiB 只够 2.8 秒、8 MiB 只够 37 秒，真机 81 秒才重启"
-        # ★ 2026-11-09 主人打回的致命 bug：窗口判据原来读 /proc/uptime，
         #   而 post-fs-data 在开机第 2~5 秒跑，uptime 永远 ~3 秒 < 300 ——
         #   「活过窗口期就清零」是**死分支**，正常重启一次就把模块关掉。
-        #   现在判据是 `boot_id - 上次的 boot_id`（两个 btime 相减），夹具必须用它。
-        # 只看**窗口判据那一段**（从「开机计数」到「先写计数再干别的」之间）。
-        # 抓取时长那边用 /proc/uptime 量「跑了多少秒」是正当的，不许一刀切。
         _win_start = gsrc.index("# ---- ① 开机计数 ----")
         _win_end = gsrc.index("# 先写计数再干别的")
         _win_block = [ln for ln in gsrc[_win_start:_win_end].splitlines()
@@ -3628,10 +3398,8 @@ def boot_guard():
         assert (win2 / "m/selffont-bench/disable").exists(), \
             "上次只活了 81 秒（卡住特征）却没停用：守卫失效"
 
-        # ★ 2026-11-09 真机：清完账 ls 一看还躺着 boot.log.1 = 13,219,112 字节（12.6 MB）。
         #   旧版只在**本次开机开始时**给 boot.log 封顶，写坏的 boot.log 被 mv 成 .1 之后
         #   再没人管它；清理命令只删 boot.log，宿主机上就永远留一份 13 MB。
-        #   夹具：给一个超上限的 .1，跑一次开机，.1 必须整份消失。
         big = tmp / "big1"
         (big / "d").mkdir(parents=True)
         (big / "m").mkdir(parents=True)
@@ -3656,7 +3424,6 @@ def device_tools():
     """全机清理与崩溃定因。锁死三件事：①默认只读；②`--delete` 也必须留住真标记 disable；
     ③别人的开机脚本一字节不动。"""
     with sandbox() as tmp:
-        # 全机清理工具（tools/sf-clean.sh）：主人 2026-11-08 原话「你们 ai 做的事总要别人
         # 擦屁股，所以我向你要全机清理命令」。这里锁死三件真会出事的行为——
         # ①默认只读；②`--delete` 也必须留住真标记 disable；③别人的开机脚本一个字节不动。
         clean = ROOT / "tools/sf-clean.sh"
@@ -3698,7 +3465,6 @@ def device_tools():
         assert not (root / "adb/modules/selffont-bench/disablebak").exists(), "假标记没删掉"
         # 真标记必须还在 —— 而且必须在第 ⑧ 段**真的走到过**之后还在。
         # 这一段单跑一次：夹具里只放真标记／不放 `disablebak`，否则第 ⑥ 段的
-        # `*bak*` 扫描会先把假标记删掉，第 ⑧ 段就没进分支，断言等于没测。
         solo = root / "solo"
         (solo / "modules/selffont-bench").mkdir(parents=True)
         (solo / "modules/selffont-bench/module.prop").write_text("id=selffont-bench\n")
@@ -3717,10 +3483,8 @@ def device_tools():
         assert (root / "adb/boot-completed.d/hmaoss.sh").exists(), "删了别人的开机脚本"
         assert (root / "dl/selffont.zip").exists(), "把可能要刷的包删了"
         assert (root / "adb/modules/selffont-bench/module.prop").exists(), "没加 --keep-module 就删了模块"
-        # ④ 别人的模块里的同名但不同用途的文件：真机 2026-11-08 输出把
         #    GGAT_10007/update.json（KernelSU 模块更新信息）与 hma_oss_zygisk/update_desc.sh
         #    （那个模块自己的脚本）列成了「假标记可删」——glob `update*` 范围太大。
-        #    这里锁死：它们既不许被列为可删，也不许在 --delete 之后消失。
         alien = root / "alien"
         (alien / "modules/hma_oss_zygisk").mkdir(parents=True)
         (alien / "modules/GGAT_10007").mkdir(parents=True)
@@ -3751,7 +3515,6 @@ def device_tools():
                              "modules/hma_oss_zygisk/module.prop"):
             assert (alien / must_survive).exists(), f"--delete 删了别人的 {must_survive}"
 
-        # ★ 开机守卫 sf-guard.sh / sf-night.sh 必须**永不删**：它们是「卡在第一屏」
         #   定因的唯一工具（连续 3 次没走到底自动停用 + logcat 落盘）。
         #   第一版把它们列成可删，一跑 --delete 就把定因能力删了。
         keepboot = root / "keepboot"
@@ -3775,7 +3538,6 @@ def device_tools():
         assert not (keepboot / "adb/post-fs-data.d/sf-pstore.sh").exists(), \
             "旧收集脚本 sf-pstore.sh 该删没删"
 
-        # ⑤ 覆盖面：主人 2026-11-08 当场问「其他文件夹怎么不查」——第一版只扫
         #    /data/adb 一个目录，`/data/adb/sf-crash`（22 MB）还被 stat 报成 4 KB。
         #    这里锁两件：目录大小必须用 du 算；三个根（/data、/storage、/cache）都得进扫描范围。
         clean_text = clean.read_text(encoding="utf-8")
@@ -3785,7 +3547,6 @@ def device_tools():
             "全盘扫描的根少了：不能只查 /data/adb"
         # 真机第二版在「── /data」卡死：这根底下就是 /data/data（几十万文件），
         # 而 ⑭ 里写着「不查 /data/data」。必须有 prune，且剪枝清单是按 $root 现算的
-        # （写死绝对路径的话沙箱夹具测不到，改结构就悄悄失效）。
         assert "-prune" in clean_text, "全盘扫描没有剪枝：会在 /data/data 上卡死（真机实测）"
         assert 'prune="$prune -path $p -o"' in clean_text, \
             "剪枝写死了绝对路径：沙箱夹具测不到，改目录结构就悄悄失效"
@@ -3804,8 +3565,6 @@ def device_tools():
             pass
         # 顺序要紧：**先**换整行扫描根，**再**换各段路径。
         # 反过来做过一次，前面把 /storage/emulated/0 与 /cache 替换掉之后，
-        # 整行 `for root in /data /storage/emulated/0 /cache` 就再也匹配不到，
-        # 三个根全变成空，夹具成了「什么都没扫」的假通过。
         scope_text = scope_text.replace("for root in /data /storage/emulated/0 /cache",
                                         f"for root in {scope}/data {scope}/sd {scope}/cache")
         scope_text = scope_text.replace("/data/local/tmp", str(scope / "data/local/tmp"))
@@ -3819,12 +3578,8 @@ def device_tools():
         assert "selffont-should-not-appear" not in out, "进了 /data/data：真机就是在这卡死的"
         assert "selffont-alsono" not in out, "进了 /data/misc"
 
-        # ★ 真机第三版：/storage/emulated/0 与 /cache 底下没有 data/misc/system 这些子目录，
         #   prune 变空串，拼出 `\( \(  \) -prune \)`，find 报
         #   `invalid expression; empty parentheses are not allowed`，被 2>/dev/null 吞掉，
-        #   这两根**永远输出空**，看着像「没有垃圾」。
-        #   真机证据：⑫ 在 /storage/emulated/0 下是空的，⑬ 却列出同一位置 23 MB 的 selffont 目录。
-        #   夹具：造一个**没有**那些子目录的根，里面的 selffont 必须在 ⑫ 段被列出来。
         flat = tmp / "flat"
         (flat / "sd/Download/selffont").mkdir(parents=True)
         (flat / "sd/Download/selffont/pkg.zip").write_text("x")
@@ -3839,7 +3594,6 @@ def device_tools():
         flat_text = flat_text.replace('[ "$(id -u)" = "0" ] ||', "true ||")
         flat_sh.write_text(flat_text, encoding="utf-8")
         flat_run = sh([str(flat_sh)], os.environ)
-        # ★ 断言只切 ⑫ 那一段。第一版断言整份输出里有没有 "Download/selffont"，
         #   结果被 ⑬「占地排行」满足（⑬ 同样列出那个目录），变异版照样全绿。
         #   「断言被别处的输出满足」是最常见的假通过写法，先把范围切出来再断言。
         flat_out = flat_run.stdout
@@ -3850,11 +3604,8 @@ def device_tools():
         assert "invalid expression" not in flat_out + flat_run.stderr
         assert "没有**查的地方" in clean_text or "没有" in clean_text, "没交代哪些地方没查"
 
-        # ★ 真机第三版（2026-11-08 18:43 输出）打回三个噪音，全在 ⑫：
         #   ① /data/media/0 与 /storage/emulated/0 是同一卷，23524 KB 被列了两遍；
         #   ② 备份目录已整条列出，里面 5 个 xml 又各列一遍；
-        #   ③ 本模块目录自己的 licenses/MFGA-base-LICENSES.md、MarukoGothic-OFL.txt
-        #      名字里带 MFGA/Maruko，中了「按名字找」的圈，被当垃圾列出来。
         noise = tmp / "noise"
         (noise / "data/media/0/Download/selffont/backup-x").mkdir(parents=True)
         for i in (1, 2, 3):
@@ -3883,10 +3634,8 @@ def device_tools():
         assert "1-fonts.xml" not in n12, f"目录已整条列出，里面的文件又各列一遍：{n12}"
         assert "/media/" not in n12.split("/sd")[0], "⑫ 的 /data 那一根没剪掉 media"
 
-        # ★ 2026-11-08 真机两次连跑（相隔一分钟）打回来的：⑬ 里 Nagram 一次整个消失、
         #   一次显示 0.0 MB（先前那次是 237.9 MB）。根因是 `2>/dev/null` 把 du 的报错吞了，
         #   读不到就静默给 0 或干脆不给行——又一个「看着查了其实没查」。
-        #   锁死：du 报 0 但目录非空时，必须印「读不准」而不是 0.0 MB；报错必须原样列出。
         tail12 = clean.read_text(encoding="utf-8")
         assert "没读到" in tail12, "⑬ 对「du 报 0 但目录非空」没有明说，会印一个假 0.0 MB"
         assert "FUSE" not in tail12, "⑬ 又把「du 没读到」猜成了 FUSE 读不全：猜错原因比不说更糟"
@@ -3898,11 +3647,8 @@ def device_tools():
         assert any("ls -A" in ln for ln in tail12.splitlines()), \
             "⑬ 没有用 ls -A 判断目录非空：du 报 0 的目录会被当成真的空"
 
-        # ★ 崩溃定因工具（tools/sf-why.sh）：主人 2026-11-08「还有崩溃定因」。
         #   它自己的失效方式很阴：读不到的目录被 2>/dev/null 闷掉，整份报告一片空白，
         #   看着像「查了，没发现问题」——这正是本轮全机清理做废过的那个坑。
-        #   这里锁三件：①非 root 必须拒绝下结论；②一块证据都没有时必须判「判不出来」
-        #   并逐条列出缺哪块；③造真证据时必须判出具体那一块。
         why = ROOT / "tools/sf-why.sh"
         assert_shell_syntax(why)
         # 只看代码行：文件头那句「刻意不用 2>/dev/null」是解释，拿它比会误判。
@@ -4059,12 +3805,10 @@ def repo_constants():
     prop_head = (ROOT / "module/module.prop").read_text(encoding="utf-8")
     assert "文渊" not in prop_head and RETIRED_FONT not in prop_head, "模块描述里还写着已退役的字体"
     assert not list((ROOT / "module/licenses").glob(f"*{RETIRED_FONT}*")), "退役字体的许可还在仓库里"
-    # 2026-11-16 主人裁决「静态母版判接受」时点名：无真字重必须写进产品说明。
     # 这条不是文案洁癖——母版只有 400 一档，粗体是系统合成加粗，与原先「100-900 真字重」相反；
     # 不写清，装的人会以为是字体坏了。断言钉住它，免得下次改描述时顺手删掉。
     assert "没有真字重" in prop_head, "产品说明里没写「没有真字重」：静态母版只有 400 一档，必须告知"
     # 例外，写清理由：README.md 与 module/hotswap.sh 里那串 `can't create
-    # /system/fonts/<退役字体的安装名>: Read-only file system` 是 2026-10 真机
     # 原样报错，属于判死证据（§19 黑历史不删）。改掉它等于篡改证据，所以豁免，但只豁免这两处。
     for path, allowed in ((ROOT / "README.md", 1), (ROOT / "module/hotswap.sh", 1)):
         assert path.read_text(encoding="utf-8").count(RETIRED_FONT) == allowed, \
@@ -4100,11 +3844,8 @@ def dead_code():
                             capture_output=True, text=True)
     assert result.returncode == 0, "死码未清零：\n" + result.stdout[-3000:]
     assert "合计 0 处死码" in result.stdout, result.stdout[-2000:]
-    # ★ 2026-11-09 主人打回四条，逐条钉死，防止扫描器再悄悄瞎掉：
     #   ① ast 计数把赋值目标数了两遍（`FOO = 1` 的目标本来就是 ast.Name(Store)），
     #      于是「零引用常量」检测率恒为 0%。夹具：临时文件里造一个零引用常量必须被抓出。
-    #   ② `.sh` 只写不读的变量原来根本不扫（文件头注释却吹了牛）。
-    #   ③ 被 eval 进来的函数会读的变量不能算死（否则删了就是真 bug，我踩过）。
     import importlib.util as _ilu
     _spec = _ilu.spec_from_file_location("dc_probe", ROOT / "tools/deadcode.py")
     _dc = _ilu.module_from_spec(_spec)
@@ -4131,11 +3872,8 @@ def dead_code():
     assert _dc.shell_write_only(probe / "e.sh") == [], \
         "有 eval 的文件仍被判定只写不读：那变量可能被 eval 进来的函数读，删了就是真 bug"
 
-    # ★ 2026-11-26 实测漏判：**行尾注释**原来算「被引用」。
     #   `tools/cjk_vf.py` 里 `REJECTS = []  # 每次 build_vf 重置` 这一行，让只被 def 定义、
     #   毫无调用的 `build_vf()`（190 行）在扫描器眼里「出现过两次」，常年零检出；
-    #   外部工具 shrink-anything 一次扫描就把它列成「可直接删」。
-    #   判据：行尾注释里的名字必须不计入引用。
     (probe / "tail_comment.py").write_text(
         "def DEAD_FN():\n    return 1\n\n"
         "KEEP = 2  # DEAD_FN 只在这条行尾注释里出现过\n"
@@ -4169,9 +3907,6 @@ def supplemental_font_reference():
 
 # 四类产物各归一条工作流（主人第六、七次强调）：build 出母版、selffont 出自版（冻着）、
 # selfrounds 出字体本身、hotswap 出热切换——**四条工作流，四条名字，四类前缀，不许混在一条里**。
-# `log-` 是失败时的诊断件，不是交付物，四条都可能出。
-#
-# 母版产物名按主人口径走 `build-<版本>`（2026-11-06 曾改成 `Selffont-母版-<版本>`，已按主人要求改回）。
 ARTIFACT_OWNER = {
     "build-": {"build.yml"},
     "selffont-": {"selffont.yml"},
@@ -4268,7 +4003,6 @@ def workflow_format():
 
         # 8a. 冻结要能被检查：尚未合格的自研字体两条工作流都不许挂 push。
         # 上一版只查 selffont，selfrounds 出的就是同一个还没合格的字体，却一直挂着 push，
-        # 每次推送都拿四个字的预览图冠上正式产物名上传（主人 2026-11-09 指出）。冻结必须两条一起冻。
         if stem in ("selffont", "selfrounds"):
             triggers = data.get("on") or data.get(True) or {}
             if isinstance(triggers, str):
@@ -4316,11 +4050,8 @@ def workflow_format():
                 assert str(with_.get("retention-days")) == "5", \
                     f"{path.name}: 母版产物 retention-days 必须是 5（30 天太占，Actions 产物总量上限 5 个）"
 
-        # 8c. 验收段的判据本身要被钉住（2026-11-10）。
         # 直通件出包时会过 normalize_metrics 把行框对齐设备空壳，所以「包内字节 == work/vpos 字节」
         # 这条**必然**红的断言只能删掉；但删掉之后如果没人正面查行框，验收就等于什么都没查。
-        # 两头都要钉：一，不许再说「整份字节相等」；二，必须正面断言 hhea.ascent 等于空壳的值，
-        # 而且空壳缺失时必须挂（`shell is not None`），不许「读不到就跳过」那种假绿。
         if stem == "build":
             verify = [step for step in (data.get("jobs") or {}).get("build", {}).get("steps", [])
                       if "验收" in str(step.get("name", ""))]
@@ -4430,7 +4161,6 @@ def passthrough_font():
         mother = tmp / "MarukoGothicCJKsc-Regular.ttf"
         # 夹具必须带**汉字**字形：直通件现在也要过 normalize_metrics(characters="")，
         # 那条路径用汉字包络判行框，纯拉丁夹具会被判「没有可用的墨迹」。
-        # 真机母版 27,559 个汉字，这不是迁就夹具，是夹具原本就缺了真实形态。
         mother.write_bytes(make_font(family="Maruko Gothic", axes=False, han=True))
         output = tmp / "out" / "Selffont.zip"
         build(base=str(base), font=str(regular), output=output, build_num="9", day="2",
@@ -4479,7 +4209,6 @@ def passthrough_font():
             assert archive.read("fonts-insert.xml").decode().count(mother.name) >= 1, \
                 "Skia 那份插入行里也得有直通字件"
 
-        # ★ 2026-11-16 主人点名要的实测：走母版那条路时，打包脚本会不会顺手去下主字体默认源。
         #   判法不是读代码，是把默认源换成一个**必然连不上**的地址再出一次包：
         #   只要它真去取，构建就会在这里抛 URLError；出得来包，就证明这条路径一次网络都没发。
         with tempfile.TemporaryDirectory() as dead_name:
@@ -4510,7 +4239,6 @@ def passthrough_font():
                     f"只该有空壳与主字体两份：{fonts_in_zip}"
 
         # 基准件必须与发行件**不同 id**。同一个 id 只有一条路能让基准件盖住发行件：把
-        # versionCode 抬到发行件之上（2026-11-01 那次抬到 90 万）——抬完发行件的三位数总序号
         # 在管理器眼里永远是降级，刷过基准件的机器再也换不回正规包。id 分开就没有这个问题。
         bench = tmp / "out" / "bench.zip"
         build(base=str(base), font=str(regular), output=bench, build_num="7", day="1", fixture=True,
