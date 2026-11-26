@@ -123,11 +123,32 @@ jobs:
           set -euo pipefail
           # 五段 yy.m.d.当日号.总序号，全部来自上一步取号，不再自己拼日期。
           name="build-${VERSION}"
-          python build.py --passthrough-mother "work/stray/${MOTHER_NAME}" \
+          # ★ 2026-11-27 诊断通道：CI 日志域名（results-receiver.actions.githubusercontent.com
+          #   与 blob.core.windows.net）不在本会话沙箱白名单，run view --log 与 artifact
+          #   内容都读不到，唯一能读到的是 check-runs 的 annotations。于是失败时把
+          #   traceback 末 5 行和基包状态写成 ::error:: annotation，下次 failure 时
+          #   `gh api .../check-runs/<id>/annotations` 就能拿到真因。
+          #   背景：run 45698525799 failure 于本步骤，而我「cache 无 base.zip → 下载 EOF」
+          #   的归因被 actions/caches 反证（fonts-v1-Linux 188 MB 含 base.zip），真因未知。
+          if ! python build.py --passthrough-mother "work/stray/${MOTHER_NAME}" \
             --date "$(echo "$VERSION" | cut -d. -f1-3)" \
             --day "$(echo "$VERSION" | cut -d. -f4)" \
             --build "$(echo "$VERSION" | cut -d. -f5)" --module-id selffont-bench \
-            --output "build/${name}.zip"
+            --output "build/${name}.zip" 2>build/err.log; then
+            tail -n 5 build/err.log | sed 's|^|::error file=.github/workflows/build.yml::|'
+            python - <<'PY' || true
+          import os, zipfile
+          p = "build/cache/base.zip"
+          if os.path.exists(p):
+              z = zipfile.ZipFile(p)
+              names = sorted(z.namelist())
+              print(f"::error file=.github/workflows/build.yml::base.zip 存在 {os.path.getsize(p)} B "
+                    f"{len(names)} 成员 前12={names[:12]}")
+          else:
+              print("::error file=.github/workflows/build.yml::base.zip 不存在（cache 未含）")
+          PY
+            exit 1
+          fi
           echo "NAME=${name}" >> "$GITHUB_ENV"
       - name: 解包为可直刷目录
         run: |
