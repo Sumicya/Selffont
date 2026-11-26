@@ -4786,3 +4786,8 @@ verify：一致 0，不一致 0 / 退出码 0
 - 抽字件名不用 sed `\|`（Android toybox 当字面量，CI 的 GNU sed 蒙混过关）
 - 谁模块里有 `system/etc/fonts.xml` 就写回谁（GGAT）；off 时把写回去的行剔掉
 - 夹具：可读=0 仍插入；写回 GGAT_10007；off 剔写回。`--check` 26 过
+
+## 2026-11-26（438 重启后：fonts.xml 计数=1，没有 Roboto 族）
+
+观测：重启后 `/system/etc/fonts.xml` 79636 B、Selffont 计数 1。FlClash 按名要 Roboto，这份 xml 没有该族 ⇒ 只进 sans-serif，应用仍不变。
+改：没有 `name="Roboto"` 时在 `</familyset>` 前补一个只含本包字件的 Roboto 族。夹具改为 2 处。`--check` 26 过。

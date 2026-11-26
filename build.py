@@ -2629,8 +2629,8 @@ def install_scripts():
         # （:57/:342）在测试里读。判据换成 tools/skia_paths.py 对 Skia 判定的逐字复算。
         assert (modpath / "system/etc/fonts.xml").exists(), \
             "默认就该插 Skia 配置：不然 Flutter 那条路等于没换字"
-        assert "插入=1 族=sans-serif" in result.stdout, \
-            "安装时应报告 Skia 那一处插入（只许一处）：" + result.stdout
+        assert "族=sans-serif+Roboto" in result.stdout, \
+            "安装时应报告双族插入：" + result.stdout
         env_on = dict(env, SELFFONT_SKIA_STATE=str(tmp / "skia.state"))
         # 开关状态跨版本残留：2026-11-25 真机，主人在旧版点过 off，升级到默认 on 的版本后
         # `/data/adb/selffont-skia.state` 还在，mode=off 被照读 ⇒ 新默认值对老用户永远无效。
@@ -2671,8 +2671,8 @@ def install_scripts():
         # 幂等：连跑两遍，插入处数必须恒为 1（旧版会攒到 30 处）。
         for _ in range(2):
             assert sh([str(modpath / "skia.sh"), "on"], env_rival).returncode == 0
-        assert (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8").count("Any-Name.ttf") == 1, \
-            "apply 不幂等：连跑两遍后插入处数不是 1"
+        assert (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8").count("Any-Name.ttf") == 2, \
+            "apply 不幂等：sans-serif＋补的 Roboto 族应各 1 行，连跑后不是 2"
         # 438 真机闸门：sans-serif 引用的 Roboto 空壳当时不在 /system/fonts（模块还没挂），
         # 旧脚本见可读=0 就整路不插。本包字件在模块目录里，闸门不该看设备族。
         axis_stock = """<?xml version="1.0" encoding="utf-8"?>
@@ -2773,16 +2773,18 @@ def install_scripts():
         # 落到别的族。无论如何不许凭空消失（None）——None 就是豆腐块。
         assert _sp.choose(parsed, cmaps, 0x1D300) is not None, \
             "我方不覆盖的码位必须仍由设备字件接住，不许落到 None（豆腐）"
-        # 只许一处：整份产物里本包字件名恰好出现 1 次。
-        assert (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8").count("Any-Name.ttf") == 1, \
-            "只许插一处（sans-serif 族首）：多处就是枚举法回潮"
-        # 那一处必须在 sans-serif 族内、且是该族**第一条** <font>。
+        # 两处：sans-serif 族首＋没有 Roboto 族时补一个。FlClash 按名要 Roboto。
+        assert (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8").count("Any-Name.ttf") == 2, \
+            "sans-serif＋Roboto 各 1 行，不是 2 就是漏补或回潮"
         blocks = re.split(r"(?=<family[ >])", skia)
         ours = [b for b in blocks if "Any-Name.ttf" in b]
-        assert len(ours) == 1 and 'name="sans-serif"' in ours[0].splitlines()[0], \
-            f"插入必须在 sans-serif 族内，实际落在：{[b.splitlines()[0][:40] for b in ours]}"
-        body = [ln for ln in ours[0].splitlines() if "<font" in ln]
-        assert "Any-Name.ttf" in body[0], "必须是该族第一条 <font>（族首，否则族尾等于没插）"
+        heads = [b.splitlines()[0] if b.splitlines() else "" for b in ours]
+        assert any('name="sans-serif"' in h for h in heads), f"缺 sans-serif：{heads}"
+        assert any('name="Roboto"' in h for h in heads), f"缺补上的 Roboto 族：{heads}"
+        for block in ours:
+            body = [ln for ln in block.splitlines() if "<font" in ln]
+            assert body and "Any-Name.ttf" in body[0], \
+                "必须是该族第一条 <font>（族首，否则族尾等于没插）"
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
             "skia.sh off 必须删掉模块里那份文件（重启后回设备原文件）"
@@ -2839,10 +2841,9 @@ def install_scripts():
         assert not in_comment, \
             f"往注释块里插了我们的行（Skia 解析不到，等于没插）：第 {in_comment} 行"
         outside = [no for no, ln in enumerate(cmt_out.splitlines(), 1) if "Any-Name.ttf" in ln]
-        # 注释块外：只有 sans-serif 一处（2026-11-26 收敛后不再插语言族）。
-        # 块内那两套 zh 一处都不许有 —— 这条是这一整段的重点，不许被上面的数字放宽。
-        assert len(outside) == 1, \
-            f"注释块外应只有 sans-serif 1 处，实际 {len(outside)} 处：{outside}"
+        # 注释块外：sans-serif ＋ 补上的 Roboto。块内那两套 zh 一处都不许有。
+        assert len(outside) == 2, \
+            f"注释块外应是 sans-serif＋Roboto 2 处，实际 {len(outside)} 处：{outside}"
 
         off = sh([str(modpath / "skia.sh"), "off"], env_on)
         assert off.returncode == 0 and not (modpath / "system/etc/fonts.xml").exists(), \
@@ -2900,10 +2901,9 @@ def install_scripts():
         assert not in_comment, \
             f"往注释块里插了我们的行（Skia 解析不到，等于没插）：第 {in_comment} 行"
         outside = [no for no, ln in enumerate(cmt_out.splitlines(), 1) if "Any-Name.ttf" in ln]
-        # 注释块外：只有 sans-serif 一处（2026-11-26 收敛后不再插语言族）。
-        # 块内那两套 zh 一处都不许有 —— 这条是这一整段的重点，不许被上面的数字放宽。
-        assert len(outside) == 1, \
-            f"注释块外应只有 sans-serif 1 处，实际 {len(outside)} 处：{outside}"
+        # 注释块外：sans-serif ＋ 补上的 Roboto。块内那两套 zh 一处都不许有。
+        assert len(outside) == 2, \
+            f"注释块外应是 sans-serif＋Roboto 2 处，实际 {len(outside)} 处：{outside}"
         # ★ 2026-11-26 真机：emoji 全变豆腐（🛙🪋🪌🪍🫌🫝🫫🫹🫺 九个方框）。那个回归的判据
         #   现在钉在 build() 里（assert_emoji_refs），由 emoji_config_refs 那项单独打靶，
         #   这里不再复制一份——复制一份的结果是它只会跟着夹具的假系统根误报。

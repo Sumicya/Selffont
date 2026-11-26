@@ -152,16 +152,25 @@ apply() {
         { c = upd($0) }
         # 注释块里的行原样输出，一律不参与族匹配（2026-11-26 真机：ColorOS 有一整段被注释掉的族）
         c { print; next }
-        # 2026-11-27 两处族首：sans-serif ＋ Roboto。Flutter 引擎在 Android 按名要
-        # Roboto（FlClash 源码链读得：theme→fontFamilyFallback→prism_ui，具名族列表
-        # 绕开 sans-serif），只插 sans-serif 时具名请求落回设备字件＝应用里字体不变。
+        # 2026-11-27 两处族首：sans-serif ＋ Roboto。Flutter 按名要 Roboto。
+        # 438 真机这份 xml 没有 Roboto 族（插入计数=1）⇒ 只进 sans-serif，FlClash 仍不变。
+        # 没有就在 </familyset> 前补一个只含本包字件的 Roboto 族。
+        /name="Roboto"/ { has_rb = 1 }
         /<family[ \t>]/ { in_f = 1; tgt = ($0 ~ /name="sans-serif"/ || $0 ~ /name="Roboto"/); nf = 0; nxt = 0; print; next }
         in_f && /<\/family>/ { in_f = 0; print; next }
-        # 剔掉上一轮的插入行，保证幂等
         in_f && index($0, marker) { next }
         in_f && /<font / {
             if (tgt && nf == 0 && !nxt) { printf "%s", rows; nxt = 1 }
             nf++
+        }
+        /<\/familyset>/ {
+            if (!has_rb) {
+                print "    <family name=\"Roboto\">"
+                printf "%s", rows
+                print "    </family>"
+            }
+            print
+            next
         }
         { print }
     ' "$SOURCE" > "$TARGET"
