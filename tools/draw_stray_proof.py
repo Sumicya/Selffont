@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""碎块证据图渲染器：docs/figures/ 里每张图的可复算来源。
+"""碎块证据图渲染器：docs/evidence/ 里每张图的可复算来源。
 
 为什么存在：罚篇二十九（2026-11-27，没图罚 5）认定「图在 /tmp 等于没图」。
 图必须落盘进仓库、附 sha、并且**可重画**——不可重画的图是一次性图片，
@@ -10,7 +10,7 @@
 y[-52,-3] 的碎块，就是窗口凭直觉定的后果。
 
 用法：
-    python tools/draw_stray_proof.py <修前.ttf> <修后.ttf> <字> [--out docs/figures]
+    python tools/draw_stray_proof.py <修前.ttf> <修后.ttf> <字> [--out docs/evidence]
 输出两张 png 并打印 sha256 与字节数；把打印结果贴进回复即满足 §4 读证格式。
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ def main() -> int:
     ap.add_argument("before")
     ap.add_argument("after")
     ap.add_argument("ch")
-    ap.add_argument("--out", default="docs/figures")
+    ap.add_argument("--out", default="docs/evidence")  # 规范 §15：图放 docs/evidence/
     args = ap.parse_args()
 
     rb, ra = rings(args.before, args.ch), rings(args.after, args.ch)
@@ -80,7 +80,7 @@ def main() -> int:
     dr = ImageDraw.Draw(img)
     panel(dr, rb, 20, 40, 440, win, f"修前 {args.ch} 轮廓{len(rb)} 窗口由bbox外扩20%定", True)
     panel(dr, ra, 500, 40, 440, win, f"修后 {args.ch} 轮廓{len(ra)} 同窗口", True)
-    target = out / f"stray-proof-{args.ch}.png"
+    target = out / f"2026-11-26-stray-proof-{args.ch}.png"
     img.save(target)
 
     blob = target.read_bytes()

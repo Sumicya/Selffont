@@ -1,0 +1,10 @@
+# 选择层读数（skia_paths choose，装置域＝本包字件 cmap 33,936 码位 / family_name sans-serif）
+# 生成命令见 docs/evidence/2026-11-26-round31-proof.md
+
+## 前：设备原配置（未插入，/tmp/fakeroot/system/etc/fonts.xml）
+配置 /tmp/fakeroot/system/etc/fonts.xml：196 个族（fallback 族 184）
+本包字件 1 个、33,936 个码位；Skia 逐字回退由本包画的 0 个（0.00%）
+
+## 后：skia.sh apply 插入后配置（/tmp/pkg430/system/etc/fonts.xml）
+配置 /tmp/pkg430/system/etc/fonts.xml：196 个族（fallback 族 184）
+本包字件 1 个、33,936 个码位；Skia 逐字回退由本包画的 33,936 个（100.00%）

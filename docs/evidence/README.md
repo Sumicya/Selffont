@@ -61,3 +61,23 @@ su -c 'screencap -p /data/local/tmp/sf-3.png'   # 等宽英文
 su -c 'screencap -p /data/local/tmp/sf-4.png'   # 生僻字
 for i in 1 2 3 4; do cp "/data/local/tmp/sf-$i.png" ~/Selffont/docs/evidence/ 2>/dev/null; done
 ```
+
+## 2026-11-26 批：碎块名单三方对照与投放/选择层（沙箱复刻）
+
+复算命令与读数见 `2026-11-26-round31-proof.md`。本批是**沙箱复刻**（Skia 五层顺序的
+Python 复刻 + PIL 渲染 + skia.sh 假 root），不是设备截图；渲染层仍未闭合。
+
+| 图 | 看什么 | 客观数字 |
+| --- | --- | --- |
+| `2026-11-26-roster-20.png` | 碎块名单 20 字逐格：scan✓ 名单✓ 点数差；标题＝三方相等 | scan 20 ＝ 名单 20 ＝ 点数变化 20，True；䐴 230→221、谚 209→198 |
+| `2026-11-26-insert-before-after.png` | skia.sh apply 前后 sans-serif 族首对照，插入行标红 | 插入=1 族首、族内可读 9/9、插入行 fonts.xml:43 |
+| `2026-11-26-choose-0-100.png` | 选择层核心判据：本包码位由本包画的百分比，前后对照 | 0.00% → 100.00%（33,936 码位，skia_paths 实跑） |
+| `2026-11-26-yan-stray-before-after.png` | 谚 U+8C1A 碎块修复前后整字对照 | 修复前右上多一颗 8 点碎块，修复后无 |
+| `2026-11-26-stray-proof-谚.png` | 谚 修复后放大与母版套色 | 点数 209→198，主体轮廓不动 |
+
+配置层命令输出（§16 要求的 `.txt` 形式）：
+
+| 文件 | 内容 | 关键行 |
+| --- | --- | --- |
+| `2026-11-26-apply.txt` | 包内 skia.sh apply 的 stdout | 插入=1 族=sans-serif 字件=Selffont-MarukoGothicCJKsc.ttf 族内可读=9/9 |
+| `2026-11-26-choose.txt` | skia_paths choose 前后两次 stdout | 前 0 个（0.00%）／后 33,936 个（100.00%） |

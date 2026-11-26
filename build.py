@@ -4575,9 +4575,10 @@ def review_marks():
     mk = _ilu.module_from_spec(spec)
     spec.loader.exec_module(mk)
 
-    body = "汉字" * 5100                      # 10200 汉字
+    head = "> 等级：当面记字　字数：10200（tools/mark.py 实测）\n"
+    body = head + "汉字" * 5100               # 篇首等级行 + 10200 汉字
     marked = mk.insert(body)
-    assert mk.strip_marks(marked) == body, "插标记吃掉了正文"
+    assert mk.strip_marks(mk.split_head(marked)[1]) == mk.split_head(body)[1], "插标记吃掉了正文"
     assert [int(x) for x in mk.MARK.findall(marked)] == list(range(100, 10201, 100)), \
         "标记位置不是每满 100 汉字一枚"
     ok, problems, line = mk.check(marked)
@@ -4592,10 +4593,18 @@ def review_marks():
         "无标记裸稿": "汉字" * 90,
         "删掉首枚标记": marked.replace("〖100〗", "", 1),
         "标记数虚报（去掉一半）": mk.MARK.sub("", marked[: len(marked) // 2]) + marked[len(marked) // 2:],
+        # 2026-11-27 三条新判据的反例（各有一次事故：part20/21 没篇首、主人罚图不内联）：
+        "篇首缺等级行": mk.insert("汉字" * 5100),
+        "篇首字数虚报": marked.replace("字数：10200", "字数：9999", 1),
+        "提到现存 png 却不内联": marked + "\n见 docs/evidence/2026-11-26-roster-20.png。",
     }
     for label, text in cases.items():
         bad_ok, bad_problems, _ = mk.check(text)
         assert not bad_ok, f"造假没被抓：{label}"
+    # 内联判据不许过拦：给了 ![…](…) 的现存 png 必须放行
+    good = marked + "\n![roster-20](docs/evidence/2026-11-26-roster-20.png)"
+    good_ok, good_problems, _ = mk.check(good)
+    assert good_ok, f"合规内联被判不合格：{good_problems}"
     assert "本篇汉字 10200" in line and "末枚〖10200〗" in line, line
 
 

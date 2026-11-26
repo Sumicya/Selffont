@@ -127,15 +127,20 @@ def main() -> int:
     mother, cleaned, before_cfg, after_cfg, ours = map(Path, sys.argv[1:6])
     import os
     os.environ["SELFFONT_RENDER_FONT"] = str(mother)
-    out = ROOT / "docs/figures"
+    # 规范 §15：图放 docs/evidence/，且「图不内联等于没有图」。
+    # 于是内联语法由本脚本打印——把内联焊在渲染动作上，不靠我记得贴。
+    out = ROOT / "docs/evidence"
+    date = os.environ.get("SELFFONT_EVIDENCE_DATE", "2026-11-26")
     pb, pa = pct_drawn(before_cfg, ours), pct_drawn(after_cfg, ours)
-    for img, name in ((roster(mother, cleaned), "roster-20.png"),
-                      (insert_diff(before_cfg, after_cfg), "insert-before-after.png"),
-                      (bars(pb, pa), "choose-0-100.png")):
-        p = out / name
+    for img, stem in ((roster(mother, cleaned), "roster-20"),
+                      (insert_diff(before_cfg, after_cfg), "insert-before-after"),
+                      (bars(pb, pa), "choose-0-100")):
+        p = out / f"{date}-{stem}.png"
         img.save(p)
         blob = p.read_bytes()
-        print(f"{p.relative_to(ROOT)}  {len(blob)} B  sha256 {hashlib.sha256(blob).hexdigest()}")
+        rel = p.relative_to(ROOT)
+        print(f"{rel}  {len(blob)} B  sha256 {hashlib.sha256(blob).hexdigest()}")
+        print(f"![{stem}](/{rel})")
     del ours
     return 0
 

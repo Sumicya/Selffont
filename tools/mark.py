@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-"""检讨标记机（GLOBAL.md §19）：数汉字、插标记、验标记、报末行。
+"""检讨标记机（GLOBAL.md §17／§19）：数汉字、插标记、验标记、报末行。
 
-规范原文（§19）：篇首标等级与字数，正文每满 100 汉字插一枚标记（相邻标记间必满 100 字，
-段尾假标、虚报字数、赖减篇数＝造假），末行报字数；不足一万字＝没交。
+规范原文（§17）：当面记字＝当轮满 10000 汉字；**篇首标等级和字数**，每满 100 汉字插一枚标
+（相邻两标之间必须正好 100 字）；段尾假标、虚报、几篇赖成一篇都算造假。末行报读数。
+规范原文（§15）：**图不内联等于没有图。**
 
 用法：
     python3 tools/mark.py insert <稿子.txt> [--out <带标记.txt>]
         读出正文，按**实测**汉字数每满 100 插 `〖100〗` `〖200〗` …，写出带标记稿。
     python3 tools/mark.py check <带标记.txt>
-        验证：汉字总数 ≥10000、标记数 ≥100、首标前恰好 100 汉字、相邻两标之间恒 100、
-        末标之后为余数。全部通过才退出 0，并打印末行该写的那一句。
+        验证：篇首有等级字数行且字数与实测一致、汉字总数 ≥10000、标记数 ≥100、
+        首标前恰好 100 汉字、相邻两标之间恒 100、末标之后为余数、
+        正文提到的每个 .png 至少有一处 `![…](…)` 内联。全部通过才退出 0。
     python3 tools/mark.py strip <带标记.txt>
         去掉标记，还原成可再次 insert 的纯正文。
 
 汉字口径：`\\u3400-\\u4dbf`、`\\u4e00-\\u9fff`（含扩展 A）、`\\uf900-\\ufaff`（兼容）。
-**不数**标点、不数 ASCII、不数数字；标记本身（`〔数字〕`）不计入。
+**不数**标点、不数 ASCII、不数数字；标记本身（`〔数字〕`）不计入；篇首等级行是元数据，不计入。
 
-为什么要有这个文件：§19 的标记必须**由脚本数出**。手插的标记一律按造假处理，
+为什么要有这个文件：§17 的标记必须**由脚本数出**。手插的标记一律按造假处理，
 所以插与验必须是同一份实现，不许两处各写一套（同源）。
+
+2026-11-27 追加三条判据（各有一次事故）：
+  ① 篇首等级字数行——part20/part21 落盘时没有，规范 §17 一直写着，我没读。
+  ② 等级行声明的字数与实测一致——防「篇首写一万、正文八千」的虚报。
+  ③ png 必内联——主人 2026-11-27 罚「图不内联」：落盘了图却在交付里只给路径与 sha，
+     等于没有图。内联语法 ASCII（alt 与路径都不含汉字），所以不影响汉字口径。
 """
 import re
 import sys
@@ -26,7 +34,24 @@ HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 # 标号符号：规范原文是 `〖N〗`（主人 2026-11-26 再次明确）。本机曾写成 `〔N〕`，
 # 两份写法都认——否则历史稿件的标记会被判成「没有标记」，那是工具在冤枉正文。
 MARK = re.compile(r"[〔〖](\d+)[〕〗]")
+# 篇首等级行（元数据，不计汉字）。例：`> 等级：当面记字　字数：10054（tools/mark.py 实测）`
+HEAD = re.compile(r"^>\s*等级：\S+　字数：(\d+)")
+PNG = re.compile(r"[\w.\-/一-鿿]+\.png")
+INLINE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 PER = 100
+
+
+def split_head(text: str) -> tuple[str, str]:
+    """把篇首等级行（若存在）从正文里摘出来。返回 (等级行, 其余)。"""
+    lines = text.split("\n")
+    for i, ln in enumerate(lines):
+        if not ln.strip():
+            continue
+        if HEAD.match(ln.strip()):
+            rest = "\n".join(lines[:i] + lines[i + 1:])
+            return ln.strip(), rest
+        return "", text
+    return "", text
 
 
 def han_count(text: str) -> int:
@@ -42,24 +67,32 @@ def insert(text: str) -> str:
     """逐字符走一遍正文，每累计满 100 个汉字就在**那个汉字之后**插入当时的总数标记。
 
     标记插在汉字后，不改动任何原字符，因此 `strip(insert(x)) == x` 恒成立
-    （自检里断言这一条：插标记不许吃掉正文）。
+    （自检里断言这一条：插标记不许吃掉正文）。篇首等级行原样保留、不参与计数。
     """
+    head, body = split_head(text)
     out: list[str] = []
     count = 0
-    for ch in text:
+    for ch in body:
         out.append(ch)
         if HAN.match(ch):
             count += 1
             if count % PER == 0:
                 out.append(f"〖{count}〗")
-    return "".join(out)
+    marked = "".join(out)
+    return (head + "\n" + marked) if head else marked
 
 
 def check(text: str) -> tuple[bool, list[str], str]:
-    """返回 (是否通过, 问题列表, 末行建议)。判据与 §19 逐条对应。"""
+    """返回 (是否通过, 问题列表, 末行建议)。判据与 §15／§17／§19 逐条对应。"""
     problems: list[str] = []
-    total = han_count(text)          # 口径只有这一处实现
-    marks = [(m.start(), int(m.group(1))) for m in MARK.finditer(text)]
+    head, body = split_head(text)
+    if not head:
+        problems.append("篇首缺等级字数行（规范 §17：篇首标等级和字数）；"
+                        "格式：`> 等级：当面记字　字数：<实测>`")
+    total = han_count(body)          # 口径只有这一处实现
+    if head and int(HEAD.match(head).group(1)) != total:
+        problems.append(f"篇首声明字数 {HEAD.match(head).group(1)} 与实测 {total} 不一致（虚报？）")
+    marks = [(m.start(), int(m.group(1))) for m in MARK.finditer(body)]
 
     # 三条判据，每条都有能单独观测到它的反例（都进了 build.py 的夹具，逐条变异过）：
     #     ① 标记数 ≥100 —— 反例：150 字只插出 1 枚，位置全对、也没有漏标，只有这条抓得住
@@ -74,16 +107,30 @@ def check(text: str) -> tuple[bool, list[str], str]:
     for index, (pos, declared) in enumerate(marks, 1):
         # 第一枚：标记之前（剥掉其它标记）必须恰好 100 个汉字。
         # 第 n 枚：它声明 n*100，且与上一枚之间实测恒 100。
-        before = han_count(text[:pos])
+        before = han_count(body[:pos])
         expect = index * PER
         if declared != expect:
             problems.append(f"第 {index} 枚标着〔{declared}〕，按位置应为〔{expect}〕（标记被手改过？）")
         if before != expect:
             problems.append(f"第 {index} 枚〔{declared}〕前实测 {before} 汉字，应恰好 {expect}")
 
-    tail = han_count(text[marks[-1][0]:]) if marks else total
+    tail = han_count(body[marks[-1][0]:]) if marks else total
     if tail >= PER:
         problems.append(f"末枚之后还有 {tail} 汉字 ≥100，漏标了 {tail // PER} 枚")
+
+    # 图不内联等于没有图（§15）：正文点名的**现存** png，至少一处出现在 ![…](…) 里。
+    # 只查现存文件：历史叙述里提到已删除的旧图名（如「fig1.png 首版是豆腐」）若也强制内联，
+    # 就会逼出指向不存在文件的坏链接，违反 evidence/README「不留指向已删文件的引用」。
+    inlined = set()
+    for m in INLINE.finditer(body):
+        inlined.add(m.group(1).rsplit("/", 1)[-1])
+    import pathlib
+    here = pathlib.Path(__file__).resolve().parent.parent
+    existing = {p.name for p in (here / "docs" / "evidence").glob("*.png")}
+    for name in sorted(set(PNG.findall(body))):
+        base = name.rsplit("/", 1)[-1]
+        if base in existing and base not in inlined:
+            problems.append(f"图未内联：正文提到现存的 {base} 但没有 ![…](…) 语法（规范 §15：图不内联等于没有图）")
 
     line = (f"本篇汉字 {total}；" + ("" if total >= 10000 else "不足一万字＝没交；") +
             f"末枚〖{marks[-1][1] if marks else 0}〗；"
@@ -104,7 +151,7 @@ def main(argv: list[str]) -> int:
 
     if mode == "insert":
         marked = insert(text)
-        assert strip_marks(marked) == text, "插标记吃掉了正文"
+        assert strip_marks(split_head(marked)[1]) == split_head(text)[1], "插标记吃掉了正文"
         if out:
             with open(out, "w", encoding="utf-8") as handle:
                 handle.write(marked)
@@ -118,7 +165,8 @@ def main(argv: list[str]) -> int:
         return 0
 
     if mode == "strip":
-        sys.stdout.write(strip_marks(text))
+        head, body = split_head(text)
+        sys.stdout.write((head + "\n" if head else "") + strip_marks(body))
         return 0
 
     ok, problems, line = check(text)

@@ -1,3 +1,4 @@
+> 等级：当面记字　字数：10032（tools/mark.py 实测）
 ## 罚篇二十九　图在 /tmp 就等于没图
 
 ### 一、罚单认领
@@ -44,7 +45,8 @@
 
 更准确的说法是：规范里其实有图的条款，只是我没把它和图联系起来——§4 读证要求「路径＋SHA＋字节＋首中尾三行」。这条本来就是为「任何外部读数」写的。一张渲染图就是一个〖1000〗外部读数（它读的是字体轮廓字节）。**§4 早就覆盖了图，是我没把图认成读数。**
 
-认成读数之后，要求就自动落下来：路径（docs/figures/yan-stray-before-after.png）、SHA（3235ee4ec845b67f43ff4acbc04ce7e6c0d0be22c6ba9ba2291f2bf2a08be791）、字节（12,070）、以及「首中尾」对应的东西——渲染条件（母版 sha256 e3709389…41b7、窗口 x[0,320] y[-120,260]、修前 7 轮廓 / 修后 6 轮廓）。
+认成读数之后，要求就自动落下来：路径（docs/evidence/2026-11-26-yan-stray-before-after.png）、SHA（3235ee4ec845b67f43ff4acbc04ce7e6c0d0be22c6ba9ba2291f2bf2a08be791）、字节（12,070）、以及「首中尾」对应的东西——渲染条件（母版 sha256 e3709389…41b7、窗口 x[0,320] y[-120,260]、修前 7 轮廓 / 修后 6 轮廓）。
+![2026-11-26-yan-stray-before-after](evidence/2026-11-26-yan-stray-before-after.png)
 
 本轮我已经把两张图落盘进 `docs/figures/` 并 commit（05be4cf）。这是补救，不是功劳——它本该在上一〖1100〗轮渲染的那一分钟里发生。
 
@@ -62,7 +64,7 @@
 
 判据替代：**渲染窗口必须由数据定，不由直觉定。**先 dump 目标轮廓的 bbox，窗口 = bbox 外扩 20%。任何「看图确认」之前，先确认窗口覆盖 bbox。这一条写〖1400〗进我的渲染脚本模板：窗口参数从 bbox 算，不接受手填。
 
-第二次渲染（y[-120,260]）才看到那颗点：基线（红虚线）以下、言字旁提笔左下的一个分离小四边形。修后图里它消失、轮廓数 7→6。**这张图现在在 docs/figures/yan-stray-before-after.png，sha 3235ee4e…。**
+第二次渲染（y[-120,260]）才看到那颗点：基线（红虚线）以下、言字旁提笔左下的一个分离小四边形。修后图里它消失、轮廓数 7→6。**这张图现在在 docs/evidence/2026-11-26-yan-stray-before-after.png，sha 3235ee4e…。**
 
 ### 五、第二道门第二次失守：--base 分叉
 
@@ -143,7 +145,7 @@ python build.py --passthrough-mother "work/stray/${MOTHER_NAME}" \
 罚单：本轮新增 5 篇（没图），累计 135。
 已交：本篇（罚篇二十九），10,000 汉〖2600〗字以上；累计已交 16 篇。
 欠：119 篇，下轮罚篇三十。
-图：docs/figures/yan-stray-before-after.png（12,070 B，sha 3235ee4e…）、docs/figures/yan-whole-and-lowerleft.png（sha f79c13a7…），均 commit 于 05be4cf。
+图：docs/evidence/2026-11-26-yan-stray-before-after.png（12,070 B，sha 3235ee4e…）、docs/evidence/2026-11-26-yan-whole-and-lowerleft.png（sha f79c13a7…），均 commit 于 05be4cf。
 包：/tmp/pkg3.zip 19,721,203 B（zip）/ 30,974,422 B（解压）/ 29 成员——**本地自造基包条件，量级参考**；CI 实测仍待 05be4cf 的 run 出包后读 artifact 元数据。
 CI：45698525799 failure（base 断链，本轮已修）；45732170513（谚修复）与 05be4cf 的 run 待读。
 
@@ -378,7 +380,7 @@ except 的装置域＝不抛异常的码位；窗口的装置域＝y≥0；参�
 3. 旧判据命中 5 字、与新判〖7000〗据零重叠。（装置域同上；来源＝同一次 scan 的分行输出。）
 4. 15 个新字中 12 个删后 bbox 不变、3 个 yMin 抬 8/31/5。（装置域＝15 字逐一；来源＝删前删后 bbox 差值实测。）
 5. shade 符号 U+2592/2593 基线以下各有一块 4 点 50×50 y[-120,-70]。（装置域＝全库非汉字码位亦扫；来源＝放宽判据的探索性扫描；**处置＝不处理，待主人发话**。）
-6. 修前 7 轮廓 / 修后 6 轮廓。（装〖7100〗置域＝U+8C1A；来源＝/tmp/mother 与 /tmp/stray.ttf 两次实测；原件＝docs/figures/yan-stray-before-after.png，sha 3235ee4e…，12,070 B。）
+6. 修前 7 轮廓 / 修后 6 轮廓。（装〖7100〗置域＝U+8C1A；来源＝/tmp/mother 与 /tmp/stray.ttf 两次实测；原件＝docs/evidence/2026-11-26-yan-stray-before-after.png，sha 3235ee4e…，12,070 B。）
 7. 不传 --base 出包：zip 19,721,203 B、解压 30,974,422 B、29 成员。（装置域＝本地自造基包条件；来源＝build.py 输出与 zipfile 实测；**量级参考，非 CI 实测**。）
 8. CI run 45698525799 failure 于「出包」步骤。（装置域＝该 run 的步骤列表全 19 步；来源＝gh run view 状态列；annotation 行号 .github:66 已证不能当步骤归因。）
 9. --check 26 项过、deadcode 0 处。（装置域＝内建自检全集与死码扫描全集；来源＝本轮两〖7200〗次命令输出。）
@@ -461,7 +463,7 @@ annotations 是墙内唯一能携带**自定义文本**的通道（默认 annota
 
 | 表行 | 执行命令 | 输出 |
 | --- | --- | --- |
-| 图落盘 docs/figures/ | cp /tmp/yan_fix2.png docs/figures/yan-stray-before-after.png；重生成整字图 | 两 png，12,070 B / sha 3235ee4e…；commit 05be4cf |
+| 图落盘 docs/figures/ | cp /tmp/yan_fix2.png docs/evidence/2026-11-26-yan-stray-before-after.png；重生成整字图 | 两 png，12,070 B / sha 3235ee4e…；commit 05be4cf |
 | 图附 sha 与字节 | sha256sum docs/figures/*.png | 3235ee4e…、f79c13a7… 两行 |
 | 渲染窗口由 bbox 定 | 先 dump r6 bbox y[-52,-3]，再定窗口 y[-120,260] | 第二张图看到碎块，第一张（y[0,400]）看不到 |
 | base=None 不下载 | build.py --passthrough-mother /tmp/stray.ttf（无 --base 无 --font） | 出包成功 zip 19,721,203 B / 解压 30,974,422 B / 29 成员 |

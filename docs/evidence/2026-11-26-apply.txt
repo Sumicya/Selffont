@@ -1,0 +1,1 @@
+插入=1 族=sans-serif 字件=Selffont-MarukoGothicCJKsc.ttf 族内可读=9/9
