@@ -429,6 +429,24 @@ def weight_ladder(axes: dict) -> list[dict]:
             for italic in styles for weight in weights]
 
 
+def stamp_box(font: TTFont) -> None:
+    """行框钉死在 BOX。save 默认会按 glyf 重算 head，必须先关 recalcBBoxes。"""
+    font.recalcBBoxes = False
+    font.recalcTimestamp = False
+    hhea, os2, head = font["hhea"], font["OS/2"], font["head"]
+    hhea.ascent, hhea.descent, hhea.lineGap = BOX_ASC, BOX_DESC, 0
+    os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap = BOX_ASC, BOX_DESC, 0
+    os2.usWinAscent, os2.usWinDescent = BOX_ASC, -BOX_DESC
+    head.yMax, head.yMin = BOX_ASC, BOX_DESC
+
+
+def save_boxed(font: TTFont) -> bytes:
+    stamp_box(font)
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
 def normalize_metrics(data: bytes, carrier: dict | None = None, characters: str = "0123456789") -> bytes:
     """hhea、typo、head、usWin 一律写成 BOX_ASC/BOX_DESC。轮廓不动。
 
@@ -437,14 +455,7 @@ def normalize_metrics(data: bytes, carrier: dict | None = None, characters: str 
     """
     del carrier, characters
     font = TTFont(io.BytesIO(data), recalcBBoxes=False, recalcTimestamp=False)
-    head, hhea, os2 = font["head"], font["hhea"], font["OS/2"]
-    hhea.ascent, hhea.descent, hhea.lineGap = BOX_ASC, BOX_DESC, 0
-    os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap = BOX_ASC, BOX_DESC, 0
-    os2.usWinAscent, os2.usWinDescent = BOX_ASC, -BOX_DESC
-    head.yMax, head.yMin = BOX_ASC, BOX_DESC
-    out = io.BytesIO()
-    font.save(out)
-    return out.getvalue()
+    return save_boxed(font)
 
 
 def glyph_signature(data: bytes) -> dict:
@@ -514,9 +525,7 @@ def prune_blank_mappings(data: bytes) -> tuple[bytes, int]:
             else:
                 kept[codepoint] = glyph_name
         table.cmap = kept
-    out = io.BytesIO()
-    font.save(out)
-    return out.getvalue(), len(pruned)
+    return save_boxed(font), len(pruned)
 
 
 def rename_font(data: bytes, family: str) -> bytes:
@@ -536,9 +545,7 @@ def rename_font(data: bytes, family: str) -> bytes:
         name.setName(full, 4, platform, encoding, language)
         name.setName(postscript, 6, platform, encoding, language)
         name.setName(f"{family}; metric-normalized, see OFL.txt; {full}", 3, platform, encoding, language)
-    out = io.BytesIO()
-    font.save(out)
-    return out.getvalue()
+    return save_boxed(font)
 
 
 # ---------------------------------------------------------------- fonts.xml 生成
