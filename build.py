@@ -3,8 +3,8 @@
 
 用法：python3 build.py [--font X] [--base Y] [--output O] [--build N] [--day D] [--date YY.M.D] [--query-ci]
 版本五段 yy.m.d.当日号.总序号，号源是 CI run_number；取不到数就抛，不编数。
-安装副本只动三件事：hhea 跟源件、typo 写成与 hhea 同一套、usWin 盖墨迹；剪空白映射；改名为 RENAME。
-轮廓 / cmap / 轴有守卫。
+安装副本只动：hhea＝typo＝head＝usWin 写成 BOX_ASC/BOX_DESC（974/−216）；剪空白映射；改名为 RENAME。
+轮廓 / cmap / 轴不动。不抬 g。
 """
 import argparse
 import contextlib
@@ -48,6 +48,9 @@ PRIMARY_NAME = "Selffont-MarukoGothicCJKsc.ttf"   # 默认源的安装名
 # 守卫还要用这个名字，但只要写成字面量，守卫自己就成了「还留着它」的证据。
 RETIRED_FONT = "Wen" + "Yuan"
 RENAME = "Selffont Rounded SC VF"                 # 安装副本内部家族名（与母版本名区分）
+# 真机过关的行框：883/−125 几何中心 379，底盖 g yMin −216，顶同步抬到 974。不抬轮廓。
+BOX_ASC = 974
+BOX_DESC = -216
 BASE_URL = "https://github.com/Numbersf/MakeFontsGreatAgain/releases/download/1717180003/MFGA-SELFUSE-17.0.1.08-31-alpha2.1717180003.zip"
 BASE_SHA256 = "620789eab7a6e47b96cfb333bb50f44ee526abe1e2ab2f572e54c30b16a3649b"
 
@@ -393,20 +396,6 @@ def layout_metrics(font: TTFont) -> dict:
             "useTypoMetrics": bool(os2.fsSelection & 0x80)}
 
 
-def ink_bounds(font: TTFont, characters: str) -> tuple[int, int] | None:
-    """一组字符的墨迹竖直包络 （min, max）；一个字形都没有时 None。"""
-    glyphs, cmap = font.getGlyphSet(), font.getBestCmap() or {}
-    bounds = []
-    for character in characters:
-        name = cmap.get(ord(character))
-        if name and name in glyphs:
-            pen = BoundsPen(glyphs)
-            glyphs[name].draw(pen)
-            if pen.bounds is not None:
-                bounds.append(pen.bounds)
-    return (min(b[1] for b in bounds), max(b[3] for b in bounds)) if bounds else None
-
-
 def carrier_metrics(data: bytes) -> dict | None:
     """度量空壳：必须没有可见字形，否则它会把主字体的渲染抢走。"""
     try:
@@ -440,67 +429,19 @@ def weight_ladder(axes: dict) -> list[dict]:
             for italic in styles for weight in weights]
 
 
-# ---------------------------------------------------------------- 安装副本的三处修改
+def normalize_metrics(data: bytes, carrier: dict | None = None, characters: str = "0123456789") -> bytes:
+    """hhea、typo、head、usWin 一律写成 BOX_ASC/BOX_DESC。轮廓不动。
 
-# 汉字的码位范围。**只放汉字**：早先这里还带着 (0x2A80, 0x2FDF)（康熙部首/IDS）和
-# (0x3000, 0x312F)（汉字标点、假名、注音），于是 `〱` `〲`（竖排假名叠点，墨迹顶到 937）
-HAN_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x2FA1F))
-
-
-def ink_envelope(font: TTFont, han_only: bool = False) -> tuple[int, int] | None:
-    """墨迹竖直包络（yMin, yMax）。`han_only` 只算汉字——行框只为装汉字而存在，
-    字母的下伸部不算。没字形的字件返回 None。"""
-    if "glyf" not in font:
-        return None
-    glyf, cmap = font["glyf"], font.getBestCmap() or {}
-    names = font.getGlyphOrder() if not han_only else [
-        name for code, name in cmap.items()
-        if any(start <= code <= end for start, end in HAN_RANGES)]
-    low = high = None
-    for name in names:
-        glyph = glyf[name]
-        # 必须先 expand：没解包的字形 numberOfContours 一律读成 0，
-        # 照那个判断会把整库都当成空格子（自检里就炸在「没有可用的墨迹」）。
-        glyph.expand(glyf)
-        if glyph.numberOfContours == 0:
-            continue
-        low = glyph.yMin if low is None else min(low, glyph.yMin)
-        high = glyph.yMax if high is None else max(high, glyph.yMax)
-    return None if low is None else (low, high)
-
-
-def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789") -> bytes:
-    """hhea 与 typo 都写成设备空壳 930/−250，usWin 拿裁剪包络。
-
-    444 真机未修：行框仍 1160，Telegram 叠字。设备空壳与包内 Roboto 都是 930/−250。
-    typo 必须等于 hhea，不许再留 880。汉字墨迹大约 −126…892，进得去 930/−250；
-    角标和字母下伸仍由 usWin 包络盖住。`characters` 空串退到汉字墨迹包络。
+    锚点是真机过关盒 974/−216，不是设备空壳 930、不是母版 1160/−288。
+    `carrier` 只为旧调用处留形参，不再参与行框。`characters` 同样不再参与。
     """
+    del carrier, characters
     font = TTFont(io.BytesIO(data), recalcBBoxes=False, recalcTimestamp=False)
     head, hhea, os2 = font["head"], font["hhea"], font["OS/2"]
-    upm, carrier_upm = head.unitsPerEm, carrier["unitsPerEm"]
-    ascender, descender = (round(value * upm / carrier_upm) for value in carrier["hhea"][:2])
-    if ascender <= 0 or descender >= 0:
-        raise ValueError("空壳行度量不是合法的 ascent/descent")
-    envelope = ink_envelope(font)              # 整字库：裁剪包络要盖住它，一个都不能切
-    ink = ink_bounds(font, characters) if characters else None
-    if ink is None and not characters:
-        ink = ink_envelope(font, han_only=True)    # 汉字字件：行框只需装得下汉字
-    if ink is None:
-        raise ValueError("字件没有可用的墨迹，无法验证归一后的行框")
-    src_asc, src_desc = hhea.ascent, hhea.descent
-    if ink[1] > src_asc or ink[0] < src_desc:
-        raise ValueError(f"源件行框会切墨迹：ink={list(ink)} box=[{src_desc},{src_asc}]")
-    hhea.ascent, hhea.descent, hhea.lineGap = ascender, descender, 0
-    os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap = ascender, descender, 0
-    if carrier["useTypoMetrics"]:
-        os2.version = max(os2.version, 4)
-        os2.fsSelection |= 0x80
-    else:
-        os2.fsSelection &= ~0x80
-    top = max([ascender, head.yMax] + ([envelope[1]] if envelope else []))
-    bottom = max([-descender, -head.yMin] + ([-envelope[0]] if envelope else []))
-    os2.usWinAscent, os2.usWinDescent = top, bottom
+    hhea.ascent, hhea.descent, hhea.lineGap = BOX_ASC, BOX_DESC, 0
+    os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap = BOX_ASC, BOX_DESC, 0
+    os2.usWinAscent, os2.usWinDescent = BOX_ASC, -BOX_DESC
+    head.yMax, head.yMin = BOX_ASC, BOX_DESC
     out = io.BytesIO()
     font.save(out)
     return out.getvalue()
@@ -524,25 +465,23 @@ def glyph_signature(data: bytes) -> dict:
 
 
 def verify_packaged_metrics(packed: bytes, src_path) -> None:
-    """验收算式单一源：hhea＝源件原值×upm 比例、typo 必须等于 hhea、usWin≥行框。
-    工作流内联与夹具都调本函数。不许再把 hhea 写成空壳 930（切墨）。
+    """验收算式单源：hhea＝typo＝BOX_ASC/BOX_DESC，usWin 与 head 同沿。
+    工作流内联与夹具都调本函数。不许再写成空壳 930。
     """
     _p = TTFont(io.BytesIO(packed))
     TTFont(str(src_path))
-    _carrier = TTFont(io.BytesIO(make_carrier()))
-    _scale = _p["head"].unitsPerEm / _carrier["head"].unitsPerEm
-    for _key in ("ascent", "descent"):
-        _want = round(getattr(_carrier["hhea"], _key) * _scale)
-        _got = getattr(_p["hhea"], _key)
-        assert _got == _want, (
-            f"行框没对齐设备空壳：hhea.{_key}={_got}，"
-            f"按 {_p['head'].unitsPerEm}/{_carrier['head'].unitsPerEm} 换算应为 {_want}")
+    assert _p["hhea"].ascent == BOX_ASC and _p["hhea"].descent == BOX_DESC, (
+        f"hhea 应为 ({BOX_ASC}, {BOX_DESC})，实际 "
+        f"({_p['hhea'].ascent}, {_p['hhea'].descent})")
     assert _p["OS/2"].sTypoAscender == _p["hhea"].ascent and \
         _p["OS/2"].sTypoDescender == _p["hhea"].descent, \
-        "typo 必须等于 hhea（880 vs 1160 会让 Web 上漂、原生下掉）"
-    assert _p["OS/2"].usWinAscent >= _p["hhea"].ascent and \
-        _p["OS/2"].usWinDescent >= -_p["hhea"].descent, \
-        "usWin 裁剪包络不得小于行框"
+        "typo 必须等于 hhea"
+    assert _p["OS/2"].usWinAscent >= BOX_ASC and \
+        _p["OS/2"].usWinDescent >= -BOX_DESC, \
+        "usWin 不得小于行框"
+    assert _p["head"].yMax == BOX_ASC and _p["head"].yMin == BOX_DESC, (
+        f"head 应为 yMax={BOX_ASC} yMin={BOX_DESC}，实际 "
+        f"{_p['head'].yMax}/{_p['head'].yMin}")
 
 
 def assert_glyphs_preserved(original: bytes, packaged: bytes) -> None:
@@ -916,7 +855,7 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
         assert len(make_carrier()) == 672, \
             f"自造空壳应为 672 字节，实际 {len(make_carrier())}：空壳变了，先查为什么"
         assert carrier["hhea"] == [930, -250, 0], f"空壳行框偏离设备行框：{carrier['hhea']}"
-        packaged = normalize_metrics(primary, carrier)
+        packaged = normalize_metrics(primary)
         assert_glyphs_preserved(primary, packaged)   # 改名前先验证只动了行度量
         packaged = rename_font(packaged, RENAME)
         packaged, pruned = prune_blank_mappings(packaged)
@@ -934,13 +873,11 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
             passthrough_name = mother_path.name
             with TTFont(io.BytesIO(cjk_font), lazy=True) as _m:
                 glyph_count = len(_m.getGlyphOrder())
-            #   normalize_metrics() 对齐设备空壳行框（930/-250/0）并剪空白映射，
-            #   唯独直通母版原样塞进去 —— 而它还被 fix_hpos/fix_vpos 平移过坐标。
             _raw_mother = cjk_font
-            cjk_font = normalize_metrics(cjk_font, carrier, characters="")
+            cjk_font = normalize_metrics(cjk_font)
             assert_glyphs_preserved(_raw_mother, cjk_font)
             cjk_font, _mp = prune_blank_mappings(cjk_font)
-            warnings.append(f"母版直通：行框已对齐设备空壳，剪除空壳映射 {_mp} 个（轮廓零改动）")
+            warnings.append(f"母版直通：行框 {BOX_ASC}/{BOX_DESC}，剪除空壳映射 {_mp} 个（轮廓零改动）")
             # 刷进手机后管理器里只有 module.prop 这几行能认人：直通包的 name/description
             # 必须自己说明白，否则会跟发行件长得一模一样（版本号还更高）。
             digest = hashlib.sha256(cjk_font).hexdigest()[:7]
@@ -1337,29 +1274,16 @@ def assert_shell_syntax(script: Path) -> None:
 
 @check
 def metric_normalization():
-    carrier = layout_metrics(TTFont(io.BytesIO(make_carrier())))
     data = make_font()
-    normalized = normalize_metrics(data, carrier)
+    normalized = normalize_metrics(data)
     result = TTFont(io.BytesIO(normalized))
-    # hhea／typo 对齐空壳 930/−250；usWin＝裁剪包络。
-    assert (result["hhea"].ascent, result["hhea"].descent) == (930, -250), \
-        f"hhea 应对齐空壳 930/−250，实际 {(result['hhea'].ascent, result['hhea'].descent)}"
-    assert (result["OS/2"].sTypoAscender, result["OS/2"].sTypoDescender) == (930, -250), \
-        "typo 必须等于 hhea／空壳，不许留 880"
-    assert result["OS/2"].usWinAscent >= result["hhea"].ascent and \
-        result["OS/2"].usWinDescent >= -result["hhea"].descent, "usWin 裁剪包络不得小于行框"
-    assert_glyphs_preserved(data, normalized)  # 轮廓/cmap/家族/轴必须逐字节不变
-    # 会切墨迹的归一必须被拒：源件行框盖不住墨迹时抛错。
-    clipped = TTFont(io.BytesIO(data))
-    clipped["hhea"].ascent = 100
-    buf = io.BytesIO()
-    clipped.save(buf)
-    try:
-        normalize_metrics(buf.getvalue(), carrier)
-        raise AssertionError("切墨迹的归一未被拒绝")
-    except ValueError:
-        pass
-    # 空壳判定：可见字形的 Roboto 不能当空壳。
+    assert (result["hhea"].ascent, result["hhea"].descent) == (BOX_ASC, BOX_DESC), \
+        f"hhea 应为 ({BOX_ASC}, {BOX_DESC})，实际 {(result['hhea'].ascent, result['hhea'].descent)}"
+    assert (result["OS/2"].sTypoAscender, result["OS/2"].sTypoDescender) == (BOX_ASC, BOX_DESC), \
+        "typo 必须等于 hhea／BOX"
+    assert (result["OS/2"].usWinAscent, result["OS/2"].usWinDescent) == (BOX_ASC, -BOX_DESC)
+    assert (result["head"].yMax, result["head"].yMin) == (BOX_ASC, BOX_DESC)
+    assert_glyphs_preserved(data, normalized)
     assert carrier_metrics(make_carrier(visible=True)) is None
     assert carrier_metrics(make_carrier())["hhea"] == [930, -250, 0]
     assert carrier_metrics(b"not a font") is None
@@ -1904,10 +1828,10 @@ def build_end_to_end():
         assert before["outlines"] == after["outlines"] and before["cmap"] == after["cmap"], "轮廓或 cmap 被改了"
         assert before["axes"] == after["axes"] and after["family"] == RENAME
         _pkg = TTFont(io.BytesIO(packaged))
-        assert (_pkg["hhea"].ascent, _pkg["hhea"].descent) == (930, -250), \
-            f"hhea 应对齐空壳 930/−250，实际 {(_pkg['hhea'].ascent, _pkg['hhea'].descent)}"
-        assert (_pkg["OS/2"].sTypoAscender, _pkg["OS/2"].sTypoDescender) == (930, -250), \
-            "typo 必须等于 hhea／空壳"
+        assert (_pkg["hhea"].ascent, _pkg["hhea"].descent) == (BOX_ASC, BOX_DESC), \
+            f"hhea 应为 ({BOX_ASC}, {BOX_DESC})，实际 {(_pkg['hhea'].ascent, _pkg['hhea'].descent)}"
+        assert (_pkg["OS/2"].sTypoAscender, _pkg["OS/2"].sTypoDescender) == (BOX_ASC, BOX_DESC), \
+            "typo 必须等于 hhea／BOX"
         assert _pkg["OS/2"].usWinAscent >= _pkg["hhea"].ascent, "usWin 裁剪包络缺失"
         # Skia 那份只出「插入行」：每条都是带字重与样式的静态字件行，且只列真正打进包里的文件。
         rows = [line.strip() for line in legacy.splitlines() if line.strip()]
@@ -4058,17 +3982,13 @@ def workflow_format():
             assert "assert packed == fixed_bytes" not in body, \
                 (f"{path.name}: 验收还在要求「包内字节整份等于 work/vpos」——"
                  "直通件过行框归一后字节必然变，这条断言与归一互斥，只能改成逐项判据")
-            # 验收算式单源在 verify_packaged_metrics；这里咬：内联必须调该函数、
-            # 函数源码必须含「源件值×比例」、typo＝hhea、usWin 包络。
+            # 验收算式单源在 verify_packaged_metrics；内联只调不抄。
             assert "build.verify_packaged_metrics(" in body, \
                 f"{path.name}: 验收没走 build.verify_packaged_metrics（契约算式必须单源）"
             import inspect as _isp
             _vsrc = _isp.getsource(verify_packaged_metrics)
-            assert '"hhea"' in _vsrc and '"ascent"' in _vsrc, \
-                f"{path.name}: verify_packaged_metrics 没正面查 hhea 行框（验收空转）"
-            assert re.search(r'getattr\(_carrier\["hhea"\],\s*_key\)\s*\*\s*_scale', _vsrc), \
-                (f"{path.name}: verify_packaged_metrics 拿空壳行框却没乘单位比例——"
-                 "空壳与包内 upm 可能不等，行框按比例缩放，直接比原值必误报")
+            assert "BOX_ASC" in _vsrc and "BOX_DESC" in _vsrc, \
+                f"{path.name}: verify_packaged_metrics 没钉 BOX_ASC/BOX_DESC"
             assert "sTypoAscender == _p[\"hhea\"].ascent" in _vsrc, \
                 f"{path.name}: verify_packaged_metrics 没钉 typo＝hhea（三表分叉会上下都漂）"
             assert "usWinAscent >=" in _vsrc and "usWinDescent >=" in _vsrc, \
@@ -4176,10 +4096,10 @@ def passthrough_font():
                 _mb = {n: _b["hmtx"][n] for n in _b.getGlyphOrder()}
                 assert _ma == _mb, "直通件的 hmtx 被改了：行框归一不许动字宽"
                 # hhea／typo 对齐空壳，usWin 拿裁剪包络。
-                assert (_b["hhea"].ascent, _b["hhea"].descent) == (930, -250), \
-                    f"直通件 hhea 应对齐空壳 930/−250：{_b['hhea'].ascent}"
-                assert (_b["OS/2"].sTypoAscender, _b["OS/2"].sTypoDescender) == (930, -250), \
-                    "直通件 typo 必须等于 hhea／空壳"
+                assert (_b["hhea"].ascent, _b["hhea"].descent) == (BOX_ASC, BOX_DESC), \
+                    f"直通件 hhea 应为 ({BOX_ASC}, {BOX_DESC})：{_b['hhea'].ascent}"
+                assert (_b["OS/2"].sTypoAscender, _b["OS/2"].sTypoDescender) == (BOX_ASC, BOX_DESC), \
+                    "直通件 typo 必须等于 hhea／BOX"
                 assert _b["OS/2"].usWinAscent >= _b["hhea"].ascent and \
                     _b["OS/2"].usWinDescent >= -_b["hhea"].descent, "usWin 裁剪包络不得小于行框"
             # normalize 真跑过的证据：把手工压小 usWin 的副本喂进去，必须被抬回行框以上。
@@ -4187,7 +4107,7 @@ def passthrough_font():
             _w["OS/2"].usWinAscent = 10
             _wb = io.BytesIO()
             _w.save(_wb)
-            _fixed = normalize_metrics(_wb.getvalue(), carrier_metrics(make_carrier()))
+            _fixed = normalize_metrics(_wb.getvalue())
             assert TTFont(io.BytesIO(_fixed))["OS/2"].usWinAscent >= _b["hhea"].ascent, \
                 "normalize 没把手工压小的 usWin 抬回：说明没执行"
             xml = archive.read("font_fallback.xml").decode()

@@ -8,7 +8,7 @@
 
 判据与 `build.yml` 的「验收（纯平移、字宽不变、横竖墨心归位）」一步逐条对应：
 
-1. 直通件行框已被 `normalize_metrics` 对齐到空壳（930 / −250 / 0，按 upm 换算）
+1. 直通件行框已被 `normalize_metrics` 写成 BOX_ASC/BOX_DESC（974 / −216 / 0）
 2. 汉字只被纯平移：位移集合 ⊆ {(dx, dy)}
 3. 汉字 advance 一个没变
 4. 汉字 advance 全是 1000
@@ -23,7 +23,7 @@
 用法
 ----
     python tools/verify_passthrough.py 母版.ttf 出包用的那份.ttf
-    python tools/verify_passthrough.py 母版.ttf 本版.ttf --carrier 930,-250,0
+    python tools/verify_passthrough.py 母版.ttf 本版.ttf
 """
 from __future__ import annotations
 
@@ -48,24 +48,17 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mother", type=Path, help="原始母版（验收的比较基准）")
     ap.add_argument("version", type=Path, help="出包实际用的那一份")
-    ap.add_argument("--carrier", default="930,-250,0",
-                    help="空壳 hhea 的 ascent,descent,lineGap（默认 930,-250,0）")
     args = ap.parse_args()
 
-    carrier = [int(x) for x in args.carrier.split(",")]
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from build import normalize_metrics
+    from build import BOX_ASC, BOX_DESC, normalize_metrics
 
     before = TTFont(args.mother)
-    packed = normalize_metrics(args.version.read_bytes(),
-                               {"unitsPerEm": 1000, "hhea": carrier,
-                                "useTypoMetrics": True})
+    packed = normalize_metrics(args.version.read_bytes())
     after = TTFont(io.BytesIO(packed))
 
     # ── 1. 行框 ──────────────────────────────────────────
-    # 空壳与母版同为 1000 upm，换算比例是 1
-    upm = after["head"].unitsPerEm
-    want = tuple(round(v * upm / 1000) for v in carrier)
+    want = (BOX_ASC, BOX_DESC, 0)
     got = (after["hhea"].ascent, after["hhea"].descent, after["hhea"].lineGap)
     print(f"1. 行框 hhea = {got}，期望 {want}  {'✓' if got == want else '✗'}")
 

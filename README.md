@@ -298,7 +298,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 | 母版 | `MarukoGothicCJKsc-Regular.ttf`（`max32002/maruko-gothic` 提交 `97e9dd4`），构建时下载，不入库 |
 | 基准件 | `--passthrough-mother <TTF>` 原样进包，只做度量对照，不是发行件 |
 | 自研汉字 | 2026-11-22 全部下线：数据、描边器、`--cjk-font`/`--preview` 与 `cjk` 参数均已删除 |
-| 行框 | `hhea` 与 typo 930 / −250 / 0；`usWin` 1307 / 529，盖住墨迹 −529…1307 |
+| 行框 | `hhea` 与 typo 与 head 与 usWin：974 / −216 / 0（真机过关盒；不抬 g） |
 | 字宽 | `一` 1000、`a` 541（母版 535）、`A` 667（653）、`e` 521（524）、`o` 563（539）、`1` 383（383）、空格 250（母版 280） |
 | 字偶距 | GPOS **5,682 对**、23,186 B；目标表 `tools/kern_targets.bin` 18,054 B（95×95） |
 
@@ -308,7 +308,7 @@ gh api --paginate repos/Sumicya/Selffont/actions/workflows/hotswap.yml/runs \
 2. **三档点数逐一相同**：可变字体的前提。所以描边不走布尔运算，走固定拓扑（等参数采样 + 法向偏移 + 固定段数半圆）；
    `pathops` 的点数会随粗细变（88~90、116~117），不能用。
 3. **母版只提供中线与笔宽**：轮廓数、面积比、包围盒不拿来当验收标尺。
-4. **行框锚定设备上的度量空壳**：`hhea`/typo 取空壳的 930 / −250 / 0，`usWin` 盖住全库墨迹包络。
+4. **行框锚定真机过关盒**：`hhea`/typo/head/usWin 取 974 / −216 / 0。不抬 g。设备空壳 930 不再当行框锚点。
    字宽自算：全角固定一个 em，半角按本字墨宽 + 侧距，空白四分之一 em。
    **墨迹位置按母版**：符号不重新居中、不改 `lsb` 的排版位置（只让 `lsb == xMin` 自洽）。
 5. **空白字符要有零画笔字形**：空格 / 不断行空格 / 全角空格在母版里没有轮廓，不补就会逐字回退。

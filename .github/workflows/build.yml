@@ -194,7 +194,7 @@ jobs:
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
 
           # fixed_bytes 已无人读（行框归一之后整份字节本来就该不等），删掉免得留下死变量。
-          # ★ hhea／typo 对齐设备空壳 930/−250，usWin 拿裁剪包络。
+          # ★ hhea／typo／head／usWin 写成 BOX_ASC/BOX_DESC（974/−216）。
           #   verify_packaged_metrics 单源；内联只调不抄。
           import build
           build.verify_packaged_metrics(packed, os.path.join("work", mother))
