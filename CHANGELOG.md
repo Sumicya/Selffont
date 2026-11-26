@@ -4772,3 +4772,17 @@ verify：一致 0，不一致 0 / 退出码 0
 - 契约沉底（6f7ea80）：`verify_packaged_metrics` 单源；hhea 两值＝源件原值 × upm 比例，usWin 包络行框。workflow 内联改调用，夹具改咬函数源码。wc -l 5449→5449。正例（修后包）过；反例（旧包 ascent 930）拦并报「按 1000/1000 换算应为 1160」。`--check` 26 过。
 - run 438（45752298712，head 6f7ea80）success。artifact 15085789360，名 `build-26.11.26.21.438`，19,521,738 B。运行页 https://github.com/Sumicya/Selffont/actions/runs/45752298712 ；产物页 https://github.com/Sumicya/Selffont/actions/runs/45752298712/artifacts/15085789360 。
 - 规范对齐（selfs `e5671d86`／9598 B，本仓只看不改）：§6 从「后大于前就是没过」改为「少是方向，判据是事不是行。行涨而事不涨＝没过」。附录 A「ultra＝净减或持平」删，上游只留先驳需求。验收：`grep -c '后大于前就是没过' = 0`，`grep -c '判据是事不是行' = 1`。
+
+## 2026-11-26（438 真机：Skia 没插上）
+
+观测（主人 root 自查，OnePlus PLC110 / Android 17 / selffont-bench 26.11.26.21.438）：
+- 自查日志原文：「sans-serif 族里 0 个字件一个都打不开，插了只会得到空族，不插」
+- `Selffont:skia=on` 但「模块里那份：不在」；挂载生效的 `/system/etc/fonts.xml` 里 Selffont 出现 0 次
+- overlay lowerdir 最左是 `GGAT_10007/system/etc`，它有 fonts.xml 时我们那份看不见
+- 框架三份配置 Selffont=7（这条路是通的）；字件 `Selffont-MarukoGothicCJKsc.ttf` 已挂上
+
+改：
+- 闸门改看本包字件在不在模块目录，不再因设备族字件当时读不开就整路不插
+- 抽字件名不用 sed `\|`（Android toybox 当字面量，CI 的 GNU sed 蒙混过关）
+- 谁模块里有 `system/etc/fonts.xml` 就写回谁（GGAT）；off 时把写回去的行剔掉
+- 夹具：可读=0 仍插入；写回 GGAT_10007；off 剔写回。`--check` 26 过

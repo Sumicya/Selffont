@@ -72,6 +72,8 @@ target_hidden() {
 }
 
 # 目标族里 <font> 的总数与可读数，输出「可读 总数」。
+# 抽名字不用 sed `\|`：Android toybox sed 把 `\|` 当字面量，438 真机抽到 0 个
+# （selftest：「sans-serif 族里 0 个字件一个都打不开，不插」），CI 的 GNU sed 过不了真机。
 font_readable() {
     _tot=0; _ok=0
     for _f in $(awk '
@@ -86,8 +88,12 @@ font_readable() {
         c { next }
         /<family[ \t>]/ { in_f = ($0 ~ /name="sans-serif"/); next }
         in_f && /<\/family>/ { exit }
-        in_f && /<font / { print }
-    ' "$SOURCE" | sed -n 's/.*>\([^<]*\.\(ttf\|otf\|ttc\)\).*/\1/p'); do
+        in_f {
+            gsub(/[<>]/, " ")
+            for (i = 1; i <= NF; i++)
+                if ($i ~ /\.ttf$/ || $i ~ /\.otf$/ || $i ~ /\.ttc$/) print $i
+        }
+    ' "$SOURCE"); do
         [ -n "$_f" ] || continue
         _tot=$((_tot + 1))
         [ -r "$FONTDIR/$_f" ] && _ok=$((_ok + 1))
@@ -95,27 +101,44 @@ font_readable() {
     echo "$_ok $_tot"
 }
 
+# 从别人模块里那份 fonts.xml 剔掉我们的插入行（off / 卸载后 overlay 还在抢挂载）。
+strip_others() {
+    _mk=$1
+    [ -n "$_mk" ] || return 0
+    MODULES=${SELFFONT_MODULES:-/data/adb/modules}
+    for _d in "$MODULES"/*/; do
+        _p="${_d}system/etc/fonts.xml"
+        [ -f "$_p" ] || continue
+        [ "$_p" -ef "$TARGET" ] 2>/dev/null && continue
+        grep -q -F "$_mk" "$_p" || continue
+        awk -v marker="$_mk" 'index($0, marker) { next } { print }' "$_p" > "$_p.sf.tmp" &&
+            mv -f "$_p.sf.tmp" "$_p"
+    done
+}
+
 apply() {
     rm -f "$TARGET"
+    _marker=$(sed -n 's|.*>\([^<]*\)</font>.*|\1|p' "$INSERT" 2>/dev/null | head -n 1)
     if [ "$(state)" != on ]; then
+        strip_others "$_marker"
         ui_print "Skia /system/etc/fonts.xml：未插（Selffont:skia=off，Flutter 用设备自己那份）"
         return 0
     fi
     [ -s "$INSERT" ] || { ui_print "Skia：模块里没有插入行（fonts-insert.xml），跳过"; return 0; }
     [ -s "$SOURCE" ] || { ui_print "Skia：设备没有 /system/etc/fonts.xml，无处可插"; return 0; }
-    # 只插一处是为了行为可预测：族不在、族在注释块里、族内字件全打不开时，宁可不生效
-    # 也不制造一个半坏的族。三种情况各给一行，退出码恒为 0（非零会被安装器当失败）。
+    # 族不在或在注释块里：插了也不被解析。设备族里的字件读不读得开不再当闸门——
+    # 我们插的是本包字件，空闸门在 438 真机把 Flutter 整条路掐死（ColorOS 17 的
+    # Roboto 空壳当时还不在 /system/fonts，模块还没挂上）。
     if [ "$(target_hidden)" = 1 ]; then
         ui_print "Skia：sans-serif 族不存在或在注释块里，不插（插了也不被解析）"
         return 0
     fi
-    _marker=$(sed -n 's|.*>\([^<]*\)</font>.*|\1|p' "$INSERT" | head -n 1)
-    set -- $(font_readable)
-    _ok=${1:-0}; _tot=${2:-0}
-    if [ "$_ok" -eq 0 ]; then
-        ui_print "!!! Skia：sans-serif 族里 $_tot 个字件一个都打不开，插了只会得到空族，不插"
+    if [ ! -r "$MODDIR/system/fonts/$_marker" ] && [ ! -r "$FONTDIR/$_marker" ]; then
+        ui_print "!!! Skia：本包字件 $_marker 读不到，不插"
         return 0
     fi
+    set -- $(font_readable)
+    _ok=${1:-0}; _tot=${2:-0}
     mkdir -p "$MODDIR/system/etc"
     awk -v rowsfile="$INSERT" -v marker="$_marker" '
         function upd(s,   i, j) {
@@ -144,7 +167,19 @@ apply() {
     ' "$SOURCE" > "$TARGET"
     _n=$(grep -c -F "$_marker" "$TARGET" 2>/dev/null || true); [ -n "$_n" ] || _n=0
     if [ "$_n" -gt 0 ]; then
-        ui_print "插入=$_n 族=sans-serif+Roboto 字件=$_marker 族内可读=$_ok/$_tot"
+        # 438 真机：KSU overlay lowerdir=GGAT_10007/system/etc:selffont-bench/system/etc
+        # GGAT 在最左＝最上层，它有 fonts.xml 时我们模块那份永远看不见。谁有这份文件
+        # 就写回谁，挂载顺序不再决定 Flutter 看不看得见我们。
+        _wb=0
+        MODULES=${SELFFONT_MODULES:-/data/adb/modules}
+        for _d in "$MODULES"/*/; do
+            _p="${_d}system/etc/fonts.xml"
+            [ -f "$_p" ] || continue
+            [ "$_p" -ef "$TARGET" ] 2>/dev/null && continue
+            cp -f "$TARGET" "$_p" || continue
+            _wb=$((_wb + 1))
+        done
+        ui_print "插入=$_n 族=sans-serif+Roboto 字件=$_marker 族内可读=$_ok/$_tot 写回=$_wb"
         return 0
     fi
     rm -f "$TARGET"

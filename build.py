@@ -2649,12 +2649,10 @@ def install_scripts():
         sh([str(modpath / "skia.sh"), "off"], env_on)
         assert "mode=off" in state_file.read_text() and f"ver={_version}" in state_file.read_text(), \
             "write_state 必须把当前版本记进状态文件：" + state_file.read_text()
-        # ★ 2026-11-26：删掉「MFGA 对冲」。旧版拿 MFGA 那份当输入并写回它自己的目录，
-        #   理由是「谁后加载谁赢，控制不了顺序」。但安装脚本本来就会停用同源旧模块
-        #   （customize.sh 遍历 MFGA / selffont-mother / selffont-bench），被停用的模块不参与
-        #   挂载 ⇒ 写别人目录是给一个已停用的模块续命，收益 0、副作用是污染安装日志。
-        #   简单性的实现就是删掉不属于本脚本职责的东西：输入只有设备真文件一个。
-        rival = tmp / "modules/MFGA/system/etc"
+        # ★ 2026-11-26 曾删掉写回，理由是「同源旧模块会被停用」。438 真机打脸：
+        #   GGAT_10007 不是同源、不会被停用，KSU overlay 把它的 fonts.xml 叠在我们上面，
+        #   我们模块那份永远看不见。谁有这份文件就写回谁。
+        rival = tmp / "modules/GGAT_10007/system/etc"
         rival.mkdir(parents=True)
         rival_fonts = rival / "fonts.xml"
         rival_fonts.write_text(stock_legacy, encoding="utf-8")
@@ -2662,14 +2660,44 @@ def install_scripts():
         (modpath / "system/etc/fonts.xml").unlink(missing_ok=True)
         result_rival = sh([str(modpath / "skia.sh"), "on"], env_rival)
         assert result_rival.returncode == 0, result_rival.stderr
-        assert (modpath / "system/etc/fonts.xml").exists(), "有 MFGA 时也要产出自己那份"
-        assert rival_fonts.read_text(encoding="utf-8") == stock_legacy, \
-            "不许再往别人（已停用）模块的目录里写东西"
+        assert (modpath / "system/etc/fonts.xml").exists(), "有别人抢挂载时也要产出自己那份"
+        assert "Any-Name.ttf" in rival_fonts.read_text(encoding="utf-8"), \
+            "必须写回抢 /system/etc/fonts.xml 的那个模块，否则 overlay 一叠我们等于没插：" + result_rival.stdout
+        assert "写回=1" in result_rival.stdout, "写回应报数：" + result_rival.stdout
+        off_rival = sh([str(modpath / "skia.sh"), "off"], env_rival)
+        assert off_rival.returncode == 0, off_rival.stderr
+        assert "Any-Name.ttf" not in rival_fonts.read_text(encoding="utf-8"), \
+            "skia off 必须把写回去的插入行剔掉，否则别人模块还抢着挂我们的行"
         # 幂等：连跑两遍，插入处数必须恒为 1（旧版会攒到 30 处）。
         for _ in range(2):
             assert sh([str(modpath / "skia.sh"), "on"], env_rival).returncode == 0
         assert (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8").count("Any-Name.ttf") == 1, \
             "apply 不幂等：连跑两遍后插入处数不是 1"
+        # 438 真机闸门：sans-serif 引用的 Roboto 空壳当时不在 /system/fonts（模块还没挂），
+        # 旧脚本见可读=0 就整路不插。本包字件在模块目录里，闸门不该看设备族。
+        axis_stock = """<?xml version="1.0" encoding="utf-8"?>
+<familyset version="23">
+    <family name="sans-serif">
+        <font weight="400" style="normal">Roboto-Regular.ttf
+            <axis tag="wght" stylevalue="400" />
+        </font>
+    </family>
+</familyset>
+"""
+        _roboto = system / "system/fonts/Roboto-Regular.ttf"
+        _roboto_saved = _roboto.read_bytes() if _roboto.exists() else None
+        _roboto.unlink(missing_ok=True)
+        (system / "system/etc/fonts.xml").write_text(axis_stock, encoding="utf-8")
+        (modpath / "system/etc/fonts.xml").unlink(missing_ok=True)
+        result_axis = sh([str(modpath / "skia.sh"), "on"], env_on)
+        assert result_axis.returncode == 0, result_axis.stderr
+        assert (modpath / "system/etc/fonts.xml").exists(), \
+            "设备族字件全打不开时仍应插入本包字件（438 把 Flutter 掐死）：" + result_axis.stdout
+        assert "Any-Name.ttf" in (modpath / "system/etc/fonts.xml").read_text(encoding="utf-8")
+        assert "不插" not in result_axis.stdout, result_axis.stdout
+        if _roboto_saved is not None:
+            _roboto.write_bytes(_roboto_saved)
+        (system / "system/etc/fonts.xml").write_text(stock_legacy, encoding="utf-8")
         on = sh([str(modpath / "skia.sh"), "on"], env_on)
         assert on.returncode == 0, on.stderr
         # Skia 只读 /system/etc/fonts.xml（SkFontMgr_android_parser.cpp 写死）；插入而不替换：
