@@ -4796,3 +4796,7 @@ verify：一致 0，不一致 0 / 退出码 0
 
 438 真机：Unicode17/18 文件在 `/system/fonts`，生效的 fonts.xml 是设备那份 79560 B，补字区引用 0 → 生僻符号豆腐。
 改：包内有的 Unicode17/18、NotoSansPro、UnicodiaFunky、NotoMusic、NotoEmoji、COLRv1，xml 里没有引用就补匿名族。`--check` 26 过。
+
+## 2026-11-26（补打 Unicode16-new.ttf）
+
+MFGA 生僻符号大头是 `Unicode16-new.ttf`（6,863,776 B，cmap 12,796，墨 12,795）。一直没进包，设备 ls 没有这文件。加入 SUPPLEMENTAL_FONT_SOURCES，blob 94d3f2e4，sha256 c7d2de35…。`--check` 26 过。

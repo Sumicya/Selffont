@@ -118,6 +118,16 @@ NEW_UNICODE_18 = {
     "minimum_outline_mappings": 150,
     **NEW_UNICODE_LICENSE,
 }
+NEW_UNICODE_16 = {
+    "filename": "Unicode16-new.ttf",
+    "url": "https://api.github.com/repos/Numbersf/MakeFontsGreatAgain/git/blobs/94d3f2e430c6fc4a86aabd3b19499c48c913ac9e",
+    "sha256": "c7d2de35aba8b3ac49e03e310f4250f393375b5d75a293e1448757e2519a8398",
+    "accept": "application/vnd.github.raw",
+    "family": "New Unicode Replenish",
+    "coverage_range": (0x10000, 0x1FFFF),
+    "minimum_outline_mappings": 1000,
+    **NEW_UNICODE_LICENSE,
+}
 NEW_UNICODE_17 = {
     "filename": "Unicode17-new.ttf",
     "url": "https://api.github.com/repos/Numbersf/MakeFontsGreatAgain/git/blobs/e8779062e40dd911eee2998495164a4caaf29171",
@@ -181,7 +191,7 @@ NOTO_COLR_EMOJI_SOURCE = {
     "minimum_outline_mappings": 10,
 }
 SUPPLEMENTAL_FONT_SOURCES = (NOTO_MUSIC_SOURCE, NEW_UNICODE_18, NEW_UNICODE_17,
-                             NOTO_SANS_PRO_SOURCE, UNICODIA_FUNKY_SOURCE,
+                             NEW_UNICODE_16, NOTO_SANS_PRO_SOURCE, UNICODIA_FUNKY_SOURCE,
                              NOTO_EMOJI_SOURCE, NOTO_COLR_EMOJI_SOURCE)
 
 
