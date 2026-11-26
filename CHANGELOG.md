@@ -4766,3 +4766,9 @@ verify：一致 0，不一致 0 / 退出码 0
 - module/skia.sh 插入目标扩为 sans-serif＋Roboto 双族族首：FlClash 源码链根因＝prism_ui 的 Han 回退表无 Android 条目、应用按具名族（Roboto 系）匹配，绕开单插 sans-serif。假根两层验插入=1/2、族内可读 9/9、五层探针两族各 3/3。
 - prune_blank_mappings 白名单扩：类别集加 Mn（非间距组合符单独无墨属合法空白，剪掉会断组合序列），填空集加 U+FFA0（与 U+115F 同性质）。剪映射数 8→5；剩 5 码位（U+00CA/037A/0384/0457/04E8）设备有回退字件，方向＝让回退供墨，待真机反证。
 - 证据：docs/evidence/2026-11-27-hhea-box-drift.png（三行行框实测：基线距行顶 139.2/111.6/139.2 px，墨迹顶距基线三行同 115px，旧包漂移 -27.6px=-0.230em@120px）。
+
+## 2026-11-27（契约沉底；§6 对齐；run 438 绿）
+
+- 契约沉底（6f7ea80）：`verify_packaged_metrics` 单源；hhea 两值＝源件原值 × upm 比例，usWin 包络行框。workflow 内联改调用，夹具改咬函数源码。wc -l 5449→5449。正例（修后包）过；反例（旧包 ascent 930）拦并报「按 1000/1000 换算应为 1160」。`--check` 26 过。
+- run 438（45752298712，head 6f7ea80）success。artifact 15085789360，名 `build-26.11.26.21.438`，19,521,738 B。运行页 https://github.com/Sumicya/Selffont/actions/runs/45752298712 ；产物页 https://github.com/Sumicya/Selffont/actions/runs/45752298712/artifacts/15085789360 。
+- 规范对齐（selfs `e5671d86`／9598 B，本仓只看不改）：§6 从「后大于前就是没过」改为「少是方向，判据是事不是行。行涨而事不涨＝没过」。附录 A「ultra＝净减或持平」删，上游只留先驳需求。验收：`grep -c '后大于前就是没过' = 0`，`grep -c '判据是事不是行' = 1`。
