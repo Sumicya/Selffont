@@ -4805,3 +4805,8 @@ MFGA 生僻符号大头是 `Unicode16-new.ttf`（6,863,776 B，cmap 12,796，墨
 
 真机「上下定位掉到底都有」：包内主字 typo 880／hhea 1160／usWin 1322，Web 走上、原生走下。
 改：`normalize_metrics` 把 hhea 与 typo 都写成空壳 930/−250（与包内 Roboto 空壳同一行框），usWin 仍盖墨迹。夹具与 `verify_packaged_metrics` 同步。
+
+## 2026-11-26（撤回 930：切墨。只消 typo／hhea 分叉）
+
+8bf15a5 没修完就出包。hhea 缩到 930 会切掉 1322/−549 的墨迹，上下定位掉更重。
+改回：hhea 仍跟源件 1160/−288；typo 写成与 hhea 同一套（不再留 880）；usWin 仍盖墨迹。930 那包不要装。

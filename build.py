@@ -513,13 +513,12 @@ def ink_envelope(font: TTFont, han_only: bool = False) -> tuple[int, int] | None
 
 
 def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789") -> bytes:
-    """行框（hhea 与 typo）对齐设备空壳，usWin 拿裁剪包络。
+    """hhea 跟源件原值；typo 写成与 hhea 同一套；usWin 拿裁剪包络。
 
-    真机「上下定位掉到底都有」：同一支字三套行框——源件 typo 880、hhea 1160、
-    usWin 1322。原生走 hhea＝下掉／叠字，Web／CSS 走 typo＝上漂，FontMetrics.top
-    走 usWin＝再下。434 把 hhea 改 930 却把 typo 留 880，分叉还在。本函数写死
-    hhea＝typo＝空壳 930/−250（与包内 Roboto 空壳同一行框），usWin 仍盖住墨迹
-    （角标切下沿住在 usWinDescent）。`characters` 空串退到汉字墨迹包络。
+    真机上下同时漂：源件 typo 880、hhea 1160、usWin 1322 三表分叉。Web／CSS 走
+    typo＝上，原生走 hhea＝下。不许把 hhea 缩成空壳 930——墨迹包络到 1322/−549，
+    行框变矮就是上下切墨，看起来像定位掉，空白更重。本函数只消分叉：typo＝hhea，
+    行高仍是源件 1160/−288。`characters` 空串退到汉字墨迹包络。
     """
     font = TTFont(io.BytesIO(data), recalcBBoxes=False, recalcTimestamp=False)
     head, hhea, os2 = font["head"], font["hhea"], font["OS/2"]
@@ -533,16 +532,18 @@ def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789"
         ink = ink_envelope(font, han_only=True)    # 汉字字件：行框只需装得下汉字
     if ink is None:
         raise ValueError("字件没有可用的墨迹，无法验证归一后的行框")
-    hhea.ascent, hhea.descent, hhea.lineGap = ascender, descender, 0
-    os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap = ascender, descender, 0
+    src_asc, src_desc = hhea.ascent, hhea.descent
+    if ink[1] > src_asc or ink[0] < src_desc:
+        raise ValueError(f"源件行框会切墨迹：ink={list(ink)} box=[{src_desc},{src_asc}]")
+    # 只消分叉：typo 跟 hhea 同一套。hhea 本身不改（改 930＝上下切墨）。
+    os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap = src_asc, src_desc, hhea.lineGap
     if carrier["useTypoMetrics"]:
         os2.version = max(os2.version, 4)
         os2.fsSelection |= 0x80
     else:
         os2.fsSelection &= ~0x80
-    # 裁剪包络跟着真实墨迹（整字库，含字母下伸部），只动 usWin。
-    top = max([ascender, head.yMax] + ([envelope[1]] if envelope else []))
-    bottom = max([-descender, -head.yMin] + ([-envelope[0]] if envelope else []))
+    top = max([src_asc, head.yMax] + ([envelope[1]] if envelope else []))
+    bottom = max([-src_desc, -head.yMin] + ([-envelope[0]] if envelope else []))
     os2.usWinAscent, os2.usWinDescent = top, bottom
     out = io.BytesIO()
     font.save(out)
@@ -567,20 +568,18 @@ def glyph_signature(data: bytes) -> dict:
 
 
 def verify_packaged_metrics(packed: bytes, src_path) -> None:
-    """验收算式单一源：hhea／typo＝设备空壳×upm 比例、typo 必须等于 hhea、usWin≥行框。
-    工作流内联与夹具都调本函数、算式只写这一处。src_path 由工作流传入（母版路径），
-    行框不再跟源件——源件 typo 880 vs hhea 1160 就是真机上漂和下掉同时出现的根因。
+    """验收算式单一源：hhea＝源件原值×upm 比例、typo 必须等于 hhea、usWin≥行框。
+    工作流内联与夹具都调本函数。不许再把 hhea 写成空壳 930（切墨）。
     """
     _p = TTFont(io.BytesIO(packed))
-    TTFont(str(src_path))  # 工作流传入的母版，打开即验路径存在
-    _carrier = TTFont(io.BytesIO(make_carrier()))
-    _scale = _p["head"].unitsPerEm / _carrier["head"].unitsPerEm
+    _src = TTFont(str(src_path))
+    _scale = _p["head"].unitsPerEm / _src["head"].unitsPerEm
     for _key in ("ascent", "descent"):
-        _want = round(getattr(_carrier["hhea"], _key) * _scale)
+        _want = round(getattr(_src["hhea"], _key) * _scale)
         _got = getattr(_p["hhea"], _key)
         assert _got == _want, (
-            f"行框没对齐设备空壳：hhea.{_key}={_got}，"
-            f"按 {_p['head'].unitsPerEm}/{_carrier['head'].unitsPerEm} 换算应为 {_want}")
+            f"直通件行框没跟源件原值：hhea.{_key}={_got}，"
+            f"按 {_p['head'].unitsPerEm}/{_src['head'].unitsPerEm} 换算应为 {_want}")
     assert _p["OS/2"].sTypoAscender == _p["hhea"].ascent and \
         _p["OS/2"].sTypoDescender == _p["hhea"].descent, \
         "typo 必须等于 hhea（880 vs 1160 会让 Web 上漂、原生下掉）"
@@ -1442,22 +1441,25 @@ def metric_normalization():
     data = make_font()
     normalized = normalize_metrics(data, carrier)
     result = TTFont(io.BytesIO(normalized))
-    # hhea／typo 对齐空壳 930/−250，且两表相等；usWin＝裁剪包络。
-    assert (result["hhea"].ascent, result["hhea"].descent) == (930, -250), \
-        f"hhea 应对齐空壳 930/−250，实际 {(result['hhea'].ascent, result['hhea'].descent)}"
-    assert (result["OS/2"].sTypoAscender, result["OS/2"].sTypoDescender) == (930, -250), \
-        "typo 必须等于 hhea／空壳，不许留源件 880"
+    src = TTFont(io.BytesIO(data))
+    # hhea 跟源件；typo 必须写成与 hhea 同一套（不许留源件 880）；usWin＝裁剪包络。
+    assert (result["hhea"].ascent, result["hhea"].descent) == \
+        (src["hhea"].ascent, src["hhea"].descent), "hhea 应跟源件原值，不许改成 930"
+    assert (result["OS/2"].sTypoAscender, result["OS/2"].sTypoDescender) == \
+        (result["hhea"].ascent, result["hhea"].descent), "typo 必须等于 hhea，不许留 880"
     assert result["OS/2"].usWinAscent >= result["hhea"].ascent and \
         result["OS/2"].usWinDescent >= -result["hhea"].descent, "usWin 裁剪包络不得小于行框"
     assert_glyphs_preserved(data, normalized)  # 轮廓/cmap/家族/轴必须逐字节不变
-    # 源件 hhea 被压到 100 也必须写出空壳 930（行框跟设备，不跟源件）。
+    # 会切墨迹的归一必须被拒：源件行框盖不住墨迹时抛错。
     clipped = TTFont(io.BytesIO(data))
     clipped["hhea"].ascent = 100
     buf = io.BytesIO()
     clipped.save(buf)
-    forced = TTFont(io.BytesIO(normalize_metrics(buf.getvalue(), carrier)))
-    assert (forced["hhea"].ascent, forced["hhea"].descent) == (930, -250), \
-        "源件 hhea 被压小后仍应对齐空壳，不能跟着 100 走"
+    try:
+        normalize_metrics(buf.getvalue(), carrier)
+        raise AssertionError("切墨迹的归一未被拒绝")
+    except ValueError:
+        pass
     # 空壳判定：可见字形的 Roboto 不能当空壳。
     assert carrier_metrics(make_carrier(visible=True)) is None
     assert carrier_metrics(make_carrier())["hhea"] == [930, -250, 0]
@@ -2028,16 +2030,17 @@ def build_end_to_end():
             music_packaged = archive.read("system/fonts/NotoMusic-Regular.ttf")
             music_license_packaged = archive.read("licenses/NotoMusic-OFL.txt")
 
-        # 归一 + 改名之后：轮廓/cmap/轴不动，家族名换成 RENAME；行框对齐空壳、
+        # 归一 + 改名之后：轮廓/cmap/轴不动，家族名换成 RENAME；hhea 跟源件、
         # typo 等于 hhea、usWin 拿裁剪包络。
         before, after = glyph_signature(make_font()), glyph_signature(packaged)
         assert before["outlines"] == after["outlines"] and before["cmap"] == after["cmap"], "轮廓或 cmap 被改了"
         assert before["axes"] == after["axes"] and after["family"] == RENAME
+        _src = TTFont(io.BytesIO(make_font()))
         _pkg = TTFont(io.BytesIO(packaged))
-        assert (_pkg["hhea"].ascent, _pkg["hhea"].descent) == (930, -250), \
-            f"hhea 应对齐空壳 930/−250，实际 {(_pkg['hhea'].ascent, _pkg['hhea'].descent)}"
-        assert (_pkg["OS/2"].sTypoAscender, _pkg["OS/2"].sTypoDescender) == (930, -250), \
-            "typo 必须等于 hhea／空壳"
+        assert (_pkg["hhea"].ascent, _pkg["hhea"].descent) == (_src["hhea"].ascent, _src["hhea"].descent), \
+            "hhea 应跟源件原值，不许改成 930"
+        assert (_pkg["OS/2"].sTypoAscender, _pkg["OS/2"].sTypoDescender) == \
+            (_pkg["hhea"].ascent, _pkg["hhea"].descent), "typo 必须等于 hhea"
         assert _pkg["OS/2"].usWinAscent >= _pkg["hhea"].ascent, "usWin 裁剪包络缺失"
         # Skia 那份只出「插入行」：每条都是带字重与样式的静态字件行，且只列真正打进包里的文件。
         rows = [line.strip() for line in legacy.splitlines() if line.strip()]
@@ -4326,17 +4329,17 @@ def workflow_format():
             assert "assert packed == fixed_bytes" not in body, \
                 (f"{path.name}: 验收还在要求「包内字节整份等于 work/vpos」——"
                  "直通件过行框归一后字节必然变，这条断言与归一互斥，只能改成逐项判据")
-            # 验收算式单源在 verify_packaged_metrics；这里咬两样：内联必须调该函数、
-            # 函数源码必须含「空壳值×比例」算式、typo＝hhea、usWin 包络断言。
+            # 验收算式单源在 verify_packaged_metrics；这里咬：内联必须调该函数、
+            # 函数源码必须含「源件值×比例」、typo＝hhea、usWin 包络。
             assert "build.verify_packaged_metrics(" in body, \
                 f"{path.name}: 验收没走 build.verify_packaged_metrics（契约算式必须单源）"
             import inspect as _isp
             _vsrc = _isp.getsource(verify_packaged_metrics)
             assert '"hhea"' in _vsrc and '"ascent"' in _vsrc, \
                 f"{path.name}: verify_packaged_metrics 没正面查 hhea 行框（验收空转）"
-            assert re.search(r'getattr\(_carrier\["hhea"\],\s*_key\)\s*\*\s*_scale', _vsrc), \
-                (f"{path.name}: verify_packaged_metrics 拿空壳行框却没乘单位比例——"
-                 "空壳与包内 upm 可能不等，行框按比例缩放，直接比原值必误报")
+            assert re.search(r'getattr\(_src\["hhea"\],\s*_key\)\s*\*\s*_scale', _vsrc), \
+                (f"{path.name}: verify_packaged_metrics 拿源件行框却没乘单位比例——"
+                 "源件与包内 upm 可能不等，行框按比例缩放，直接比原值必误报")
             assert "sTypoAscender == _p[\"hhea\"].ascent" in _vsrc, \
                 f"{path.name}: verify_packaged_metrics 没钉 typo＝hhea（三表分叉会上下都漂）"
             assert "usWinAscent >=" in _vsrc and "usWinDescent >=" in _vsrc, \
@@ -4444,11 +4447,11 @@ def passthrough_font():
                 _ma = {n: _a["hmtx"][n] for n in _a.getGlyphOrder()}
                 _mb = {n: _b["hmtx"][n] for n in _b.getGlyphOrder()}
                 assert _ma == _mb, "直通件的 hmtx 被改了：行框归一不许动字宽"
-                # 行框对齐空壳、typo 等于 hhea、usWin 拿裁剪包络。
-                assert (_b["hhea"].ascent, _b["hhea"].descent) == (930, -250), \
-                    f"直通件 hhea 应对齐空壳 930/−250：{_b['hhea'].ascent}"
-                assert (_b["OS/2"].sTypoAscender, _b["OS/2"].sTypoDescender) == (930, -250), \
-                    "直通件 typo 必须等于 hhea／空壳"
+                # hhea 跟源件、typo 等于 hhea、usWin 拿裁剪包络。
+                assert (_b["hhea"].ascent, _b["hhea"].descent) == (_a["hhea"].ascent, _a["hhea"].descent), \
+                    f"直通件 hhea 应跟源件原值：{_b['hhea'].ascent}"
+                assert (_b["OS/2"].sTypoAscender, _b["OS/2"].sTypoDescender) == \
+                    (_b["hhea"].ascent, _b["hhea"].descent), "直通件 typo 必须等于 hhea"
                 assert _b["OS/2"].usWinAscent >= _b["hhea"].ascent and \
                     _b["OS/2"].usWinDescent >= -_b["hhea"].descent, "usWin 裁剪包络不得小于行框"
             # normalize 真跑过的证据：把手工压小 usWin 的副本喂进去，必须被抬回行框以上。
