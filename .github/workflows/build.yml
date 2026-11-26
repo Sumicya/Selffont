@@ -194,16 +194,9 @@ jobs:
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
 
           # fixed_bytes 已无人读（行框归一之后整份字节本来就该不等），删掉免得留下死变量。
-          # ★ 2026-11-27 新契约（434 真机「位置上漂」根因回退）：行框跟**源件原值**，
-          #   hhea/typo 不再重写；usWin 拿裁剪包络（≥ 行框）。旧「hhea 对齐空壳」断言
-          #   把 ascent 1160 重写成 930、行框变矮基线上移，即真机上漂的机制（证据图
-          #   docs/evidence/2026-11-27-hhea-box-drift.png：基线距行顶 139.2→111.6px）。
-          #   build.py 的 normalize_metrics 与三处夹具已同轮改新契约（框架被修改当轮＝
-          #   检查对象），本内联断言是第四处住所，同步改。
-          # 「normalize 真跑过」的正面证据住在 build.py --check 的 passthrough_font
-          #   （压小 usWin 的副本喂进去必须被抬回行框以上），此处只查契约两条读数。
-          # 源件基准取 work/ 下原始母版（与下面汉字平移断言同一基准，不猜磁盘路径）。
-          # 算式单源在 build.py：verify_packaged_metrics；内联只调不抄（2026-11-27 沉底）。
+          # ★ 行框对齐设备空壳 930/−250，typo 必须等于 hhea，usWin 拿裁剪包络。
+          #   真机「上下定位掉到底都有」：源件 typo 880／hhea 1160／usWin 1322 三表分叉，
+          #   Web 走上、原生走下。verify_packaged_metrics 单源；内联只调不抄。
           import build
           build.verify_packaged_metrics(packed, os.path.join("work", mother))
 

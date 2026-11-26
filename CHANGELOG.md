@@ -4800,3 +4800,8 @@ verify：一致 0，不一致 0 / 退出码 0
 ## 2026-11-26（补打 Unicode16-new.ttf）
 
 MFGA 生僻符号大头是 `Unicode16-new.ttf`（6,863,776 B，cmap 12,796，墨 12,795）。一直没进包，设备 ls 没有这文件。加入 SUPPLEMENTAL_FONT_SOURCES，blob 94d3f2e4，sha256 c7d2de35…。`--check` 26 过。
+
+## 2026-11-26（行框三表合一，对齐设备空壳）
+
+真机「上下定位掉到底都有」：包内主字 typo 880／hhea 1160／usWin 1322，Web 走上、原生走下。
+改：`normalize_metrics` 把 hhea 与 typo 都写成空壳 930/−250（与包内 Roboto 空壳同一行框），usWin 仍盖墨迹。夹具与 `verify_packaged_metrics` 同步。
