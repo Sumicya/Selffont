@@ -142,6 +142,37 @@ def ci_version_numbers(runs: list[dict], artifacts: list[dict], run_number: int,
     return date, day, total, first
 
 
+INPUT_PATHS = ["build.py", "requirements.txt", "module",
+               "tools/fix_latin_kern.py", "tools/drop_stray_ring.py"]
+
+
+def content_reuse_version(runs: list[dict], artifacts: list[dict], head: str,
+                          prefix: str) -> str:
+    """最近一条成功出包的运行，其包输入与当前 head 相同则返回其版本号串，否则空串。"""
+    by_id = {row.get("id"): row for row in runs}
+    best: tuple[int, str, str] | None = None
+    for art in artifacts:
+        name = art.get("name", "")
+        if not name.startswith(prefix):
+            continue
+        row = by_id.get((art.get("workflow_run") or {}).get("id"))
+        if not row or row.get("conclusion") != "success":
+            continue
+        cand = (int(row.get("run_number") or 0), row.get("head_sha", ""), name[len(prefix):])
+        if cand[0] and cand[1] and (best is None or cand[0] > best[0]):
+            best = cand
+    if best is None:
+        return ""
+    _, prev_sha, ver = best
+    if prev_sha == head:
+        return ver
+    diff = subprocess.run(["git", "diff", "--name-only", prev_sha, head, "--"] + INPUT_PATHS,
+                          capture_output=True, text=True)
+    if diff.returncode == 0 and not diff.stdout.strip():
+        return ver
+    return ""
+
+
 def query_ci_version() -> tuple[str, str, str]:
     """CI 现场取号：读 `build.yml` 运行列表与全仓产物列表，按差值锚定法算出三段版本。
 
@@ -171,6 +202,19 @@ def query_ci_version() -> tuple[str, str, str]:
                 if str(row.get("path", "")).endswith(path_suffix)]
     artifacts = gh_json(f"repos/{repo}/actions/artifacts?per_page=100", "artifacts")
     prefix = ARTIFACT_PREFIX.get(workflow, f"{PROJECT}-")
+    # ★ 2026-11-27 §13「内容变了才涨当日号」：doc-only push 也曾涨当日号（13→17，
+    #   主人当日指出）。因＝当日序号按 run 序数算，与内容无关。修：先找最近一条
+    #   成功出过本类产物的运行；其 head 与当前 head 相同（同内容重跑）或两 head 之间
+    #   包输入路径的 git diff 为空（只改文档等）→ 原样复用其产物版本号；内容真变才
+    #   走差值锚定法涨号。包输入路径＝真能改变 zip 字节的路径集合。
+    head = (os.environ.get("GITHUB_SHA") or subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip())
+    reused = content_reuse_version(runs, artifacts, head, prefix)
+    if reused:
+        parts = reused.split(".")
+        print(f"[取号] 包输入未变，复用上一号 {reused}（prev head 与当前 head 的包输入 diff 空）",
+              file=sys.stderr)
+        return ".".join(parts[:3]), parts[3], parts[4]
     date, day, total, first = ci_version_numbers(runs, artifacts, int(run_number), now, prefix)
     print(f"[取号] head={os.environ.get('GITHUB_SHA', '未提供')} "
           f"run_id={os.environ.get('GITHUB_RUN_ID', '未提供')} run_number={total} R_first={first} "

@@ -21,7 +21,10 @@
 #
 # 用法：sh skia.sh [status|on|off|apply]（改完重启生效）
 command -v ui_print >/dev/null 2>&1 || ui_print() { echo "$1"; }
-MODDIR=${0%/*}; [ "$MODDIR" = "$0" ] && MODDIR=.
+[ "$#" -gt 1 ] && ui_print "Skia 告警：我不读位置参数（$*）；模块目录＝脚本自身路径或 SELFFONT_MODDIR"
+MODDIR=${SELFFONT_MODDIR:-${0%/*}}; [ "$MODDIR" = "$0" ] && MODDIR=.
+# 2026-11-27：MODDIR 历来由脚本自身路径推导、位置参数从来不读；传位置参数曾被静默
+# 忽略且报错「没有插入行」（报错不指真因，多查半轮）。现在位置参数直接告警。
 STATE=${SELFFONT_SKIA_STATE:-/data/adb/selffont-skia.state}
 ROOT=${SELFFONT_SYSTEM_ROOT:-}
 INSERT=$MODDIR/fonts-insert.xml

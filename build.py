@@ -236,6 +236,12 @@ UNWANTED_FONTS = re.compile(r"misans", re.I)
 NATIVE_FIRST = {"monospace": "Droid Sans Mono", "cursive": "Dancing Script", "fantasy": "Coming Soon"}
 WEIGHTS = range(100, 1000, 100)
 BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位类别（空格类、控制类）
+# 韩文填空符：U+115F 初声填空／U+1160 中声填空。这两码位的正确字形就是空白
+# （占 jamo 槽位用），但 Unicode 类别是 Lo、不在 BLANK_CATEGORIES 里，于是
+# prune_blank_mappings 曾把它们的映射当「声称覆盖却空白」剪掉（母版有、包内无，
+# 实测 U+115F；主人 2026-11-27 令修）。剪掉会让 Skia 替填空符找回退，方向反了；
+# 保留映射——空白就是它的正确墨迹。
+FILLER_CODEPOINTS = {0x115F, 0x1160}
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
@@ -574,7 +580,8 @@ def prune_blank_mappings(data: bytes) -> tuple[bytes, int]:
             except Exception:  # 画不出来的字形不是空壳，不动它
                 kept[codepoint] = glyph_name
                 continue
-            if pen.bounds is None and unicodedata.category(chr(codepoint)) not in BLANK_CATEGORIES:
+            if (pen.bounds is None and codepoint not in FILLER_CODEPOINTS
+                    and unicodedata.category(chr(codepoint)) not in BLANK_CATEGORIES):
                 pruned.add(codepoint)
             else:
                 kept[codepoint] = glyph_name

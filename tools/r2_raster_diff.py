@@ -70,7 +70,6 @@ def main() -> int:
     stray = stray_set(args.mother)
     fa = ImageFont.truetype(args.mother, args.size)
     fb = ImageFont.truetype(args.installed, args.size)
-    cma = set(fa.font.getchars()) if hasattr(fa.font, "getchars") else None
     cmap = set()
     for cp in range(0x20, 0x20000):
         try:
