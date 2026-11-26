@@ -140,7 +140,17 @@ apply() {
     set -- $(font_readable)
     _ok=${1:-0}; _tot=${2:-0}
     mkdir -p "$MODDIR/system/etc"
-    awk -v rowsfile="$INSERT" -v marker="$_marker" '
+    # 设备那份 xml 没有 MFGA 补字区（438 真机 79560 B，Unicode17/18 文件在、引用 0）。
+    # 生僻符号就整片豆腐。包里有的补字件，xml 里没有引用的，在 </familyset> 前补匿名族。
+    _extra=$MODDIR/system/etc/.sf-extra-fonts
+    : > "$_extra"
+    for _f in Unicode16-new.ttf Unicode17-new.ttf Unicode18-new.ttf \
+              NotoSansPro.otf UnicodiaFunky.ttf NotoMusic-Regular.ttf \
+              NotoEmoji.ttf Noto-COLRv1.ttf; do
+        [ -r "$MODDIR/system/fonts/$_f" ] || continue
+        printf '%s\n' "$_f" >> "$_extra"
+    done
+    awk -v rowsfile="$INSERT" -v marker="$_marker" -v extrafile="$_extra" '
         function upd(s,   i, j) {
             while (1) {
                 if (!incmt) { i = index(s, "<!--"); if (!i) break; incmt = 1; s = substr(s, i + 4); continue }
@@ -148,13 +158,16 @@ apply() {
             }
             return incmt
         }
-        BEGIN { while ((getline row < rowsfile) > 0) rows = rows row "\n"; close(rowsfile) }
+        BEGIN {
+            while ((getline row < rowsfile) > 0) rows = rows row "\n"; close(rowsfile)
+            while ((getline e < extrafile) > 0) { if (e != "") extra[++ne] = e }
+            close(extrafile)
+        }
         { c = upd($0) }
-        # 注释块里的行原样输出，一律不参与族匹配（2026-11-26 真机：ColorOS 有一整段被注释掉的族）
         c { print; next }
-        # 2026-11-27 两处族首：sans-serif ＋ Roboto。Flutter 按名要 Roboto。
-        # 438 真机这份 xml 没有 Roboto 族（插入计数=1）⇒ 只进 sans-serif，FlClash 仍不变。
-        # 没有就在 </familyset> 前补一个只含本包字件的 Roboto 族。
+        {
+            for (i = 1; i <= ne; i++) if (index($0, extra[i])) seen[extra[i]] = 1
+        }
         /name="Roboto"/ { has_rb = 1 }
         /<family[ \t>]/ { in_f = 1; tgt = ($0 ~ /name="sans-serif"/ || $0 ~ /name="Roboto"/); nf = 0; nxt = 0; print; next }
         in_f && /<\/family>/ { in_f = 0; print; next }
@@ -167,6 +180,11 @@ apply() {
             if (!has_rb) {
                 print "    <family name=\"Roboto\">"
                 printf "%s", rows
+                print "    </family>"
+            }
+            for (i = 1; i <= ne; i++) if (!seen[extra[i]]) {
+                print "    <family>"
+                print "        <font weight=\"400\" style=\"normal\">" extra[i] "</font>"
                 print "    </family>"
             }
             print
