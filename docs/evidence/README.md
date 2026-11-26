@@ -81,3 +81,5 @@ Python 复刻 + PIL 渲染 + skia.sh 假 root），不是设备截图；渲染�
 | --- | --- | --- |
 | `2026-11-26-apply.txt` | 包内 skia.sh apply 的 stdout | 插入=1 族=sans-serif 字件=Selffont-MarukoGothicCJKsc.ttf 族内可读=9/9 |
 | `2026-11-26-choose.txt` | skia_paths choose 前后两次 stdout | 前 0 个（0.00%）／后 33,936 个（100.00%） |
+
+| `2026-11-27-r2-worst.png` | R2 同原点栅格：最差三字三栏（母版／安装副本／异或） | 抽样 1612 相同 1592 不同 20 ⊆ 碎块名单 True；最差 IoU 0.983；复算 `tools/r2_raster_diff.py` |

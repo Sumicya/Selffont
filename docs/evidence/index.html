@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Selffont 证据板 2026-11-26 批</title>
+<style>
+ body{font:14px/1.6 system-ui,sans-serif;margin:24px;background:#fafafa;color:#111}
+ figure{margin:0 0 28px;background:#fff;border:1px solid #ddd;padding:12px}
+ img{max-width:100%;border:1px solid #eee;display:block}
+ figcaption{margin-top:8px;color:#444}
+ code{background:#eef;padding:0 4px}
+ table{border-collapse:collapse;margin:8px 0}
+ td,th{border:1px solid #ccc;padding:4px 8px;font-size:13px}
+</style>
+</head>
+<body>
+<h1>Selffont 证据板（2026-11-26 批）</h1>
+<p>三张图均为命令副产品落盘（复算：<code>tools/draw_round30_proof.py</code>），sha 与字节见下表。
+本页面由静态图服在预览窗根路径提供，像素即落盘文件本身，未经任何重绘。</p>
+
+<figure>
+<img src="2026-11-26-roster-20.png" alt="roster-20">
+<figcaption><b>roster-20</b>：碎块名单三方对照，20 字各一格（scan✓ 名单✓ 点数差），标题＝三方相等 True。</figcaption>
+</figure>
+
+<figure>
+<img src="2026-11-26-insert-before-after.png" alt="insert-before-after">
+<figcaption><b>insert-before-after</b>：skia.sh apply 前后 sans-serif 族首对照，插入行标红；插入=1 族首、族内可读 9/9。</figcaption>
+</figure>
+
+<figure>
+<img src="2026-11-26-choose-0-100.png" alt="choose-0-100">
+<figcaption><b>choose-0-100</b>：选择层核心判据，本包码位由本包画的百分比 0.00% → 100.00%（33,936 码位，skia_paths 实跑）。</figcaption>
+</figure>
+
+<figure>
+<img src="2026-11-27-r2-worst.png" alt="r2-worst">
+<figcaption><b>r2-worst</b>：R2 同原点栅格对照，最差三字各三栏（母版／安装副本／异或）；
+异或仅碎块点＝包内字件除碎块清理外无其它改动。抽样 1612、相同 1592、不同 20 ⊆ 名单 True。</figcaption>
+</figure>
+
+<table>
+<tr><th>文件</th><th>字节</th><th>sha256 前 8 位</th></tr>
+<tr><td>2026-11-27-r2-worst.png</td><td>5285</td><td>062c5035</td></tr>
+<tr><td>2026-11-26-roster-20.png</td><td>70,990</td><td>7d442021</td></tr>
+<tr><td>2026-11-26-insert-before-after.png</td><td>31,327</td><td>b6a3139d</td></tr>
+<tr><td>2026-11-26-choose-0-100.png</td><td>11,383</td><td>ac86ae21</td></tr>
+</table>
+<p>渲染层（真机屏幕）仍未闭合：R2 栅格化对照排下一轮 first line。</p>
+</body>
+</html>
