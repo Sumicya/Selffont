@@ -192,8 +192,6 @@ jobs:
               packed = z.read(_hits[0])
               prop = z.read("module.prop").decode()
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
-              shell = (z.read("system/fonts/Roboto-Regular.ttf")
-                       if "system/fonts/Roboto-Regular.ttf" in fonts else None)
 
           # fixed_bytes 已无人读（行框归一之后整份字节本来就该不等），删掉免得留下死变量。
           # ★ 2026-11-27 新契约（434 真机「位置上漂」根因回退）：行框跟**源件原值**，
@@ -205,18 +203,9 @@ jobs:
           # 「normalize 真跑过」的正面证据住在 build.py --check 的 passthrough_font
           #   （压小 usWin 的副本喂进去必须被抬回行框以上），此处只查契约两条读数。
           # 源件基准取 work/ 下原始母版（与下面汉字平移断言同一基准，不猜磁盘路径）。
-          _packed_font = TTFont(io.BytesIO(packed))
-          _src_font = TTFont(os.path.join("work", mother))
-          _scale = _packed_font["head"].unitsPerEm / _src_font["head"].unitsPerEm
-          for _key in ("ascent", "descent"):
-              _want = round(getattr(_src_font["hhea"], _key) * _scale)
-              _got = getattr(_packed_font["hhea"], _key)
-              assert _got == _want, (
-                  f"直通件行框没跟源件原值：hhea.{_key}={_got}，"
-                  f"按 {_packed_font['head'].unitsPerEm}/{_src_font['head'].unitsPerEm} 换算应为 {_want}")
-          assert _packed_font["OS/2"].usWinAscent >= _packed_font["hhea"].ascent and \
-              _packed_font["OS/2"].usWinDescent >= -_packed_font["hhea"].descent, \
-              "usWin 裁剪包络不得小于行框"
+          # 算式单源在 build.py：verify_packaged_metrics；内联只调不抄（2026-11-27 沉底）。
+          import build
+          build.verify_packaged_metrics(packed, os.path.join("work", mother))
 
           # ★ 2026-11-24 修正：基准必须留**原始母版**，不能换成 work/kern。
           #   下面几条断言查的是「汉字被 fix_hpos/fix_vpos 纯平移过、且墨心归位」，

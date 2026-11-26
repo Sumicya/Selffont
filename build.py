@@ -503,11 +503,8 @@ def ink_envelope(font: TTFont, han_only: bool = False) -> tuple[int, int] | None
 
 
 def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789") -> bytes:
-    """竖直行度量对齐 Roboto 空壳：根治角标数字偏低/切下沿（真机验证）。
-
-    自研汉字字件也走这一条（2026-10-28「做和主字体一样的高度重校准」）：它没有拉丁数字，
-    `characters` 传空串就退到**汉字**的墨迹包络来判「行框切不切墨」（字母的下伸部不算，
-    那是 `usWin` 的事），判据不变。
+    """行框跟源件原值、usWin 拿裁剪包络（2026-11-27 新契约；旧「对齐空壳」是 434 上漂
+    根因已撤，角标切下沿修复住在 usWinDescent）。`characters` 空串退到汉字墨迹包络判切墨。
     """
     font = TTFont(io.BytesIO(data), recalcBBoxes=False, recalcTimestamp=False)
     head, hhea, os2 = font["head"], font["hhea"], font["OS/2"]
@@ -521,9 +518,8 @@ def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789"
         ink = ink_envelope(font, han_only=True)    # 汉字字件：行框只需装得下汉字
     if ink is None:
         raise ValueError("字件没有可用的墨迹，无法验证归一后的行框")
-    # ★ 2026-11-27 撤 hhea/typo 重写（434 真机「位置上漂」）：行框位置跟源件原值。
-    #   上漂机制：hhea ascent 1160 曾被重写成空壳比例 930，行框变矮、基线在行内上移。
-    #   保留的只有 usWin 裁剪包络：角标数字切下沿的真机修复住在 usWinDescent，不动它。
+    # 行框跟源件原值（旧契约把 ascent 1160 重写成 930＝434 真机上漂根因）；
+    # 保留的只有 usWin 裁剪包络（角标切下沿的真机修复住在 usWinDescent）。
     src_asc, src_desc = hhea.ascent, hhea.descent
     if ink[1] > src_asc or ink[0] < src_desc:
         raise ValueError(f"源件行框会切墨迹：ink={list(ink)} box=[{src_desc},{src_asc}]")
@@ -556,6 +552,24 @@ def glyph_signature(data: bytes) -> dict:
                 outlines[name] = repr(pen.value).encode()
         return {"outlines": outlines, "cmap": font.getBestCmap(),
                 "family": font["name"].getDebugName(1), "axes": font_axes(font)}
+
+
+def verify_packaged_metrics(packed: bytes, src_path) -> None:
+    """验收算式单一源（2026-11-27 新契约）：hhea 行框＝源件原值×upm 比例、usWin≥行框。
+    工作流内联与夹具都调本函数、算式只写这一处；沉底前住所分散五处连咬五次。
+    """
+    _p = TTFont(io.BytesIO(packed))
+    _src = TTFont(str(src_path))
+    _scale = _p["head"].unitsPerEm / _src["head"].unitsPerEm
+    for _key in ("ascent", "descent"):
+        _want = round(getattr(_src["hhea"], _key) * _scale)
+        _got = getattr(_p["hhea"], _key)
+        assert _got == _want, (
+            f"直通件行框没跟源件原值：hhea.{_key}={_got}，"
+            f"按 {_p['head'].unitsPerEm}/{_src['head'].unitsPerEm} 换算应为 {_want}")
+    assert _p["OS/2"].usWinAscent >= _p["hhea"].ascent and \
+        _p["OS/2"].usWinDescent >= -_p["hhea"].descent, \
+        "usWin 裁剪包络不得小于行框"
 
 
 def assert_glyphs_preserved(original: bytes, packaged: bytes) -> None:
@@ -1412,8 +1426,7 @@ def metric_normalization():
     normalized = normalize_metrics(data, carrier)
     result = TTFont(io.BytesIO(normalized))
     src = TTFont(io.BytesIO(data))
-    # 2026-11-27 新契约：hhea/typo 跟源件原值（旧契约把 ascent 重写成 930，434 真机上漂）；
-    # usWin ＝ 裁剪包络（角标切下沿修复住在 usWin，保留）。
+    # 2026-11-27 新契约：hhea/typo 跟源件原值；usWin＝裁剪包络（角标修复住在 usWin）。
     assert (result["hhea"].ascent, result["hhea"].descent) == \
         (src["hhea"].ascent, src["hhea"].descent), "hhea 应跟源件原值，不许重写"
     assert (result["OS/2"].sTypoAscender, result["OS/2"].sTypoDescender) == \
@@ -2724,8 +2737,8 @@ def install_scripts():
             "我们也有的码位之外的生僻符号必须仍落设备字件（否则就是豆腐块）"
         # ★ 2026-11-26 改口（第三版）：汉字也必须由**我们**画，但落点变了。
         #   旧版靠「插在无名族族首」吃到，而真机证明第一轮（按名字请求的族）先执行，
-        #   无名族只在第一轮落空时才轮到。新契约：只插 sans-serif 一处，汉字由该族族首命中。
-        #   这条断言改成钉住新落点，不是放宽——放宽就等于把上一轮的故障写进测试。
+        #   无名族只在第一轮落空时才轮到。落点＝sans-serif＋Roboto 双族族首（2026-11-27：
+        #   FlClash 按名要 Roboto 绕开 sans-serif），钉住新落点不是放宽。
         assert _sp.choose(parsed, cmaps, 0x4E2D) == "Any-Name.ttf", \
             "汉字必须由本包字件画（sans-serif 族首）"
         # 我方没有的码位：第一轮我方那条画不出，继续到族内设备那条；设备那条也没有，
@@ -4270,18 +4283,19 @@ def workflow_format():
             assert "assert packed == fixed_bytes" not in body, \
                 (f"{path.name}: 验收还在要求「包内字节整份等于 work/vpos」——"
                  "直通件过行框归一后字节必然变，这条断言与归一互斥，只能改成逐项判据")
-            assert '"hhea"' in body and '"ascent"' in body, \
-                f"{path.name}: 验收没有正面查 hhea 的行框（删了字节相等又不查行框＝验收空转）"
-            # 换算不能漏：空壳 1000 upm、母版 2048 upm，`normalize_metrics` 是按比例缩放的。
-            # 第一次推送就被这条判据自己拦住（ascent 1905 ≠ 930），红的原因却是判据没换算 ——
-            # 那种红会误导我把已经正确的实现又改坏。
-            # 判据不能只查「有没有 unitsPerEm」（那样删掉换算、只留一行取单位也能过：
-            # 变异实测就是这么蒙过第一版的），必须咬住「目标值 = 空壳值 × 比例」这个算式。
-            assert re.search(r'getattr\(_shell_font\["hhea"\],\s*_key\)\s*\*\s*_scale', body), \
-                (f"{path.name}: 验收拿空壳行框却没乘单位比例——"
-                 "空壳 1000 upm、母版 2048 upm，行框按比例缩放，直接比原值必误报")
-            assert "assert shell is not None" in body, \
-                f"{path.name}: 验收取空壳的方式允许「读不到就跳过」，那是假绿"
+            # 验收算式单源在 verify_packaged_metrics；这里咬两样：内联必须调该函数、
+            # 函数源码必须含「源件值×比例」算式与 usWin 包络断言（变异实测过）。
+            assert "build.verify_packaged_metrics(" in body, \
+                f"{path.name}: 验收没走 build.verify_packaged_metrics（契约算式必须单源）"
+            import inspect as _isp
+            _vsrc = _isp.getsource(verify_packaged_metrics)
+            assert '"hhea"' in _vsrc and '"ascent"' in _vsrc, \
+                f"{path.name}: verify_packaged_metrics 没正面查 hhea 行框（验收空转）"
+            assert re.search(r'getattr\(_src\["hhea"\],\s*_key\)\s*\*\s*_scale', _vsrc), \
+                (f"{path.name}: verify_packaged_metrics 拿源件行框却没乘单位比例——"
+                 "源件与包内 upm 可能不等，行框按比例缩放，直接比原值必误报")
+            assert "usWinAscent >=" in _vsrc and "usWinDescent >=" in _vsrc, \
+                f"{path.name}: verify_packaged_metrics 缺 usWin 裁剪包络断言（新契约第二读数）"
 
 
 @check
@@ -4385,15 +4399,12 @@ def passthrough_font():
                 _ma = {n: _a["hmtx"][n] for n in _a.getGlyphOrder()}
                 _mb = {n: _b["hmtx"][n] for n in _b.getGlyphOrder()}
                 assert _ma == _mb, "直通件的 hmtx 被改了：行框归一不许动字宽"
-                # 行框跟源件原值、usWin 拿裁剪包络（2026-11-27 新契约；旧「对齐空壳」
-                # 把 ascent 1160 重写成 930，434 真机「位置上漂」）。normalize 真跑过的
-                # 证据由下一条 sha 不等式给（usWin 变了字节就变）。
+                # 行框跟源件原值、usWin 拿裁剪包络（2026-11-27 新契约）。
                 assert (_b["hhea"].ascent, _b["hhea"].descent) == (_a["hhea"].ascent, _a["hhea"].descent), \
                     f"直通件 hhea 应跟源件原值：{_b['hhea'].ascent}"
                 assert _b["OS/2"].usWinAscent >= _b["hhea"].ascent and \
                     _b["OS/2"].usWinDescent >= -_b["hhea"].descent, "usWin 裁剪包络不得小于行框"
-            # normalize 真跑过的证据（2026-11-27 新契约下直通件 usWin 可能本就等于包络、
-            # 字节不变属正常）：把手工压小 usWin 的副本喂进去，必须被抬回行框以上。
+            # normalize 真跑过的证据：把手工压小 usWin 的副本喂进去，必须被抬回行框以上。
             _w = TTFont(io.BytesIO(packed))
             _w["OS/2"].usWinAscent = 10
             _wb = io.BytesIO()
