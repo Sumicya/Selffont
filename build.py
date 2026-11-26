@@ -902,7 +902,19 @@ def build(base: str | None = None, font: str | None = None, output: Path | None 
     prop = stamp_version((ROOT / "module/module.prop").read_text(encoding="utf-8"),
                          build_num, day=day, date=date)
     output = Path(output) if output else default_output(prop)
-    base_path = source(base, BASE_URL, BASE_SHA256, cache / "base.zip")
+    if base is None:
+        # ★ 2026-11-27：BASE_URL（MFGA-SELFUSE release）已被主人判来源不明、永久弃用。
+        #   不传 --base 时**不再 fetch 它**。CI 的出包步骤不传 --base，一旦字体缓存里
+        #   没有 base.zip（或 SHA 不符），就会去下载这个永久不可用的 URL 并 TLS EOF
+        #   退出 —— run 45698525799（Roboto 修复已合入仍 failure）即死在这里，
+        #   与断言无关。改为现场自造只含度量空壳的基包：构建从基包只读两样
+        #   （Roboto 空壳做度量对齐、LICENSES.md 做归属文本），自造件两样都齐。
+        derived = cache / "derived-base.zip"
+        base_zip(derived, {CARRIER: make_carrier()})
+        base_path = derived
+        warnings.append("基包为现场自造（只含度量空壳与归属文本）：BASE_URL 已永久弃用，不下载。")
+    else:
+        base_path = source(base, BASE_URL, BASE_SHA256, cache / "base.zip")
     if output.resolve() == Path(base_path).resolve():
         raise ValueError("输出不能覆盖输入")
 
