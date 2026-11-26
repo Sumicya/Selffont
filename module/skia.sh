@@ -170,7 +170,12 @@ apply() {
         }
         /name="Roboto"/ { has_rb = 1 }
         /<family[ \t>]/ { in_f = 1; tgt = ($0 ~ /name="sans-serif"/ || $0 ~ /name="Roboto"/); nf = 0; nxt = 0; print; next }
-        in_f && /<\/family>/ { in_f = 0; print; next }
+        in_f && /<\/family>/ {
+            # 再应用时会先删掉族里已有的 marker 行。Roboto 族往往只剩这一行，
+            # 删完再闭族＝空族。FlClash 按名要 Roboto，零个面。闭族前若还没插过，补上。
+            if (tgt && !nxt) { printf "%s", rows; nxt = 1 }
+            in_f = 0; print; next
+        }
         in_f && index($0, marker) { next }
         in_f && /<font / {
             if (tgt && nf == 0 && !nxt) { printf "%s", rows; nxt = 1 }
