@@ -235,13 +235,13 @@ UNWANTED_FONTS = re.compile(r"misans", re.I)
 # 不在表里的泛型（sans-serif / serif / emoji）系统里本来就是主字体，主字体排最前是恢复火狐的篡改。
 NATIVE_FIRST = {"monospace": "Droid Sans Mono", "cursive": "Dancing Script", "fantasy": "Coming Soon"}
 WEIGHTS = range(100, 1000, 100)
-BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp"}  # 合法空白字符的码位类别（空格类、控制类）
+BLANK_CATEGORIES = {"Cc", "Cf", "Zs", "Zl", "Zp", "Mn"}  # 合法空白：空格/控制/非间距组合符
 # 韩文填空符：U+115F 初声填空／U+1160 中声填空。这两码位的正确字形就是空白
 # （占 jamo 槽位用），但 Unicode 类别是 Lo、不在 BLANK_CATEGORIES 里，于是
 # prune_blank_mappings 曾把它们的映射当「声称覆盖却空白」剪掉（母版有、包内无，
 # 实测 U+115F；主人 2026-11-27 令修）。剪掉会让 Skia 替填空符找回退，方向反了；
 # 保留映射——空白就是它的正确墨迹。
-FILLER_CODEPOINTS = {0x115F, 0x1160}
+FILLER_CODEPOINTS = {0x115F, 0x1160, 0xFFA0}  # 2026-11-27 加半宽韩文填空（434 部分空白候选）
 MODULE_KEYS = ("id", "name", "version", "versionCode", "author", "description")
 CLOCK = timezone(timedelta(hours=8))  # 版本号里的日期按 UTC+8（否则 CI 在 UTC 下会差一天）
 FONT_SUFFIXES = (".ttf", ".otf", ".ttc")
