@@ -512,7 +512,7 @@ def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789"
     font = TTFont(io.BytesIO(data), recalcBBoxes=False, recalcTimestamp=False)
     head, hhea, os2 = font["head"], font["hhea"], font["OS/2"]
     upm, carrier_upm = head.unitsPerEm, carrier["unitsPerEm"]
-    ascender, descender, line_gap = (round(value * upm / carrier_upm) for value in carrier["hhea"])
+    ascender, descender = (round(value * upm / carrier_upm) for value in carrier["hhea"][:2])
     if ascender <= 0 or descender >= 0:
         raise ValueError("空壳行度量不是合法的 ascent/descent")
     envelope = ink_envelope(font)              # 整字库：裁剪包络要盖住它，一个都不能切
@@ -521,18 +521,20 @@ def normalize_metrics(data: bytes, carrier: dict, characters: str = "0123456789"
         ink = ink_envelope(font, han_only=True)    # 汉字字件：行框只需装得下汉字
     if ink is None:
         raise ValueError("字件没有可用的墨迹，无法验证归一后的行框")
-    if ink[1] > ascender or ink[0] < descender:
-        raise ValueError(f"归一后的行框会切墨迹：ink={list(ink)} box=[{descender},{ascender}]")
-    hhea.ascent, hhea.descent, hhea.lineGap = ascender, descender, line_gap
-    os2.sTypoAscender, os2.sTypoDescender, os2.sTypoLineGap = ascender, descender, line_gap
+    # ★ 2026-11-27 撤 hhea/typo 重写（434 真机「位置上漂」）：行框位置跟源件原值。
+    #   上漂机制：hhea ascent 1160 曾被重写成空壳比例 930，行框变矮、基线在行内上移。
+    #   保留的只有 usWin 裁剪包络：角标数字切下沿的真机修复住在 usWinDescent，不动它。
+    src_asc, src_desc = hhea.ascent, hhea.descent
+    if ink[1] > src_asc or ink[0] < src_desc:
+        raise ValueError(f"源件行框会切墨迹：ink={list(ink)} box=[{src_desc},{src_asc}]")
     if carrier["useTypoMetrics"]:
         os2.version = max(os2.version, 4)
         os2.fsSelection |= 0x80
     else:
         os2.fsSelection &= ~0x80
-    # 裁剪包络跟着真实墨迹（整字库，含字母下伸部），只动行度量。
-    top = max([ascender, head.yMax] + ([envelope[1]] if envelope else []))
-    bottom = max([-descender, -head.yMin] + ([-envelope[0]] if envelope else []))
+    # 裁剪包络跟着真实墨迹（整字库，含字母下伸部），只动 usWin。
+    top = max([src_asc, head.yMax] + ([envelope[1]] if envelope else []))
+    bottom = max([-src_desc, -head.yMin] + ([-envelope[0]] if envelope else []))
     os2.usWinAscent, os2.usWinDescent = top, bottom
     out = io.BytesIO()
     font.save(out)
@@ -1409,14 +1411,23 @@ def metric_normalization():
     data = make_font()
     normalized = normalize_metrics(data, carrier)
     result = TTFont(io.BytesIO(normalized))
-    assert (result["hhea"].ascent, result["hhea"].descent) == (930, -250), "hhea 未对齐空壳"
-    assert (result["OS/2"].sTypoAscender, result["OS/2"].sTypoDescender) == (930, -250), "typo 未对齐"
+    src = TTFont(io.BytesIO(data))
+    # 2026-11-27 新契约：hhea/typo 跟源件原值（旧契约把 ascent 重写成 930，434 真机上漂）；
+    # usWin ＝ 裁剪包络（角标切下沿修复住在 usWin，保留）。
+    assert (result["hhea"].ascent, result["hhea"].descent) == \
+        (src["hhea"].ascent, src["hhea"].descent), "hhea 应跟源件原值，不许重写"
+    assert (result["OS/2"].sTypoAscender, result["OS/2"].sTypoDescender) == \
+        (src["OS/2"].sTypoAscender, src["OS/2"].sTypoDescender), "typo 应跟源件原值"
+    assert result["OS/2"].usWinAscent >= result["hhea"].ascent and \
+        result["OS/2"].usWinDescent >= -result["hhea"].descent, "usWin 裁剪包络不得小于行框"
     assert_glyphs_preserved(data, normalized)  # 轮廓/cmap/家族/轴必须逐字节不变
-    scaled = TTFont(io.BytesIO(normalize_metrics(make_font(upm=2048), carrier)))
-    assert scaled["hhea"].ascent == round(930 * 2048 / 1000), "upm 缩放错误"
-    # 会切数字墨迹的归一必须被拒：空壳 ascent 700 盖不住数字墨迹 744。
+    # 会切墨迹的归一必须被拒：源件行框盖不住墨迹时抛错（旧判据拿空壳框量，已作废）。
+    clipped = TTFont(io.BytesIO(data))
+    clipped["hhea"].ascent = 100
+    buf = io.BytesIO()
+    clipped.save(buf)
     try:
-        normalize_metrics(make_font(), dict(carrier, hhea=[700, -100, 0]))
+        normalize_metrics(buf.getvalue(), carrier)
         raise AssertionError("切墨迹的归一未被拒绝")
     except ValueError:
         pass
@@ -1990,11 +2001,16 @@ def build_end_to_end():
             music_packaged = archive.read("system/fonts/NotoMusic-Regular.ttf")
             music_license_packaged = archive.read("licenses/NotoMusic-OFL.txt")
 
-        # 归一 + 改名之后：轮廓/cmap/轴不动，家族名换成 RENAME,hhea 对齐空壳。
+        # 归一 + 改名之后：轮廓/cmap/轴不动，家族名换成 RENAME；行框跟源件原值、
+        # usWin 拿裁剪包络（2026-11-27 新契约：旧「hhea 对齐空壳」是 434 真机上漂根因）。
         before, after = glyph_signature(make_font()), glyph_signature(packaged)
         assert before["outlines"] == after["outlines"] and before["cmap"] == after["cmap"], "轮廓或 cmap 被改了"
         assert before["axes"] == after["axes"] and after["family"] == RENAME
-        assert TTFont(io.BytesIO(packaged))["hhea"].ascent == 930, "包内字体未归一"
+        _src = TTFont(io.BytesIO(make_font()))
+        _pkg = TTFont(io.BytesIO(packaged))
+        assert (_pkg["hhea"].ascent, _pkg["hhea"].descent) == (_src["hhea"].ascent, _src["hhea"].descent), \
+            "hhea 应跟源件原值（新契约），不许重写"
+        assert _pkg["OS/2"].usWinAscent >= _pkg["hhea"].ascent, "usWin 裁剪包络缺失"
         # Skia 那份只出「插入行」：每条都是带字重与样式的静态字件行，且只列真正打进包里的文件。
         rows = [line.strip() for line in legacy.splitlines() if line.strip()]
         assert rows, "fonts-insert.xml 为空：Skia（Flutter / WebView）那条路上没有字件可读"
@@ -4369,12 +4385,22 @@ def passthrough_font():
                 _ma = {n: _a["hmtx"][n] for n in _a.getGlyphOrder()}
                 _mb = {n: _b["hmtx"][n] for n in _b.getGlyphOrder()}
                 assert _ma == _mb, "直通件的 hmtx 被改了：行框归一不许动字宽"
-                # 行框必须真的被对齐到设备空壳（否则等于没做这一步）
-                _c = carrier_metrics(make_carrier())
-                assert _b["hhea"].ascent == _c["hhea"][0], \
-                    f"直通件行框没对齐空壳：hhea.ascent={_b['hhea'].ascent}"
-            assert hashlib.sha256(packed).hexdigest() != digest(mother), \
-                "直通件字节完全没变：说明 normalize_metrics 根本没执行"
+                # 行框跟源件原值、usWin 拿裁剪包络（2026-11-27 新契约；旧「对齐空壳」
+                # 把 ascent 1160 重写成 930，434 真机「位置上漂」）。normalize 真跑过的
+                # 证据由下一条 sha 不等式给（usWin 变了字节就变）。
+                assert (_b["hhea"].ascent, _b["hhea"].descent) == (_a["hhea"].ascent, _a["hhea"].descent), \
+                    f"直通件 hhea 应跟源件原值：{_b['hhea'].ascent}"
+                assert _b["OS/2"].usWinAscent >= _b["hhea"].ascent and \
+                    _b["OS/2"].usWinDescent >= -_b["hhea"].descent, "usWin 裁剪包络不得小于行框"
+            # normalize 真跑过的证据（2026-11-27 新契约下直通件 usWin 可能本就等于包络、
+            # 字节不变属正常）：把手工压小 usWin 的副本喂进去，必须被抬回行框以上。
+            _w = TTFont(io.BytesIO(packed))
+            _w["OS/2"].usWinAscent = 10
+            _wb = io.BytesIO()
+            _w.save(_wb)
+            _fixed = normalize_metrics(_wb.getvalue(), carrier_metrics(make_carrier()))
+            assert TTFont(io.BytesIO(_fixed))["OS/2"].usWinAscent >= _b["hhea"].ascent, \
+                "normalize 没把手工压小的 usWin 抬回：说明没执行"
             xml = archive.read("font_fallback.xml").decode()
             root = ET.fromstring(xml)
             own = [f for f in root.iter("family")

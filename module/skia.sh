@@ -129,7 +129,10 @@ apply() {
         { c = upd($0) }
         # 注释块里的行原样输出，一律不参与族匹配（2026-11-26 真机：ColorOS 有一整段被注释掉的族）
         c { print; next }
-        /<family[ \t>]/ { in_f = 1; tgt = ($0 ~ /name="sans-serif"/); nf = 0; nxt = 0; print; next }
+        # 2026-11-27 两处族首：sans-serif ＋ Roboto。Flutter 引擎在 Android 按名要
+        # Roboto（FlClash 源码链读得：theme→fontFamilyFallback→prism_ui，具名族列表
+        # 绕开 sans-serif），只插 sans-serif 时具名请求落回设备字件＝应用里字体不变。
+        /<family[ \t>]/ { in_f = 1; tgt = ($0 ~ /name="sans-serif"/ || $0 ~ /name="Roboto"/); nf = 0; nxt = 0; print; next }
         in_f && /<\/family>/ { in_f = 0; print; next }
         # 剔掉上一轮的插入行，保证幂等
         in_f && index($0, marker) { next }
@@ -141,7 +144,7 @@ apply() {
     ' "$SOURCE" > "$TARGET"
     _n=$(grep -c -F "$_marker" "$TARGET" 2>/dev/null || true); [ -n "$_n" ] || _n=0
     if [ "$_n" -gt 0 ]; then
-        ui_print "插入=$_n 族=sans-serif 字件=$_marker 族内可读=$_ok/$_tot"
+        ui_print "插入=$_n 族=sans-serif+Roboto 字件=$_marker 族内可读=$_ok/$_tot"
         return 0
     fi
     rm -f "$TARGET"
