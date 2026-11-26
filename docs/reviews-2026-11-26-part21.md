@@ -85,7 +85,10 @@
 
 本轮的落实是 tools/draw_round30_proof.py：它把三件实事〖2000〗的读数（scan 集合、名单集合、点数变化、插入前后族首、选择层百分比）直接渲染成三张 png 并打印 sha。**图不再是事后补的交付物，而是实测命令的副产品。**命令跑了图就在，命令没跑图就没有——图的存在与否从此与实测是否发生绑定，不再与我的记性绑定。
 
-三张图〖2100〗：roster-20.png（20 字各一格，scan✓ 名单✓ 点数差，标题三方相等 True，sha 7d442021…）、insert-before-after.png（sans-serif 族首插入前后并排，插入行标红，sha b6a3139d…）、choose-0-100.png（两条水平条，百分比由脚本实跑 skia_paths 得出而非硬编码，sha ac86ae21…）。
+三张图〖2100〗：2026-11-26-roster-20.png（20 字各一格，scan✓ 名单✓ 点数差，标题三方相等 True，sha 7d442021…）、2026-11-26-insert-before-after.png（sans-serif 族首插入前后并排，插入行标红，sha b6a3139d…）、2026-11-26-choose-0-100.png（两条水平条，百分比由脚本实跑 skia_paths 得出而非硬编码，sha ac86ae21…）。
+![2026-11-26-roster-20](evidence/2026-11-26-roster-20.png)
+![2026-11-26-insert-before-after](evidence/2026-11-26-insert-before-after.png)
+![2026-11-26-choose-0-100](evidence/2026-11-26-choose-0-100.png)
 
 ### 八、豆腐图：渲染字体也是一个前提
 
@@ -107,7 +110,7 @@
 
 仍开放者：CI 真因在码位版之后是〖2600〗否消解（到达时间＝2b6e1b9 的 run 约六分钟，替代动作＝failure 则读 annotations，success 则读 artifact 元数据填包大小）；真实包大小（同上）；shade 符号（已自主降级关闭，不占开放位）。
 
-核心判据距上次实测：一轮（上一轮实测 0 到 100，本轮补图未重跑 choose 总量，但 draw_round30_proof 的 pct_drawn 实跑了两配置的百分比并画进 choose-0-100.png，故严格说是零轮）。
+核心判据距上次实测：一轮（上一轮实测 0 到 100，本轮补图未重跑 choose 总量，但 draw_round30_proof 的 pct_drawn 实跑了两配置的百分比并画进 2026-11-26-choose-0-100.png，故严格说是零轮）。
 ## 罚篇三十〖2700〗一（再续）　三次 failure 的认知时间线
 
 ### 十、每次 failure 时我以为什么
@@ -293,7 +296,7 @@
 
 三，三次 failure 的真因是 U+4434 点数二百三十变二百二十一不在名单。（装置域＝run 45734332009 的 check-runs annotations 全文两条；来源＝gh api，经 ::error 诊断通道回墙内。）
 
-四，核心判据选择层：投放后配置本包码位由本包画百分之百，设备原配置零 percent。（装置域＝本包字件 cmap 的〖7900〗三万三千余码位、family_name 为 sans-serif；来源＝skia_paths choose 实跑，两轮各一次并画进 choose-0-100.png。）
+四，核心判据选择层：投放后配置本包码位由本包画百分之百，设备原配置零 percent。（装置域＝本包字件 cmap 的〖7900〗三万三千余码位、family_name 为 sans-serif；来源＝skia_paths choose 实跑，两轮各一次并画进 2026-11-26-choose-0-100.png。）
 
 五，投放层：skia.sh 在自洽假 root 上报族内可读九分之九、插入行在族首第四十三行。（装置域＝假 root 含度量空壳 Roboto 一份；来源＝skia.sh apply 的 stdout 与插入后配置的 grep。）
 

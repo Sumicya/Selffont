@@ -121,16 +121,20 @@ def check(text: str) -> tuple[bool, list[str], str]:
     # 图不内联等于没有图（§15）：正文点名的**现存** png，至少一处出现在 ![…](…) 里。
     # 只查现存文件：历史叙述里提到已删除的旧图名（如「fig1.png 首版是豆腐」）若也强制内联，
     # 就会逼出指向不存在文件的坏链接，违反 evidence/README「不留指向已删文件的引用」。
+    # 2026-11-27 补洞：裸名（不带日期前缀）也算提及——上一版只按全名匹配，part21 里
+    # 「roster-20.png」这种裸名绕过了判据，正文有图名无内联，主人再罚 10。
     inlined = set()
     for m in INLINE.finditer(body):
         inlined.add(m.group(1).rsplit("/", 1)[-1])
     import pathlib
     here = pathlib.Path(__file__).resolve().parent.parent
     existing = {p.name for p in (here / "docs" / "evidence").glob("*.png")}
-    for name in sorted(set(PNG.findall(body))):
-        base = name.rsplit("/", 1)[-1]
-        if base in existing and base not in inlined:
-            problems.append(f"图未内联：正文提到现存的 {base} 但没有 ![…](…) 语法（规范 §15：图不内联等于没有图）")
+    mentioned = {n.rsplit("/", 1)[-1] for n in PNG.findall(body)}
+    for full in sorted(existing):
+        bare = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", full)
+        if (full in mentioned or bare in mentioned) and full not in inlined:
+            problems.append(f"图未内联：正文提到现存的 {full}（或其裸名）但没有 ![…](…) 语法"
+                            f"（规范 §15：图不内联等于没有图）")
 
     line = (f"本篇汉字 {total}；" + ("" if total >= 10000 else "不足一万字＝没交；") +
             f"末枚〖{marks[-1][1] if marks else 0}〗；"
