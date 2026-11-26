@@ -194,8 +194,7 @@ jobs:
               fonts = [n for n in z.namelist() if n.startswith("system/fonts/")]
 
           # fixed_bytes 已无人读（行框归一之后整份字节本来就该不等），删掉免得留下死变量。
-          # ★ hhea 跟源件原值，typo 必须等于 hhea，usWin 拿裁剪包络。
-          #   不许把 hhea 写成 930（墨迹 1322/−549，行框变矮＝上下切墨）。
+          # ★ hhea／typo 对齐设备空壳 930/−250，usWin 拿裁剪包络。
           #   verify_packaged_metrics 单源；内联只调不抄。
           import build
           build.verify_packaged_metrics(packed, os.path.join("work", mother))
