@@ -90,7 +90,17 @@ def gap(a, b):
     return float(np.hypot(dx, dy))
 
 
-def stray_rings(g, max_share=0.02, min_gap=0.5, max_gap=40.0):
+def ptdist(a, b):
+    """两条折线最近两点的距离。bbox 相交时 gap=0，这个还能量出真空隙。"""
+    d = 1e9
+    for p in a:
+        m = float(np.min(np.hypot(b[:, 0] - p[0], b[:, 1] - p[1])))
+        if m < d:
+            d = m
+    return d
+
+
+def stray_rings(g, max_share=0.04, min_gap=0.5, max_gap=40.0):
     """返回该字形里应删的轮廓下标。
 
     判据：8–9 点 + 尺寸 30–80 单位 + 与最近轮廓的空隙在 0.5–40 单位之间。
@@ -107,7 +117,7 @@ def stray_rings(g, max_share=0.02, min_gap=0.5, max_gap=40.0):
             continue
         rb = bbox(r)
         w, h = rb[2] - rb[0], rb[3] - rb[1]
-        if not (30 <= w <= 80 and 30 <= h <= 80):
+        if not (30 <= w <= 100 and 30 <= h <= 100):
             continue
         # ★ 分支二（2026-11-27，主人指出「谚」左下角那颗）：整条轮廓落在字身框外
         #   （基线以下 / 顶线以上 / 左右框外）。正常汉字笔画不会**完全**落在字身框外
@@ -120,8 +130,16 @@ def stray_rings(g, max_share=0.02, min_gap=0.5, max_gap=40.0):
         if rb[3] < 0 or rb[1] > 880 or rb[2] < 0 or rb[0] > 1000:
             kill.append(i)
             continue
+        # ★ 分支三（2026-11-27，主人指出「让」左下角那颗）：bbox 和讠的钩子相交
+        #   （gap=0）所以分支一漏；yMax=34 没完全在基线以下所以分支二漏。
+        #   点到点 32 单位、10 点、94×83。只收左下（yMin<0、yMax<50、xMax<280），
+        #   全库这一支 10 个（让 谦 㓪 䥻 䦀 钛 钜 ＋ 已在分支二的 甆钾锂）。
+        if (8 <= len(r) <= 12 and rb[1] < 0 and rb[3] < 50 and rb[2] < 280
+                and 5 < min(ptdist(r, rs[j]) for j in others) < 40):
+            kill.append(i)
+            continue
         # 分支一（原判据）：游离在字形外的小圈。
-        if len(r) > 9:
+        if len(r) > 9 or w > 80 or h > 80:
             continue
         # 到最近的**单个**轮廓，不是到并集
         nearest = min(gap(rb, bbox(rs[j])) for j in others)
